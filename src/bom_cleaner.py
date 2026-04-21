@@ -2,6 +2,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+import math
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -12,6 +13,9 @@ STANDARD_COLUMNS = [
     "source_row",
     "designators",
     "qty_per_board",
+    "build_quantity",
+    "overage_pct",
+    "required_qty",
     "manufacturer",
     "mpn",
     "description",
@@ -374,6 +378,39 @@ def process_bom_file(file_path):
         mapped_columns=mapped_columns,
     )
 
+def apply_project_quantities(df, build_quantity, overage_pct):
+    """
+    Add project-level quantity math to the cleaned BOM.
+    required_qty = ceil(qty_per_board * build_quantity * (1 + overage_pct / 100))
+    """
+    updated_df = df.copy().astype(object)
+
+    updated_df["build_quantity"] = ""
+    updated_df["overage_pct"] = ""
+    updated_df["required_qty"] = ""
+
+    for index, row in updated_df.iterrows():
+        qty_value = row.get("qty_per_board", "")
+        parsed_qty = _parse_quantity(qty_value)
+
+        updated_df.at[index, "build_quantity"] = build_quantity
+        updated_df.at[index, "overage_pct"] = overage_pct
+
+        if parsed_qty is None:
+            notes = _split_notes(row.get("notes", ""))
+            notes.append("manual review: required quantity not calculated")
+            updated_df.at[index, "notes"] = "; ".join(_dedupe_notes(notes))
+
+            if updated_df.at[index, "status"] == "clean":
+                updated_df.at[index, "status"] = "manual_review"
+
+            updated_df.at[index, "required_qty"] = ""
+            continue
+
+        required_qty = math.ceil(parsed_qty * build_quantity * (1 + overage_pct / 100))
+        updated_df.at[index, "required_qty"] = required_qty
+
+    return updated_df
 
 def build_output_paths(
     file_path,

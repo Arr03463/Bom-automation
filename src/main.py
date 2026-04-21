@@ -6,6 +6,7 @@ from bom_cleaner import (
     process_bom_file,
     preview_bom,
     export_clean_bom,
+    apply_project_quantities,
 )
 from config import (
     INPUT_FOLDER,
@@ -21,8 +22,35 @@ def main():
     file_name = input("Enter BOM file name (example: bom.csv or bom.xlsx): ").strip()
     file_path = os.path.join(INPUT_FOLDER, file_name)
 
+    build_quantity_text = input("Enter build quantity: ").strip()
+    overage_percent_text = input("Enter overage percent (example 10 for 10%): ").strip()
+
+    try:
+        build_quantity = int(build_quantity_text)
+        overage_percent = float(overage_percent_text)
+    except ValueError:
+        print("\nError: Build quantity must be an integer and overage percent must be a number.")
+        return
+
     try:
         result = process_bom_file(file_path)
+
+        result.clean_bom = apply_project_quantities(
+            result.clean_bom,
+            build_quantity,
+            overage_percent,
+        )
+
+        result.review_items = result.clean_bom[
+            result.clean_bom["status"].isin(
+                {
+                    "missing_mpn",
+                    "missing_manufacturer",
+                    "qty_mismatch",
+                    "manual_review",
+                }
+            )
+        ].copy()
 
         print("\nMapped Columns:")
         for standard, original in result.mapped_columns.items():
@@ -46,7 +74,6 @@ def main():
 
     except Exception as e:
         print(f"\nError: {e}")
-
 
 if __name__ == "__main__":
     main()
