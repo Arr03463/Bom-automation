@@ -1,0 +1,5 @@
+Designators,Quantity,Manufacturer,MPN,Description,Required Qty,Notes
+R1 R2 R3,3,Yageo,RC0603FR-0710KL,10k Resistor 1% 0603,33,
+C1 C2,2,Murata,GRM188R71C105KA12D,1uF Capacitor 16V 0603,22,
+U1,1,STMicroelectronics,STM32F411CEU6,Microcontroller,11,
+L1,1,TDK,VLS6045EX-100M,Inductor 10uH,11,

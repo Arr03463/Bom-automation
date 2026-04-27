@@ -1,5 +1,5 @@
-source_file,source_row,designators,qty_per_board,manufacturer,mpn,description,supplier,supplier_part_number,unit_price,subtotal,lifecycle_status,build_multiplier,status,notes
-test_bom.csv,2,R1 R2 R3,3,Yageo,RC0603FR-0710KL,10k Resistor 1% 0603,,,,,,,clean,
-test_bom.csv,3,C1 C2,2,Murata,GRM188R71C105KA12D,1uF Capacitor 16V 0603,,,,,,,clean,
-test_bom.csv,4,U1,1,STMicroelectronics,STM32F411CEU6,Microcontroller,,,,,,,clean,
-test_bom.csv,5,L1,1,TDK,VLS6045EX-100M,Inductor 10uH,,,,,,,clean,
+source_file,source_row,designators,qty_per_board,build_quantity,overage_pct,required_qty,manufacturer,mpn,description,supplier,supplier_part_number,unit_price,subtotal,lifecycle_status,build_multiplier,status,notes
+test_bom.csv,2,R1 R2 R3,3,10,10.0,33,Yageo,RC0603FR-0710KL,10k Resistor 1% 0603,,,,,,,clean,
+test_bom.csv,3,C1 C2,2,10,10.0,22,Murata,GRM188R71C105KA12D,1uF Capacitor 16V 0603,,,,,,,clean,
+test_bom.csv,4,U1,1,10,10.0,11,STMicroelectronics,STM32F411CEU6,Microcontroller,,,,,,,clean,
+test_bom.csv,5,L1,1,10,10.0,11,TDK,VLS6045EX-100M,Inductor 10uH,,,,,,,clean,
