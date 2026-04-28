@@ -47,8 +47,8 @@ class PartsBoxClient:
         response.raise_for_status()
         data = response.json()
 
-        status_category = data.get("partsbox.status/category", "")
-        if status_category and status_category != "status/ok":
+        status_category = data.get("partsbox.status/category", "").strip().lower()
+        if status_category and status_category != "ok":
             message = data.get("partsbox.status/message", "Unknown PartsBox error")
             raise ValueError(f"PartsBox API error: {message}")
 
@@ -62,6 +62,45 @@ class PartsBoxClient:
 
     def list_storage_locations(self):
         return self.call("storage/all")
+    
+    def find_project_by_name(self, name):
+        projects = self.list_projects()
+        records = projects.get("data", projects.get("projects", []))
+
+        target = str(name).strip().lower()
+
+        for project in records:
+            project_name = (
+                project.get("project/name")
+                or project.get("name")
+                or project.get("project_name")
+                or ""
+            ).strip().lower()
+
+            if project_name == target:
+                return project
+
+        return None
+
+
+    def find_storage_by_name(self, name):
+        storage_locations = self.list_storage_locations()
+        records = storage_locations.get("data", storage_locations.get("storage", []))
+
+        target = str(name).strip().lower()
+
+        for storage in records:
+            storage_name = (
+                storage.get("storage/name")
+                or storage.get("name")
+                or storage.get("storage_name")
+                or ""
+            ).strip().lower()
+
+            if storage_name == target:
+                return storage
+
+        return None
 
     def create_storage_location(self, name, description="", tags=None):
         payload = {

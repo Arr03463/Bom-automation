@@ -385,9 +385,10 @@ def apply_project_quantities(df, build_quantity, overage_pct):
     """
     updated_df = df.copy().astype(object)
 
-    updated_df["build_quantity"] = ""
-    updated_df["overage_pct"] = ""
-    updated_df["required_qty"] = ""
+    updated_df["build_quantity"] = pd.Series([None] * len(updated_df), dtype=object)
+    updated_df["overage_pct"] = pd.Series([None] * len(updated_df), dtype=object)
+    updated_df["required_qty"] = pd.Series([None] * len(updated_df), dtype=object)
+
 
     for index, row in updated_df.iterrows():
         qty_value = row.get("qty_per_board", "")

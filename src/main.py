@@ -1,5 +1,10 @@
 import os
 
+from mouser_client import MouserClient
+from digikey_client import DigiKeyClient
+from sourcing_engine import apply_sourcing_decisions
+from sourcing_report import export_sourcing_report
+
 from partsbox_project_builder import (
     create_partsbox_project_and_storage,
     export_partsbox_import_csv,
@@ -36,6 +41,12 @@ SUPPLIER_REVIEW_STATUSES = {
     "skipped",
 }
 
+SOURCING_REVIEW_STATUSES = {
+    "check_wall_inventory",
+    "manual_review",
+    "no_supplier_match",
+}
+
 
 def main():
     print("BOM Automation Tool Started")
@@ -61,6 +72,28 @@ def main():
             build_quantity,
             overage_percent,
         )
+        sourcing_choice = input("Run Mouser/DigiKey sourcing check? (y/n): ").strip().lower()
+
+        if sourcing_choice == "y":
+            print("\nRunning Mouser/DigiKey sourcing check...")
+
+            mouser = MouserClient()
+            digikey = DigiKeyClient()
+
+            result.clean_bom = apply_sourcing_decisions(
+                result.clean_bom,
+                mouser_lookup=mouser.find_best_match,
+                digikey_lookup=digikey.find_best_match,
+            )
+
+            source_stem = os.path.splitext(os.path.basename(file_path))[0]
+            sourcing_report_path = export_sourcing_report(
+                result.clean_bom,
+                OUTPUT_FOLDER,
+                file_stem=f"{source_stem}_sourcing_report",
+            )
+
+            print(f"Sourcing report exported to: {sourcing_report_path}")
 
         if partsbox_choice == "y":
             project_name = input("Enter PartsBox project name: ").strip()
@@ -86,10 +119,25 @@ def main():
                     if partsbox_result.get("project_result", {}).get("dry_run"):
                         print("\n[DRY RUN] No project or storage was actually created.")
                     else:
-                        print(f"PartsBox project created: {partsbox_result['project_name']}")
-                        print(f"PartsBox storage created: {partsbox_result['storage_name']}")
-                    print(f"PartsBox import CSV exported to: {partsbox_import_path}")
+                        project_result = partsbox_result.get("project_result", {})
+                        storage_result = partsbox_result.get("storage_result", {})
 
+                        if project_result.get("dry_run") or storage_result.get("dry_run"):
+                            print("\n[DRY RUN] No PartsBox project or storage was actually created.")
+                        else:
+                            if partsbox_result.get("project_reused"):
+                                print(f"PartsBox project already exists, reused: {partsbox_result['project_name']}")
+                            else:
+                                print(f"PartsBox project created: {partsbox_result['project_name']}")
+
+                            if partsbox_result.get("storage_reused"):
+                                print(f"PartsBox storage already exists, reused: {partsbox_result['storage_name']}")
+                            else:
+                                print(f"PartsBox storage created: {partsbox_result['storage_name']}")
+
+                    
+                    print(f"PartsBox import CSV exported to: {partsbox_import_path}")
+                    
                 except Exception as partsbox_error:
                     print(f"\nPartsBox step failed: {partsbox_error}")
                     print("Continuing with cleaned BOM export.")
@@ -130,6 +178,11 @@ def build_review_items(clean_bom):
     if "supplier_match_status" in clean_bom.columns:
         review_mask = review_mask | clean_bom["supplier_match_status"].isin(
             SUPPLIER_REVIEW_STATUSES
+        )
+
+    if "sourcing_status" in clean_bom.columns:
+        review_mask = review_mask | clean_bom["sourcing_status"].isin(
+            SOURCING_REVIEW_STATUSES
         )
 
     return clean_bom[review_mask].copy()

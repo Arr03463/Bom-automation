@@ -26,26 +26,44 @@ def create_partsbox_project_and_storage(project_name, description=""):
     client = PartsBoxClient()
     names = build_default_names(project_name)
 
-    project_result = client.create_project(
-        name=names["project_name"],
-        description=description,
-        notes="Created by BOM automation tool.",
-        tags=["bom-automation"],
-    )
+    existing_project = client.find_project_by_name(names["project_name"])
+    existing_storage = client.find_storage_by_name(names["storage_name"])
 
-    storage_result = client.create_storage_location(
-        name=names["storage_name"],
-        description=f"Incoming parts storage for {names['project_name']}",
-        tags=["bom-automation", "incoming"],
-    )
+    if existing_project:
+        project_result = {
+            "reused": True,
+            "message": "Project already exists; reusing existing project.",
+            "project": existing_project,
+        }
+    else:
+        project_result = client.create_project(
+            name=names["project_name"],
+            description=description,
+            notes="Created by BOM automation tool.",
+            tags=["bom-automation"],
+        )
+
+    if existing_storage:
+        storage_result = {
+            "reused": True,
+            "message": "Storage already exists; reusing existing storage.",
+            "storage": existing_storage,
+        }
+    else:
+        storage_result = client.create_storage_location(
+            name=names["storage_name"],
+            description=f"Incoming parts storage for {names['project_name']}",
+            tags=["bom-automation", "incoming"],
+        )
 
     return {
         "project_name": names["project_name"],
         "storage_name": names["storage_name"],
         "project_result": project_result,
         "storage_result": storage_result,
+        "project_reused": bool(existing_project),
+        "storage_reused": bool(existing_storage),
     }
-
 
 def export_partsbox_import_csv(clean_bom, project_name, output_folder):
     names = build_default_names(project_name)
