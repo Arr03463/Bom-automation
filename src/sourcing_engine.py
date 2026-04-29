@@ -118,15 +118,31 @@ def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):
         mouser_result = None
         digikey_result = None
 
-        if mpn:
-            mouser_result = mouser_lookup(mpn, manufacturer)
+        lookup_notes = []
 
-            # Only check DigiKey if Mouser cannot fully cover it.
+        if mpn:
             required_qty = parse_int(row.get("required_qty"))
-            if not mouser_result or required_qty is None or mouser_result.stock < required_qty:
-                digikey_result = digikey_lookup(mpn, manufacturer)
+
+            try:
+                mouser_result = mouser_lookup(mpn, manufacturer)
+            except Exception as exc:
+                mouser_result = None
+                lookup_notes.append(f"Mouser lookup failed: {exc}")
+
+            try:
+                if not mouser_result or required_qty is None or mouser_result.stock < required_qty:
+                    digikey_result = digikey_lookup(mpn, manufacturer)
+            except Exception as exc:
+                digikey_result = None
+                lookup_notes.append(f"DigiKey lookup failed: {exc}")
 
         decision = decide_no_split_supplier(row, mouser_result, digikey_result)
+
+        if lookup_notes:
+            existing = decision.get("sourcing_notes", "")
+            combined = "; ".join([existing] + lookup_notes if existing else lookup_notes)
+            decision["sourcing_notes"] = combined
+
 
         for key, value in decision.items():
             updated.at[index, key] = str(value)

@@ -46,7 +46,6 @@ SUPPLIER_REVIEW_STATUSES = {
 SOURCING_REVIEW_STATUSES = {
     "check_wall_inventory",
     "manual_review",
-    "no_supplier_match",
 }
 
 
@@ -158,8 +157,9 @@ def main():
                                 print(f"PartsBox unmatched CSV exported to: {unmatched_path}")
 
                     
-                    print(f"PartsBox import CSV exported to: {partsbox_import_path}")
                     
+                    print(f"PartsBox import CSV exported to: {partsbox_import_path}")
+                 
                 except Exception as partsbox_error:
                     print(f"\nPartsBox step failed: {partsbox_error}")
                     print("Continuing with cleaned BOM export.")
