@@ -21,6 +21,14 @@ def build_default_names(project_name):
         + "_partsbox_import.csv",
     }
 
+def extract_project_id(partsbox_result):
+    project_result = partsbox_result.get("project_result", {})
+
+    return (
+        project_result.get("project/id")
+        or project_result.get("data", {}).get("project/id")
+        or project_result.get("project", {}).get("project/id")
+    )
 
 def create_partsbox_project_and_storage(project_name, description=""):
     client = PartsBoxClient()
@@ -39,8 +47,8 @@ def create_partsbox_project_and_storage(project_name, description=""):
         project_result = client.create_project(
             name=names["project_name"],
             description=description,
-            notes="Created by BOM automation tool.",
-            tags=["bom-automation"],
+           # notes="Created by BOM automation tool.",
+            #tags=["bom-automation"],
         )
 
     if existing_storage:
@@ -52,8 +60,8 @@ def create_partsbox_project_and_storage(project_name, description=""):
     else:
         storage_result = client.create_storage_location(
             name=names["storage_name"],
-            description=f"Incoming parts storage for {names['project_name']}",
-            tags=["bom-automation", "incoming"],
+            #description=f"Incoming parts storage for {names['project_name']}",
+            #tags=["bom-automation", "incoming"],
         )
 
     return {
@@ -64,6 +72,7 @@ def create_partsbox_project_and_storage(project_name, description=""):
         "project_reused": bool(existing_project),
         "storage_reused": bool(existing_storage),
     }
+
 
 def export_partsbox_import_csv(clean_bom, project_name, output_folder):
     names = build_default_names(project_name)

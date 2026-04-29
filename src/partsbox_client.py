@@ -22,10 +22,10 @@ class PartsBoxClient:
     def call(self, operation, payload=None):
         self.validate_config()
 
-        # DRY RUN SAFETY LAYER
         write_operations = [
             "project/create",
             "storage/create",
+            "project/add-entries",
         ]
 
         if self.dry_run and operation in write_operations:
@@ -44,6 +44,9 @@ class PartsBoxClient:
             timeout=30,
         )
 
+        if response.status_code >= 400:
+            print("PartsBox response:", response.text)
+
         response.raise_for_status()
         data = response.json()
 
@@ -53,6 +56,16 @@ class PartsBoxClient:
             raise ValueError(f"PartsBox API error: {message}")
 
         return data
+
+    def get_project_entries(self, project_id):
+        return self.call("project/get-entries", {"project/id": project_id})
+
+    def add_project_entries(self, project_id, entries):
+        payload = {
+            "project/id": project_id,
+            "entries": entries,
+        }
+        return self.call("project/add-entries", payload)
 
     def list_parts(self):
         return self.call("part/all")
@@ -123,10 +136,12 @@ class PartsBoxClient:
         if description:
             payload["project/description"] = description
 
-        if notes:
-            payload["project/notes"] = notes
+      #  if notes:
+           # payload["project/notes"] = notes
 
-        if tags:
-            payload["project/tags"] = tags
+        #if tags:
+         #   payload["project/tags"] = tags
 
         return self.call("project/create", payload)
+    
+    
