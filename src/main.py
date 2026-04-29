@@ -6,8 +6,10 @@ from sourcing_engine import apply_sourcing_decisions
 from sourcing_report import export_sourcing_report
 
 from partsbox_project_builder import (
+    add_bom_entries_to_project,
     create_partsbox_project_and_storage,
     export_partsbox_import_csv,
+    export_partsbox_unmatched_csv,
 )
 
 from bom_cleaner import (
@@ -110,6 +112,16 @@ def main():
                         description=description,
                     )
 
+                    partsbox_entries_result = add_bom_entries_to_project(
+                        partsbox_result,
+                        result.clean_bom,
+                    )
+                    unmatched_path = export_partsbox_unmatched_csv(
+                        partsbox_entries_result.get("unmatched_rows", []),
+                        project_name,
+                        OUTPUT_FOLDER,
+                    )
+
                     partsbox_import_path = export_partsbox_import_csv(
                         result.clean_bom,
                         project_name,
@@ -134,6 +146,16 @@ def main():
                                 print(f"PartsBox storage already exists, reused: {partsbox_result['storage_name']}")
                             else:
                                 print(f"PartsBox storage created: {partsbox_result['storage_name']}")
+
+                            if partsbox_entries_result.get("skipped"):
+                                print(f"PartsBox entries skipped: {partsbox_entries_result['message']}")
+                            else:
+                                print(f"PartsBox entries added: {partsbox_entries_result['entries_added']}")
+
+                            unmatched_count = len(partsbox_entries_result.get("unmatched_rows", []))
+                            if unmatched_count:
+                                print(f"PartsBox unmatched BOM rows: {unmatched_count}")
+                                print(f"PartsBox unmatched CSV exported to: {unmatched_path}")
 
                     
                     print(f"PartsBox import CSV exported to: {partsbox_import_path}")

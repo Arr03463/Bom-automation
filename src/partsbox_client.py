@@ -5,6 +5,43 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+MANUFACTURER_ALIASES = {
+    "murata electronics": "murata",
+    "murata manufacturing": "murata",
+    "st": "stmicroelectronics",
+    "stmicro": "stmicroelectronics",
+    "st micro": "stmicroelectronics",
+    "st microelectronics": "stmicroelectronics",
+    "yageo group": "yageo",
+}
+
+
+def normalize_manufacturer(value):
+    text = str(value or "").strip().lower()
+    text = text.replace("&", " and ")
+    text = " ".join(text.replace("-", " ").replace("/", " ").split())
+
+    if text in MANUFACTURER_ALIASES:
+        return MANUFACTURER_ALIASES[text]
+
+    suffixes = [
+        "corporation",
+        "corp",
+        "incorporated",
+        "inc",
+        "limited",
+        "ltd",
+        "co",
+        "company",
+        "group",
+    ]
+
+    words = [word for word in text.split() if word not in suffixes]
+    normalized = " ".join(words)
+
+    return MANUFACTURER_ALIASES.get(normalized, normalized)
+
+
 class PartsBoxClient:
     def __init__(self):
         self.api_key = os.getenv("PARTSBOX_API_KEY", "").strip()
@@ -12,6 +49,7 @@ class PartsBoxClient:
             "PARTSBOX_API_BASE_URL",
             "https://api.partsbox.com/api/1",
         ).strip()
+        self._parts_cache = None
 
         # 🔒 DRY RUN FLAG
         self.dry_run = os.getenv("PARTSBOX_DRY_RUN", "true").lower() == "true"
@@ -69,6 +107,43 @@ class PartsBoxClient:
 
     def list_parts(self):
         return self.call("part/all")
+
+    def get_parts(self):
+        if self._parts_cache is None:
+            parts = self.list_parts()
+            self._parts_cache = parts.get("data", parts.get("parts", []))
+
+        return self._parts_cache
+
+    def find_part_by_mpn_and_manufacturer(self, mpn, manufacturer=""):
+        target_mpn = str(mpn or "").strip().lower()
+        target_manufacturer = normalize_manufacturer(manufacturer)
+
+        if not target_mpn:
+            return None
+
+        mpn_matches = []
+
+        for part in self.get_parts():
+            part_mpn = str(part.get("part/mpn") or part.get("part/name") or "").strip().lower()
+
+            if part_mpn == target_mpn:
+                mpn_matches.append(part)
+
+        if not target_manufacturer:
+            return mpn_matches[0] if mpn_matches else None
+
+        for part in mpn_matches:
+            part_manufacturer = normalize_manufacturer(part.get("part/manufacturer"))
+
+            if (
+                part_manufacturer == target_manufacturer
+                or target_manufacturer in part_manufacturer
+                or part_manufacturer in target_manufacturer
+            ):
+                return part
+
+        return None
 
     def list_projects(self):
         return self.call("project/all")
@@ -133,8 +208,7 @@ class PartsBoxClient:
             "project/name": name,
         }
 
-        if description:
-            payload["project/description"] = description
+        payload["project/description"] = description or "Created by BOM automation tool."
 
       #  if notes:
            # payload["project/notes"] = notes
