@@ -2,8 +2,12 @@ import os
 
 from mouser_client import MouserClient
 from digikey_client import DigiKeyClient
+from digikey_mylists_client import create_digikey_mylist_from_bom
 from sourcing_engine import apply_sourcing_decisions
 from sourcing_report import export_sourcing_report
+
+from digikey_list_export import export_digikey_list
+
 
 from partsbox_project_builder import (
     add_bom_entries_to_project,
@@ -78,14 +82,28 @@ def main():
         if sourcing_choice == "y":
             print("\nRunning Mouser/DigiKey sourcing check...")
 
-            mouser = MouserClient()
+            supplier_mode = os.getenv("SUPPLIER_MODE", "mouser_then_digikey").strip().lower()
+
             digikey = DigiKeyClient()
 
-            result.clean_bom = apply_sourcing_decisions(
-                result.clean_bom,
-                mouser_lookup=mouser.find_best_match,
-                digikey_lookup=digikey.find_best_match,
-            )
+            if supplier_mode == "digikey_only":
+                print("Supplier mode: DigiKey only")
+
+                result.clean_bom = apply_sourcing_decisions(
+                    result.clean_bom,
+                    mouser_lookup=lambda mpn, manufacturer="": None,
+                    digikey_lookup=digikey.find_best_match,
+                )
+            else:
+                print("Supplier mode: Mouser first, DigiKey fallback")
+
+                mouser = MouserClient()
+
+                result.clean_bom = apply_sourcing_decisions(
+                    result.clean_bom,
+                    mouser_lookup=mouser.find_best_match,
+                    digikey_lookup=digikey.find_best_match,
+                )
 
             source_stem = os.path.splitext(os.path.basename(file_path))[0]
             sourcing_report_path = export_sourcing_report(
@@ -95,6 +113,34 @@ def main():
             )
 
             print(f"Sourcing report exported to: {sourcing_report_path}")
+
+            # STEP 1 - always export CSV first
+            digikey_list_path, digikey_count = export_digikey_list(
+                result.clean_bom,
+                OUTPUT_FOLDER,
+                file_stem=f"{source_stem}_digikey_list",
+            )
+
+            print(f"DigiKey list exported to: {digikey_list_path}")
+            print(f"DigiKey list rows: {digikey_count}")
+
+            # STEP 2 - then try MyLists API
+            if os.getenv("DIGIKEY_MYLISTS_ENABLED", "false").lower() == "true":
+                try:
+                    digikey_mylist_result = create_digikey_mylist_from_bom(
+                        result.clean_bom,
+                        list_name=f"{source_stem} DigiKey List",
+                    )
+
+                    if digikey_mylist_result.get("created"):
+                        print(f"DigiKey MyList created: {digikey_mylist_result.get('list_id')}")
+                        print(f"DigiKey MyList parts added: {digikey_mylist_result.get('parts_count')}")
+                    else:
+                        print(f"DigiKey MyList skipped: {digikey_mylist_result.get('message')}")
+
+                except Exception as exc:
+                    print(f"DigiKey MyList step failed: {exc}")
+                    print("Continuing with DigiKey CSV export only.")
 
         if partsbox_choice == "y":
             project_name = input("Enter PartsBox project name: ").strip()

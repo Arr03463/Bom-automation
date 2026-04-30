@@ -1,0 +1,4 @@
+mpn,manufacturer,required_qty,supplier_order_qty,selected_supplier,sourcing_status,sourcing_notes
+RC0603FR-0710KL,Yageo,4,4,DigiKey,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
+STM32F411CEU6,STMicroelectronics,2,2,DigiKey,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
+VLS6045EX-100M,TDK,2,2,DigiKey,sourced_digikey,Mouser could not cover full quantity; DigiKey can.

@@ -1,5 +1,5 @@
 manufacturer,mpn,required_qty,selected_supplier,supplier_order_qty,mouser_stock,digikey_stock,sourcing_status,sourcing_notes
-Yageo,RC0603FR-0710KL,4,Mouser,4,3702426,0,sourced_mouser,Mouser can cover full required quantity.
+Yageo,RC0603FR-0710KL,4,DigiKey,4,0,10838928,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
 Murata,GRM188R71C105KA12D,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-STMicroelectronics,STM32F411CEU6,2,Mouser,2,33,0,sourced_mouser,Mouser can cover full required quantity.
-TDK,VLS6045EX-100M,2,Mouser,2,4590,0,sourced_mouser,Mouser can cover full required quantity.
+STMicroelectronics,STM32F411CEU6,2,DigiKey,2,0,3936,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
+TDK,VLS6045EX-100M,2,DigiKey,2,0,44737,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
