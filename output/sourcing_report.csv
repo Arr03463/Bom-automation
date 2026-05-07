@@ -1,0 +1,5 @@
+manufacturer,mpn,required_qty,selected_supplier,supplier_order_qty,mouser_stock,digikey_stock,sourcing_status,sourcing_notes
+Yageo,RC0603FR-0710KL,7,Mouser,7,10000,0,sourced_mouser,Mouser can cover full required quantity.
+Murata,GRM188R71C105KA12D,5,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
+STMicroelectronics,STM32F411CEU6,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
+TDK,VLS6045EX-100M,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
