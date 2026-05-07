@@ -43,7 +43,13 @@ def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
     required_qty = parse_int(row.get("required_qty"))
     manufacturer = str(row.get("manufacturer", "")).strip()
     mpn = str(row.get("mpn", "")).strip()
+    qty_per_board = parse_int(row.get("qty_per_board"))
+    build_quantity = parse_int(row.get("build_quantity"))
 
+    if qty_per_board is not None and build_quantity is not None:
+        order_qty = qty_per_board * build_quantity
+    else:
+        order_qty = required_qty
     if not mpn:
         return {
             "selected_supplier": "",
@@ -70,7 +76,9 @@ def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
     if mouser_result and mouser_stock >= required_qty:
         return {
             "selected_supplier": "Mouser",
-            "supplier_order_qty": required_qty,
+            "supplier_part_number": mouser_result.supplier_part_number,
+            "unit_price": mouser_result.unit_price,
+            "supplier_order_qty": order_qty,
             "mouser_stock": mouser_stock,
             "digikey_stock": digikey_stock,
             "sourcing_status": "sourced_mouser",
@@ -80,12 +88,14 @@ def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
     if digikey_result and digikey_stock >= required_qty:
         return {
             "selected_supplier": "DigiKey",
-            "supplier_order_qty": required_qty,
+            "supplier_part_number": digikey_result.supplier_part_number,
+            "unit_price": digikey_result.unit_price,
+            "supplier_order_qty": order_qty,
             "mouser_stock": mouser_stock,
             "digikey_stock": digikey_stock,
             "sourcing_status": "sourced_digikey",
             "sourcing_notes": "Mouser could not cover full quantity; DigiKey can.",
-        }
+    }
 
     return {
         "selected_supplier": "",
@@ -102,6 +112,8 @@ def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):
 
     for col in [
         "selected_supplier",
+        "supplier_part_number",
+        "unit_price",
         "supplier_order_qty",
         "mouser_stock",
         "digikey_stock",

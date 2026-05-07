@@ -1,6 +1,7 @@
 import os
 
 from mouser_client import MouserClient
+from mouser_cart_client import create_mouser_cart_from_bom
 from digikey_client import DigiKeyClient
 from digikey_mylists_client import create_digikey_mylist_from_bom
 from sourcing_engine import apply_sourcing_decisions
@@ -113,6 +114,20 @@ def main():
             )
 
             print(f"Sourcing report exported to: {sourcing_report_path}")
+
+            if os.getenv("MOUSER_CART_ENABLED", "false").lower() == "true":
+                try:
+                    mouser_cart_result = create_mouser_cart_from_bom(result.clean_bom)
+
+                    if mouser_cart_result.get("created"):
+                        print(f"Mouser cart items prepared: {mouser_cart_result.get('items_count')}")
+                        print(f"Mouser cart result: {mouser_cart_result.get('result')}")
+                    else:
+                        print(f"Mouser cart skipped: {mouser_cart_result.get('message')}")
+
+                except Exception as exc:
+                    print(f"Mouser cart step failed: {exc}")
+                    print("Continuing with sourcing report export only.")
 
             # STEP 1 - always export CSV first
             digikey_list_path, digikey_count = export_digikey_list(

@@ -7,12 +7,12 @@ from sourcing_engine import apply_sourcing_decisions
 
 def main():
     test_bom = pd.DataFrame(
-        [
-            {"manufacturer": "Mock", "mpn": "ABC123", "required_qty": "80"},
-            {"manufacturer": "Mock", "mpn": "XYZ789", "required_qty": "80"},
-            {"manufacturer": "Mock", "mpn": "NO_STOCK", "required_qty": "10"},
-        ]
-    )
+    [
+        {"manufacturer": "YAGEO", "mpn": "RC0603FR-0710KL", "required_qty": "80"},
+        {"manufacturer": "Texas Instruments", "mpn": "NE555P", "required_qty": "10"},
+        {"manufacturer": "Murata", "mpn": "GRM188R71C104KA01D", "required_qty": "50"},
+    ]
+)
 
     mouser = MouserClient()
     digikey = DigiKeyClient()
