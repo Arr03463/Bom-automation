@@ -65,7 +65,10 @@ def main():
     file_path = os.path.join(INPUT_FOLDER, file_name)
 
     build_quantity_text = input("Enter build quantity: ").strip()
-    partsbox_choice = input("Create PartsBox project/storage and import file? (y/n): ").strip().lower()
+    project_name = input("Enter project name: ").strip()
+    partsbox_choice = input("Run PartsBox project/storage flow? (y/n): ").strip().lower()
+    sourcing_choice = input("Run Mouser/DigiKey sourcing check? (y/n): ").strip().lower()
+    carts_lists_choice = input("Create carts/lists? (y/n): ").strip().lower()
     try:
         build_quantity = int(build_quantity_text)
     except ValueError:
@@ -79,7 +82,8 @@ def main():
             result.clean_bom,
             build_quantity,
         )
-        sourcing_choice = input("Run Mouser/DigiKey sourcing check? (y/n): ").strip().lower()
+        source_stem = os.path.splitext(os.path.basename(file_path))[0]
+        list_name_base = project_name or source_stem
 
         if sourcing_choice == "y":
             print("\nRunning Mouser/DigiKey sourcing check...")
@@ -93,7 +97,7 @@ def main():
 
                 result.clean_bom = apply_sourcing_decisions(
                     result.clean_bom,
-                    mouser_lookup=lambda mpn, manufacturer="": None,
+                    mouser_lookup=lambda row: None,
                     digikey_lookup=digikey.find_best_match,
                 )
             else:
@@ -107,7 +111,6 @@ def main():
                     digikey_lookup=digikey.find_best_match,
                 )
 
-            source_stem = os.path.splitext(os.path.basename(file_path))[0]
             sourcing_report_path = export_sourcing_report(
                 result.clean_bom,
                 OUTPUT_FOLDER,
@@ -116,7 +119,10 @@ def main():
 
             print(f"Sourcing report exported to: {sourcing_report_path}")
 
-            if os.getenv("MOUSER_CART_ENABLED", "false").lower() == "true":
+            if (
+                carts_lists_choice == "y"
+                and os.getenv("MOUSER_CART_ENABLED", "false").lower() == "true"
+            ):
                 try:
                     mouser_cart_result = create_mouser_cart_from_bom(result.clean_bom)
 
@@ -130,6 +136,8 @@ def main():
                 except Exception as exc:
                     print(f"Mouser cart step failed: {exc}")
                     print("Continuing with sourcing report export only.")
+            elif carts_lists_choice != "y":
+                print("Remote cart/list creation skipped by operator choice.")
 
             # STEP 1 - always export CSV first
             digikey_list_path, digikey_count = export_digikey_list(
@@ -143,15 +151,25 @@ def main():
             digikey_list_items = digikey_count
 
             # STEP 2 - then try MyLists API
-            if os.getenv("DIGIKEY_MYLISTS_ENABLED", "false").lower() == "true":
+            if (
+                carts_lists_choice == "y"
+                and os.getenv("DIGIKEY_MYLISTS_ENABLED", "false").lower() == "true"
+            ):
                 try:
                     digikey_mylist_result = create_digikey_mylist_from_bom(
                         result.clean_bom,
-                        list_name=f"{source_stem} DigiKey List",
+                        list_name=f"{list_name_base} DigiKey List",
                     )
 
                     if digikey_mylist_result.get("created"):
                         print(f"DigiKey MyList created: {digikey_mylist_result.get('list_id')}")
+                        if digikey_mylist_result.get("name_changed"):
+                            print(
+                                "DigiKey MyList name already existed. "
+                                f"Created with timestamped name: {digikey_mylist_result.get('list_name')}"
+                            )
+                        else:
+                            print(f"DigiKey MyList name: {digikey_mylist_result.get('list_name')}")
                         print(f"DigiKey MyList parts added: {digikey_mylist_result.get('parts_count')}")
                     else:
                         print(f"DigiKey MyList skipped: {digikey_mylist_result.get('message')}")
@@ -161,8 +179,6 @@ def main():
                     print("Continuing with DigiKey CSV export only.")
 
         if partsbox_choice == "y":
-            project_name = input("Enter PartsBox project name: ").strip()
-
             if not project_name.strip():
                 print("\nSkipping PartsBox: project name is required.")
             else:

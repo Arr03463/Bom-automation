@@ -19,7 +19,7 @@ def main():
 
     sourced = apply_sourcing_decisions(
         test_bom,
-        mouser_lookup=mouser.find_best_match,
+        mouser_lookup=mouser.find_best_match_for_row,
         digikey_lookup=digikey.find_best_match,
     )
 

@@ -1,4 +1,7 @@
 import os
+from datetime import datetime
+from urllib.parse import quote
+
 import requests
 from dotenv import load_dotenv
 
@@ -37,6 +40,68 @@ class DigiKeyMyListsClient:
             headers["X-DIGIKEY-Account-ID"] = self.account_id
 
         return headers
+
+    def is_list_name_available(self, list_name):
+        self.validate_config()
+
+        if self.dry_run:
+            return True
+
+        encoded_name = quote(list_name, safe="")
+        url = f"{self.base_url}/mylists/v1/lists/validate/{encoded_name}"
+
+        response = requests.get(
+            url,
+            headers=self.headers(),
+            timeout=30,
+        )
+
+        if response.status_code >= 400:
+            print("DigiKey IsValidListName response:", response.text)
+
+        response.raise_for_status()
+        result = response.json()
+
+        if isinstance(result, bool):
+            return result
+
+        return str(result).strip().lower() == "true"
+
+    def get_valid_list_name(self, list_name):
+        self.validate_config()
+
+        if self.dry_run:
+            return list_name
+
+        encoded_name = quote(list_name, safe="")
+        url = f"{self.base_url}/mylists/v1/lists/validate/name/{encoded_name}"
+
+        response = requests.get(
+            url,
+            headers=self.headers(),
+            timeout=30,
+        )
+
+        if response.status_code >= 400:
+            print("DigiKey ValidListName response:", response.text)
+
+        response.raise_for_status()
+        result = response.json()
+
+        if isinstance(result, str) and result.strip():
+            return result.strip()
+
+        return list_name
+
+    def resolve_create_list_name(self, list_name):
+        self.validate_config()
+
+        if self.dry_run or self.is_list_name_available(list_name):
+            return list_name, False
+
+        timestamped_name = build_timestamped_list_name(list_name)
+        safe_name = self.get_valid_list_name(timestamped_name)
+        return safe_name, True
 
     def create_list(self, list_name, description="Created by BOM automation tool"):
         self.validate_config()
@@ -100,6 +165,11 @@ class DigiKeyMyListsClient:
         return response.json()
 
 
+def build_timestamped_list_name(list_name):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{list_name} {timestamp}"
+
+
 def build_digikey_mylists_parts(clean_bom):
     parts = []
 
@@ -147,7 +217,9 @@ def create_digikey_mylist_from_bom(clean_bom, list_name):
             "parts_count": 0,
         }
 
-    create_result = client.create_list(list_name)
+    resolved_list_name, name_changed = client.resolve_create_list_name(list_name)
+
+    create_result = client.create_list(resolved_list_name)
     if isinstance(create_result, str):
         list_id = create_result
     else:
@@ -162,6 +234,9 @@ def create_digikey_mylist_from_bom(clean_bom, list_name):
         return {
             "created": False,
             "message": "DigiKey list created but no list ID was found in response.",
+            "requested_list_name": list_name,
+            "list_name": resolved_list_name,
+            "name_changed": name_changed,
             "parts_count": len(parts),
             "create_result": create_result,
         }
@@ -171,6 +246,9 @@ def create_digikey_mylist_from_bom(clean_bom, list_name):
     return {
         "created": True,
         "list_id": list_id,
+        "requested_list_name": list_name,
+        "list_name": resolved_list_name,
+        "name_changed": name_changed,
         "parts_count": len(parts),
         "create_result": create_result,
         "add_result": add_result,

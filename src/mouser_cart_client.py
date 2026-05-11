@@ -15,7 +15,7 @@ class MouserCartClient:
         if not self.api_key:
             raise ValueError("Missing MOUSER_CART_API_KEY in .env")
 
-    def add_items_to_cart(self, items):
+    def add_items_to_cart(self, items, cart_key=""):
         """
         items = [
             {"MouserPartNumber": "...", "Quantity": 10}
@@ -24,6 +24,7 @@ class MouserCartClient:
         self.validate_config()
 
         payload = {
+            "CartKey": cart_key,
             "CartItems": items,
         }
 
@@ -33,6 +34,7 @@ class MouserCartClient:
             return {
                 "dry_run": True,
                 "items_count": len(items),
+                "cart_key": cart_key,
                 "payload": payload,
             }
 
