@@ -64,6 +64,25 @@ class MouserClient:
                 )
 
         return None
+    def find_best_match_for_row(self, row):
+        mpn = str(row.get("mpn", "")).strip()
+        manufacturer = str(row.get("manufacturer", "")).strip()
+
+        supplier = str(row.get("supplier", "")).strip().lower()
+        supplier_part_number = str(row.get("supplier_part_number", "")).strip()
+
+        # Prefer existing Mouser supplier part number from BOM
+        if supplier == "mouser" and supplier_part_number:
+            result = self.find_best_match(
+                supplier_part_number,
+                manufacturer="",
+            )
+
+            if result:
+                return result
+
+        # Fallback to manufacturer part number search
+        return self.find_best_match(mpn, manufacturer)
 
     def _mock_search(self, mpn):
         fake_stock = {

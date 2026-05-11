@@ -55,7 +55,7 @@ class MouserCartClient:
 
 
 def build_mouser_cart_items(clean_bom):
-    items = []
+    item_quantities = {}
 
     for _, row in clean_bom.iterrows():
         selected_supplier = str(row.get("selected_supplier", "")).strip().lower()
@@ -70,10 +70,21 @@ def build_mouser_cart_items(clean_bom):
         if not mouser_part_number or not qty:
             continue
 
+        try:
+            parsed_qty = int(float(qty))
+        except ValueError:
+            continue
+
+        item_quantities[mouser_part_number] = (
+            item_quantities.get(mouser_part_number, 0) + parsed_qty
+        )
+
+    items = []
+    for mouser_part_number, quantity in item_quantities.items():
         items.append(
             {
                 "MouserPartNumber": mouser_part_number,
-                "Quantity": int(float(qty)),
+                "Quantity": quantity,
             }
         )
 

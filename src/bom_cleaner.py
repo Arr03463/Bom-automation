@@ -2,7 +2,6 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-import math
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -14,7 +13,6 @@ STANDARD_COLUMNS = [
     "designators",
     "qty_per_board",
     "build_quantity",
-    "overage_pct",
     "required_qty",
     "manufacturer",
     "mpn",
@@ -378,15 +376,14 @@ def process_bom_file(file_path):
         mapped_columns=mapped_columns,
     )
 
-def apply_project_quantities(df, build_quantity, overage_pct):
+def apply_project_quantities(df, build_quantity):
     """
     Add project-level quantity math to the cleaned BOM.
-    required_qty = ceil(qty_per_board * build_quantity * (1 + overage_pct / 100))
+    required_qty = qty_per_board * build_quantity
     """
     updated_df = df.copy().astype(object)
 
     updated_df["build_quantity"] = pd.Series([None] * len(updated_df), dtype=object)
-    updated_df["overage_pct"] = pd.Series([None] * len(updated_df), dtype=object)
     updated_df["required_qty"] = pd.Series([None] * len(updated_df), dtype=object)
 
 
@@ -395,8 +392,6 @@ def apply_project_quantities(df, build_quantity, overage_pct):
         parsed_qty = _parse_quantity(qty_value)
 
         updated_df.at[index, "build_quantity"] = build_quantity
-        updated_df.at[index, "overage_pct"] = overage_pct
-
         if parsed_qty is None:
             notes = _split_notes(row.get("notes", ""))
             notes.append("manual review: required quantity not calculated")
@@ -408,7 +403,7 @@ def apply_project_quantities(df, build_quantity, overage_pct):
             updated_df.at[index, "required_qty"] = ""
             continue
 
-        required_qty = math.ceil(parsed_qty * build_quantity * (1 + overage_pct / 100))
+        required_qty = parsed_qty * build_quantity
         updated_df.at[index, "required_qty"] = required_qty
 
     return updated_df

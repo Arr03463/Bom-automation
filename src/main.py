@@ -57,17 +57,19 @@ SOURCING_REVIEW_STATUSES = {
 def main():
     print("BOM Automation Tool Started")
 
+    mouser_cart_items = 0
+    digikey_list_items = 0
+    partsbox_entries_added = 0
+
     file_name = input("Enter BOM file name (example: bom.csv or bom.xlsx): ").strip()
     file_path = os.path.join(INPUT_FOLDER, file_name)
 
     build_quantity_text = input("Enter build quantity: ").strip()
-    overage_percent_text = input("Enter overage percent (example 10 for 10%): ").strip()
     partsbox_choice = input("Create PartsBox project/storage and import file? (y/n): ").strip().lower()
     try:
         build_quantity = int(build_quantity_text)
-        overage_percent = float(overage_percent_text)
     except ValueError:
-        print("\nError: Build quantity must be an integer and overage percent must be a number.")
+        print("\nError: Build quantity must be an integer.")
         return
 
     try:
@@ -76,7 +78,6 @@ def main():
         result.clean_bom = apply_project_quantities(
             result.clean_bom,
             build_quantity,
-            overage_percent,
         )
         sourcing_choice = input("Run Mouser/DigiKey sourcing check? (y/n): ").strip().lower()
 
@@ -102,7 +103,7 @@ def main():
 
                 result.clean_bom = apply_sourcing_decisions(
                     result.clean_bom,
-                    mouser_lookup=mouser.find_best_match,
+                    mouser_lookup=mouser.find_best_match_for_row,
                     digikey_lookup=digikey.find_best_match,
                 )
 
@@ -121,6 +122,7 @@ def main():
 
                     if mouser_cart_result.get("created"):
                         print(f"Mouser cart items prepared: {mouser_cart_result.get('items_count')}")
+                        mouser_cart_items = mouser_cart_result.get("items_count", 0)
                         print(f"Mouser cart result: {mouser_cart_result.get('result')}")
                     else:
                         print(f"Mouser cart skipped: {mouser_cart_result.get('message')}")
@@ -138,6 +140,7 @@ def main():
 
             print(f"DigiKey list exported to: {digikey_list_path}")
             print(f"DigiKey list rows: {digikey_count}")
+            digikey_list_items = digikey_count
 
             # STEP 2 - then try MyLists API
             if os.getenv("DIGIKEY_MYLISTS_ENABLED", "false").lower() == "true":
@@ -211,6 +214,7 @@ def main():
                                 print(f"PartsBox entries skipped: {partsbox_entries_result['message']}")
                             else:
                                 print(f"PartsBox entries added: {partsbox_entries_result['entries_added']}")
+                                partsbox_entries_added = partsbox_entries_result.get("entries_added", 0)
 
                             unmatched_count = len(partsbox_entries_result.get("unmatched_rows", []))
                             if unmatched_count:
@@ -245,6 +249,27 @@ def main():
         )
         export_clean_bom_workbook(result, workbook_path)
         export_clean_bom(result.clean_bom, csv_path)
+
+        mouser_sourced = 0
+        digikey_sourced = 0
+        manual_review = 0
+
+        if "sourcing_status" in result.clean_bom.columns:
+            sourcing_counts = result.clean_bom["sourcing_status"].value_counts()
+
+            mouser_sourced = int(sourcing_counts.get("sourced_mouser", 0))
+            digikey_sourced = int(sourcing_counts.get("sourced_digikey", 0))
+            manual_review = int(sourcing_counts.get("check_wall_inventory", 0)) + int(
+                sourcing_counts.get("manual_review", 0)
+            )
+
+        print("\nFinal Run Summary:")
+        print(f"Mouser sourced: {mouser_sourced}")
+        print(f"DigiKey sourced: {digikey_sourced}")
+        print(f"Manual / wall review: {manual_review}")
+        print(f"Mouser cart items: {mouser_cart_items}")
+        print(f"DigiKey list items: {digikey_list_items}")
+        print(f"PartsBox entries added: {partsbox_entries_added}")
 
         print(f"\nCleaned workbook exported to: {workbook_path}")
         print(f"Cleaned CSV exported to: {csv_path}")

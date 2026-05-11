@@ -136,7 +136,7 @@ def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):
             required_qty = parse_int(row.get("required_qty"))
 
             try:
-                mouser_result = mouser_lookup(mpn, manufacturer)
+                mouser_result = mouser_lookup(row)
             except Exception as exc:
                 mouser_result = None
                 lookup_notes.append(f"Mouser lookup failed: {exc}")
