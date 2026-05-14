@@ -1,79 +1,79 @@
-manufacturer,mpn,required_qty,selected_supplier,supplier_order_qty,mouser_stock,digikey_stock,sourcing_status,sourcing_notes
-Kyocera AVX,08051C105K4T2A,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-Murata,GCJ188R72A104KA01D,3,Mouser,2,545205,0,sourced_mouser,Mouser can cover full required quantity.
-Kyocera AVX,08051C103K4T4A,9,Mouser,8,31616,0,sourced_mouser,Mouser can cover full required quantity.
-TDK,C1608X7R1H104K080AA,11,Mouser,10,1583198,0,sourced_mouser,Mouser can cover full required quantity.
-Murata,GRM21B5C1H223JA01K,3,Mouser,2,9494,0,sourced_mouser,Mouser can cover full required quantity.
-TDK,C2012X7S2A105K125AB,3,Mouser,2,565231,0,sourced_mouser,Mouser can cover full required quantity.
-Murata,GCJ188R72A104KA01D,16,Mouser,14,545205,0,sourced_mouser,Mouser can cover full required quantity.
-Wurth Electronics,885012207110,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-Murata,GRM21BZ7YA475ME15L,7,Mouser,6,18493,0,sourced_mouser,Mouser can cover full required quantity.
-Samsung,CL32B475KCVZW6E,3,Mouser,2,38114,0,sourced_mouser,Mouser can cover full required quantity.
-TDK,C3225X7R1N106K250AC,5,DigiKey,4,0,49333,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
-Murata,GCM188R72A103KA37J,5,Mouser,4,76705,0,sourced_mouser,Mouser can cover full required quantity.
-Vishay Lite-On,LTST-C190GKT,14,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-Vishay Lite-On,LTST-C190EKT,11,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-,FSV20150V,5,Mouser,4,44765,0,sourced_mouser,Mouser can cover full required quantity.
-Vishay Semiconductors,SMBJ3V3-E3/5B,3,Mouser,2,103609,0,sourced_mouser,Mouser can cover full required quantity.
-,SMCJ13A,7,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/SMCJ13A/productdetails
-,0685P9200-01,3,Mouser,2,4353,0,sourced_mouser,Mouser can cover full required quantity.
-,,3,,,,,manual_review,Missing MPN; cannot source.
-Laird Steward,CM5441Z161B-10,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-TE Connectivity,2013499-1,3,Mouser,2,2822,0,sourced_mouser,Mouser can cover full required quantity.
-TE-Connectivity,2345986-1,5,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-TE Connectivity,2-1445100-4,3,Mouser,2,1285,0,sourced_mouser,Mouser can cover full required quantity.
-ON Semiconductor,2N7002KT1G,5,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-Infineon,BSC520N15NS3GATMA1,5,DigiKey,4,0,14912,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
-Yageo,RC0603JR-073K3L,3,Mouser,2,77567,0,sourced_mouser,Mouser can cover full required quantity.
-KOA Speer,RK73B1JTTD471J,16,Mouser,14,51128,0,sourced_mouser,Mouser can cover full required quantity.
-Yageo,RT0603FRE071K5L,9,Mouser,8,42917,0,sourced_mouser,Mouser can cover full required quantity.
-Susumu,RL3720WT-R050-F,3,Mouser,2,4750,0,sourced_mouser,Mouser can cover full required quantity.
-KOA Speer,RK73H1JTTD4991D,3,Mouser,2,6798,0,sourced_mouser,Mouser can cover full required quantity.
-,ERA-8AEB5903V,5,Mouser,4,230,0,sourced_mouser,Mouser can cover full required quantity.
-KOA Speer,RK73H1JTTD1303F,3,DigiKey,2,0,222,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-Yageo,RC1210JR-0710KL,7,DigiKey,6,0,28012,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-Yageo,RC0603FR-070RL,11,DigiKey,10,0,536649,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-Panasonic,ERA-6AEB1403V,3,DigiKey,2,0,98,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-Panasonic,ERA-6AEB1872V,7,DigiKey,6,0,17927,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-TE Connectivity,CRG0603F10K,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/CRG0603F10K/productdetails
-Vishay Dale,CRCW06031R00JNEA,5,DigiKey,4,0,94017,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-KOA Speer,RK73H1JTTD3482F,3,DigiKey,2,0,25961,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-KOA Speer,RK73H1JTTD2213F,3,DigiKey,2,0,18982,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-Taiwan Semiconductor,TQL850CSV33RLG,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/TQL850CSV33RLG/productdetails
-Texas Instruments,ISO7720DR,3,DigiKey,2,0,4614,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-Texas Instruments,ISO1540QDRQ1,3,DigiKey,2,0,2496,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-Texas Instruments,INA237AIDGSR,3,DigiKey,2,0,9062,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
-Analog Devices / Linear Technology,LT3758AHMSE#PBF,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/LT3758AHMSE#PBF/productdetails
-TDK,C3216X5R1V226M160AC,40,Mouser,36,116402,0,sourced_mouser,Mouser can cover full required quantity.
-KYOCERA AVX,22201C106MAT2A,25,Mouser,22,53881,0,sourced_mouser,Mouser can cover full required quantity.
-TDK,CGA4J1X7R1V475K125AC,3,Mouser,2,151488,0,sourced_mouser,Mouser can cover full required quantity.
-Murata,GRM188R6YA106MA73J,5,Mouser,4,260321,0,sourced_mouser,Mouser can cover full required quantity.
-TAIYO YUDEN,UMK107BJ474KAHT,3,Mouser,2,16408,0,sourced_mouser,Mouser can cover full required quantity.
-Vishay,MAL215099103E3,5,Mouser,4,115453,0,sourced_mouser,Mouser can cover full required quantity.
-TDK,C3216X5R1E476M160AC,3,Mouser,2,616840,0,sourced_mouser,Mouser can cover full required quantity.
-Yageo Group,C0603C681J5GACTU,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-Vishay,MAL215099907E3,3,Mouser,2,3704,0,sourced_mouser,Mouser can cover full required quantity.
-TDK,C1608X7R1H104K080AA,3,Mouser,2,1583198,0,sourced_mouser,Mouser can cover full required quantity.
-TDK,C2012X7R2E103K125AA,3,Mouser,2,34980,0,sourced_mouser,Mouser can cover full required quantity.
-onsemi,MBRA340T3G,3,Mouser,2,108623,0,sourced_mouser,Mouser can cover full required quantity.
-Molex,73251-1350,3,Mouser,2,13058,0,sourced_mouser,Mouser can cover full required quantity.
-Coilcraft,AGP4233-223ME,3,Mouser,2,49,0,sourced_mouser,Mouser can cover full required quantity.
-,XEL4030-472MEC,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-Coilcraft,MA5173-AE,3,Mouser,2,980,0,sourced_mouser,Mouser can cover full required quantity.
-TE-Connectivity,6-292161-6,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
-TE Connectivity,1-350942-0,3,Mouser,2,900,0,sourced_mouser,Mouser can cover full required quantity.
-TE Connectivity / AMP,2-1445056-2,3,Mouser,2,650,0,sourced_mouser,Mouser can cover full required quantity.
-TDK-Lambda,CC6-1212SR-E,3,DigiKey,2,0,375,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
-Vishay,WSLP25125L000FEA,3,Mouser,2,85499,0,sourced_mouser,Mouser can cover full required quantity.
-TE Connectivity,CRGP0603F10K,9,Mouser,8,117049,0,sourced_mouser,Mouser can cover full required quantity.
-KOA Speer,RK73H1JTTD1622F,3,Mouser,2,22276,0,sourced_mouser,Mouser can cover full required quantity.
-Panasonic,ERJ-3EKF6342V,3,Mouser,2,22467,0,sourced_mouser,Mouser can cover full required quantity.
-Panasonic,ERJ-3GEYJ153V,3,Mouser,2,71807,0,sourced_mouser,Mouser can cover full required quantity.
-TE Connectivity,CRGCQ0603F100K,3,Mouser,2,38591,0,sourced_mouser,Mouser can cover full required quantity.
-Yageo Group,RT0603FRE07536KL,3,Mouser,2,5883,0,sourced_mouser,Mouser can cover full required quantity.
-Vishay,WSHP28185L000FEA,3,Mouser,2,455,0,sourced_mouser,Mouser can cover full required quantity.
-TE Connectivity,CRGP0603F10K,3,Mouser,2,117049,0,sourced_mouser,Mouser can cover full required quantity.
-Keystone,5000,9,Mouser,8,376067,0,sourced_mouser,Mouser can cover full required quantity.
-Keystone,5001,9,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/5001/productdetails
-Analog Devices,LT1913EDD#PBF,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/LT1913EDD#PBF/productdetails
-Texas Instruments,INA228AIDGSR,3,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+manufacturer,mpn,required_qty,selected_supplier,supplier_part_number,supplier_order_qty,unit_price,mouser_stock,digikey_stock,sourcing_status,sourcing_notes
+Kyocera AVX,08051C105K4T2A,1,,581-08051C105K4T2A,,0.158,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
+Murata,GCJ188R72A104KA01D,1,Mouser,81-GCJ188R72A104KA1D,1,$0.18,527922,0,sourced_mouser,Mouser can cover full required quantity.
+Kyocera AVX,08051C103K4T4A,4,Mouser,581-08051C103K4T4A,4,$0.12,31616,0,sourced_mouser,Mouser can cover full required quantity.
+TDK,C1608X7R1H104K080AA,5,Mouser,810-C1608X7R1H104K,5,$0.10,1553403,0,sourced_mouser,Mouser can cover full required quantity.
+Murata,GRM21B5C1H223JA01K,1,Mouser,81-GRM21B5C1H223JA1K,1,$0.26,8994,0,sourced_mouser,Mouser can cover full required quantity.
+TDK,C2012X7S2A105K125AB,1,Mouser,810-C2012X7S2A105K,1,$0.40,551526,0,sourced_mouser,Mouser can cover full required quantity.
+Murata,GCJ188R72A104KA01D,7,Mouser,81-GCJ188R72A104KA1D,7,$0.18,527922,0,sourced_mouser,Mouser can cover full required quantity.
+Wurth Electronics,885012207110,1,,732-12231-1-ND,,0.0423,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
+Murata,GRM21BZ7YA475ME15L,3,Mouser,81-GRM21BZ7YA475ME5L,3,$0.28,11408,0,sourced_mouser,Mouser can cover full required quantity.
+Samsung,CL32B475KCVZW6E,1,Mouser,187-CL32B475KCVZW6E,1,$0.98,36493,0,sourced_mouser,Mouser can cover full required quantity.
+TDK,C3225X7R1N106K250AC,2,DigiKey,,2,0.37827,0,45893,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
+Murata,GCM188R72A103KA37J,2,Mouser,81-GCM188R72A103KA7J,2,$0.10,71604,0,sourced_mouser,Mouser can cover full required quantity.
+Vishay Lite-On,LTST-C190GKT,6,,160-1183-1-ND,,0.05134,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
+Vishay Lite-On,LTST-C190EKT,5,,160-1182-1-ND,,0.05448,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
+,FSV20150V,2,Mouser,512-FSV20150V,2,$0.63,44742,0,sourced_mouser,Mouser can cover full required quantity.
+Vishay Semiconductors,SMBJ3V3-E3/5B,1,Mouser,625-SMBJ3V3-E3/5B,1,$0.43,103608,0,sourced_mouser,Mouser can cover full required quantity.
+,SMCJ13A,3,,,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/SMCJ13A/productdetails
+,0685P9200-01,1,Mouser,530-0685P9200-01,1,$0.58,4353,0,sourced_mouser,Mouser can cover full required quantity.
+,,1,,,,,,,manual_review,Missing MPN; cannot source.
+Laird Steward,CM5441Z161B-10,1,,875-CM5441Z161B-10,,1.95,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
+TE Connectivity,2013499-1,1,Mouser,571-2013499-1,1,$1.67,2322,0,sourced_mouser,Mouser can cover full required quantity.
+TE-Connectivity,2345986-1,2,,,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
+TE Connectivity,2-1445100-4,1,Mouser,571-2-1445100-4,1,$2.56,1285,0,sourced_mouser,Mouser can cover full required quantity.
+ON Semiconductor,2N7002KT1G,2,,04X9594,,0.03,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.
+Infineon,BSC520N15NS3GATMA1,2,DigiKey,,2,0.4605,0,14812,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
+Yageo,RC0603JR-073K3L,1,Mouser,603-RC0603JR-073K3L,1,$0.12,77567,0,sourced_mouser,Mouser can cover full required quantity.
+KOA Speer,RK73B1JTTD471J,7,Mouser,660-RK73B1JTTD471J,7,$0.10,45773,0,sourced_mouser,Mouser can cover full required quantity.
+Yageo,RT0603FRE071K5L,4,Mouser,603-RT0603FRE071K5L,4,$0.10,42777,0,sourced_mouser,Mouser can cover full required quantity.
+Susumu,RL3720WT-R050-F,1,Mouser,754-RL3720WT-R050-F,1,$0.70,4250,0,sourced_mouser,Mouser can cover full required quantity.
+KOA Speer,RK73H1JTTD4991D,1,Mouser,660-RK73H1JTTD4991D,1,$0.21,6798,0,sourced_mouser,Mouser can cover full required quantity.
+,ERA-8AEB5903V,2,Mouser,667-ERA-8AEB5903V,2,$0.27,230,0,sourced_mouser,Mouser can cover full required quantity.
+KOA Speer,RK73H1JTTD1303F,1,Mouser,660-RK73H1JTTD1303F,1,$0.10,14369,0,sourced_mouser,Mouser can cover full required quantity.
+Yageo,RC1210JR-0710KL,3,Mouser,603-RC1210JR-0710KL,3,$0.12,6498,0,sourced_mouser,Mouser can cover full required quantity.
+Yageo,RC0603FR-070RL,5,Mouser,603-RC0603FR-070RL,5,$0.10,408158,0,sourced_mouser,Mouser can cover full required quantity.
+Panasonic,ERA-6AEB1403V,1,Mouser,667-ERA-6AEB1403V,1,$0.10,5213,0,sourced_mouser,Mouser can cover full required quantity.
+Panasonic,ERA-6AEB1872V,3,Mouser,667-ERA-6AEB1872V,3,$0.10,9954,0,sourced_mouser,Mouser can cover full required quantity.
+TE Connectivity,CRG0603F10K,1,,279-1622829-1,,0.011,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/CRG0603F10K/productdetails
+Vishay Dale,CRCW06031R00JNEA,2,Mouser,71-CRCW0603J-1-E3,2,$0.10,20915,0,sourced_mouser,Mouser can cover full required quantity.
+KOA Speer,RK73H1JTTD3482F,1,Mouser,660-RK73H1JTTD3482F,1,$0.10,44321,0,sourced_mouser,Mouser can cover full required quantity.
+KOA Speer,RK73H1JTTD2213F,1,Mouser,660-RK73H1JTTD2213F,1,$0.10,3864,0,sourced_mouser,Mouser can cover full required quantity.
+Taiwan Semiconductor,TQL850CSV33RLG,1,,1801-TQL850CSV33RLGCT-ND,,1.09,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/TQL850CSV33RLG/productdetails
+Texas Instruments,ISO7720DR,1,Mouser,595-ISO7720DR,1,$2.05,5211,0,sourced_mouser,Mouser can cover full required quantity.
+Texas Instruments,ISO1540QDRQ1,1,Mouser,595-ISO1540QDRQ1,1,$5.15,3514,0,sourced_mouser,Mouser can cover full required quantity.
+Texas Instruments,INA237AIDGSR,1,Mouser,595-INA237AIDGSR,1,$2.44,135,0,sourced_mouser,Mouser can cover full required quantity.
+Analog Devices / Linear Technology,LT3758AHMSE#PBF,1,,584-LT3758AHMSE#PBF,,4.77,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/LT3758AHMSE#PBF/productdetails
+TDK,C3216X5R1V226M160AC,18,DigiKey,,18,0.26637,0,1605725,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+KYOCERA AVX,22201C106MAT2A,11,DigiKey,,11,0.85282,0,73184,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+TDK,CGA4J1X7R1V475K125AC,1,DigiKey,,1,0.14158,0,88809,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+Murata,GRM188R6YA106MA73J,2,DigiKey,,2,0.04783,0,154058,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+TAIYO YUDEN,UMK107BJ474KAHT,1,DigiKey,,1,0.028,0,27262,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+Vishay,MAL215099103E3,2,DigiKey,,2,1.24244,0,15309,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+TDK,C3216X5R1E476M160AC,1,DigiKey,,1,0.29897,0,1483886,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+Yageo Group,C0603C681J5GACTU,1,,80-C0603C681J5G,,0.031,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+Vishay,MAL215099907E3,1,DigiKey,,1,1.28952,0,6675,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+TDK,C1608X7R1H104K080AA,1,DigiKey,,1,0.01763,0,688449,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+TDK,C2012X7R2E103K125AA,1,DigiKey,,1,0.02661,0,48399,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+onsemi,MBRA340T3G,1,DigiKey,,1,0.19897,0,251637,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+Molex,73251-1350,1,,,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/73251-1350/productdetails
+Coilcraft,AGP4233-223ME,1,,994-AGP4233-223ME,,20.63,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+,XEL4030-472MEC,1,,,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+Coilcraft,MA5173-AE,1,,,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54; DigiKey lookup failed: 404 Client Error: Not Found for url: https://api.digikey.com/products/v4/search/MA5173-AE/productdetails
+TE-Connectivity,6-292161-6,1,,,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+TE Connectivity,1-350942-0,1,DigiKey,,1,2.09,0,5038,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+TE Connectivity / AMP,2-1445056-2,1,,,,,0,0,check_wall_inventory,Neither Mouser nor DigiKey can cover full required quantity.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+TDK-Lambda,CC6-1212SR-E,1,DigiKey,,1,22.72,0,375,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+Vishay,WSLP25125L000FEA,1,DigiKey,,1,0.50343,0,4346,sourced_digikey,Mouser could not cover full quantity; DigiKey can.; Mouser lookup failed: 403 Client Error: Forbidden for url: https://api.mouser.com/api/v1/search/partnumber?apiKey=09ea3391-8c74-49ab-86a4-7d30aacd0b54
+TE Connectivity,CRGP0603F10K,4,Mouser,279-CRGP0603F10K,4,$0.17,117019,0,sourced_mouser,Mouser can cover full required quantity.
+KOA Speer,RK73H1JTTD1622F,1,Mouser,660-RK73H1JTTD1622F,1,$0.10,22276,0,sourced_mouser,Mouser can cover full required quantity.
+Panasonic,ERJ-3EKF6342V,1,Mouser,667-ERJ-3EKF6342V,1,$0.10,22467,0,sourced_mouser,Mouser can cover full required quantity.
+Panasonic,ERJ-3GEYJ153V,1,Mouser,667-ERJ-3GEYJ153V,1,$0.10,71807,0,sourced_mouser,Mouser can cover full required quantity.
+TE Connectivity,CRGCQ0603F100K,1,Mouser,279-CRGCQ0603F100K,1,$0.10,38081,0,sourced_mouser,Mouser can cover full required quantity.
+Yageo Group,RT0603FRE07536KL,1,Mouser,603-RT0603FRE07536KL,1,$0.10,5759,0,sourced_mouser,Mouser can cover full required quantity.
+Vishay,WSHP28185L000FEA,1,Mouser,71-WSHP28185L000FEA,1,$3.34,441,0,sourced_mouser,Mouser can cover full required quantity.
+TE Connectivity,CRGP0603F10K,1,Mouser,279-CRGP0603F10K,1,$0.17,117019,0,sourced_mouser,Mouser can cover full required quantity.
+Keystone,5000,4,Mouser,534-5000,4,$0.32,372940,0,sourced_mouser,Mouser can cover full required quantity.
+Keystone,5001,4,Mouser,534-5001,4,$0.21,958048,0,sourced_mouser,Mouser can cover full required quantity.
+Analog Devices,LT1913EDD#PBF,1,Mouser,584-LT1913EDD#PBF,1,$11.27,5010,0,sourced_mouser,Mouser can cover full required quantity.
+Texas Instruments,INA228AIDGSR,1,Mouser,595-INA228AIDGSR,1,$4.54,45105,0,sourced_mouser,Mouser can cover full required quantity.

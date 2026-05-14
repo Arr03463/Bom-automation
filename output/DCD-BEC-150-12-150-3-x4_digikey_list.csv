@@ -1,0 +1,3 @@
+mpn,manufacturer,required_qty,supplier_order_qty,selected_supplier,sourcing_status,sourcing_notes
+XGL5050-153MEC,,5,5,DigiKey,sourced_digikey,Mouser could not cover full quantity; DigiKey can.
+BSC520N15NS3GATMA1,,15,15,DigiKey,sourced_digikey,Mouser could not cover full quantity; DigiKey can.

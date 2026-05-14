@@ -16,7 +16,7 @@ def build_default_names(project_name):
 
     return {
         "project_name": clean_name,
-        "storage_name": f"{clean_name} - Incoming Parts",
+        "storage_name": clean_name,
         "import_file_name": re.sub(r"[^A-Za-z0-9._-]+", "_", clean_name).strip("_")
         + "_partsbox_import.csv",
     }
@@ -53,12 +53,11 @@ def parse_quantity(value):
 
 def calculate_project_entry_quantity(row):
     qty_per_board = parse_quantity(row.get("qty_per_board", ""))
-    build_quantity = parse_quantity(row.get("build_quantity", ""))
 
-    if qty_per_board is None or build_quantity is None:
+    if qty_per_board is None:
         return None
 
-    return qty_per_board * build_quantity
+    return qty_per_board
 
 
 def build_entry_name(mpn, description, order_number):
@@ -131,7 +130,7 @@ def build_project_entries(clean_bom, client):
         unmatched_row["partsbox_match_status"] = "unmatched"
 
         if quantity is None:
-            unmatched_row["partsbox_match_notes"] = "Missing or invalid BOM/build quantity."
+            unmatched_row["partsbox_match_notes"] = "Missing or invalid BOM quantity."
             unmatched_rows.append(unmatched_row)
             continue
 

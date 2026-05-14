@@ -326,6 +326,7 @@ def clean_rows(df):
     variant so it can return row-level warnings as a separate sheet.
     """
     clean_df, _ = _clean_standard_rows(df, source_file="")
+    clean_df, _ = _consolidate_duplicate_parts(clean_df, source_file="")
     return clean_df
 
 
@@ -362,10 +363,15 @@ def process_bom_file(file_path):
 
     clean_df, mapping_warnings = _build_standard_rows(working_df, candidates, source_file)
     clean_df, row_warnings = _clean_standard_rows(clean_df, source_file)
+    clean_df, consolidation_warnings = _consolidate_duplicate_parts(clean_df, source_file)
     review_items = clean_df[clean_df["status"].isin(REVIEW_STATUSES)].copy()
 
     warnings_df = _make_warnings_df(
-        junk_warnings + empty_row_warnings + mapping_warnings + row_warnings
+        junk_warnings
+        + empty_row_warnings
+        + mapping_warnings
+        + row_warnings
+        + consolidation_warnings
     )
 
     return BomCleanResult(
@@ -707,6 +713,68 @@ def _clean_standard_rows(df, source_file):
     return clean_df[STANDARD_COLUMNS], warnings
 
 
+def _consolidate_duplicate_parts(clean_df, source_file):
+    if clean_df.empty:
+        return clean_df.copy(), []
+
+    grouped_indexes = {}
+    for index, row in clean_df.iterrows():
+        key = _duplicate_part_key(row)
+        if key:
+            grouped_indexes.setdefault(key, []).append(index)
+
+    consolidated_rows = []
+    warnings = []
+    processed_indexes = set()
+
+    for index, row in clean_df.iterrows():
+        if index in processed_indexes:
+            continue
+
+        key = _duplicate_part_key(row)
+        if not key or len(grouped_indexes.get(key, [])) < 2:
+            consolidated_rows.append(row.to_dict())
+            processed_indexes.add(index)
+            continue
+
+        group_indexes = grouped_indexes[key]
+        group_rows = [clean_df.loc[group_index] for group_index in group_indexes]
+        parsed_quantities = [_parse_quantity(group_row.get("qty_per_board", "")) for group_row in group_rows]
+
+        if any(quantity is None for quantity in parsed_quantities):
+            for group_index in group_indexes:
+                consolidated_rows.append(clean_df.loc[group_index].to_dict())
+                processed_indexes.add(group_index)
+
+            warnings.append(
+                _warning(
+                    source_file,
+                    _combine_source_rows(group_rows),
+                    "duplicate_part",
+                    "Duplicate part rows were not consolidated because at least one quantity is invalid",
+                    _duplicate_part_label(group_rows[0]),
+                )
+            )
+            continue
+
+        consolidated_row = _build_consolidated_part_row(group_rows, parsed_quantities)
+        consolidated_rows.append(consolidated_row)
+        processed_indexes.update(group_indexes)
+
+        warnings.append(
+            _warning(
+                source_file,
+                consolidated_row["source_row"],
+                "duplicate_part",
+                "Consolidated duplicate BOM rows by manufacturer and MPN",
+                _duplicate_part_label(group_rows[0]),
+            )
+        )
+
+    consolidated_df = pd.DataFrame(consolidated_rows, columns=STANDARD_COLUMNS)
+    return consolidated_df, warnings
+
+
 def _apply_combined_manufacturer_mpn_parse(output_row, source_row, candidates, selected_sources):
     notes = []
 
@@ -736,6 +804,140 @@ def _apply_combined_manufacturer_mpn_parse(output_row, source_row, candidates, s
         return notes
 
     return notes
+
+
+def _duplicate_part_key(row):
+    manufacturer = _normalize_duplicate_manufacturer_key(row.get("manufacturer", ""))
+    mpn = clean_text(row.get("mpn", "")).lower()
+
+    if not manufacturer or not mpn:
+        return None
+
+    return manufacturer, mpn
+
+
+def _duplicate_part_label(row):
+    manufacturer = clean_text(row.get("manufacturer", ""))
+    mpn = clean_text(row.get("mpn", ""))
+    return f"{manufacturer} / {mpn}".strip(" /")
+
+
+def _normalize_duplicate_manufacturer_key(value):
+    text = clean_text(value).lower()
+    text = text.replace("&", " and ")
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return " ".join(text.split())
+
+
+def _build_consolidated_part_row(rows, parsed_quantities):
+    first_row = rows[0]
+    supplier_row = _preferred_supplier_row(rows)
+
+    notes = []
+    for row in rows:
+        notes.extend(_split_notes(row.get("notes", "")))
+    notes.append(f"consolidated duplicate BOM rows: {_combine_source_rows(rows)}")
+
+    consolidated_row = {
+        "source_file": clean_text(first_row.get("source_file", "")),
+        "source_row": _combine_source_rows(rows),
+        "designators": _combine_designators(rows),
+        "qty_per_board": sum(parsed_quantities),
+        "build_quantity": _first_non_empty_from_rows(rows, "build_quantity"),
+        "required_qty": _sum_numeric_field(rows, "required_qty"),
+        "manufacturer": clean_text(first_row.get("manufacturer", "")),
+        "mpn": clean_text(first_row.get("mpn", "")),
+        "description": _first_non_empty_from_rows(rows, "description"),
+        "supplier": clean_text(supplier_row.get("supplier", "")),
+        "supplier_part_number": clean_text(supplier_row.get("supplier_part_number", "")),
+        "unit_price": clean_text(supplier_row.get("unit_price", "")),
+        "subtotal": clean_text(supplier_row.get("subtotal", "")),
+        "lifecycle_status": _first_non_empty_from_rows(rows, "lifecycle_status"),
+        "build_multiplier": _combine_unique_field_values(rows, "build_multiplier"),
+        "status": "",
+        "notes": "; ".join(_dedupe_notes(notes)),
+    }
+
+    consolidated_row["status"] = determine_status(consolidated_row)
+    return consolidated_row
+
+
+def _combine_source_rows(rows):
+    values = []
+    seen = set()
+
+    for row in rows:
+        value = clean_text(row.get("source_row", ""))
+        if value and value not in seen:
+            seen.add(value)
+            values.append(value)
+
+    return ", ".join(values)
+
+
+def _combine_designators(rows):
+    designators = []
+    seen = set()
+
+    for row in rows:
+        text = clean_text(row.get("designators", "")).replace(";", ",")
+        for comma_part in text.split(","):
+            for token in re.split(r"\s+", comma_part.strip()):
+                if token and token not in seen:
+                    seen.add(token)
+                    designators.append(token)
+
+    return ", ".join(designators)
+
+
+def _first_non_empty_from_rows(rows, field):
+    for row in rows:
+        value = clean_text(row.get(field, ""))
+        if value:
+            return value
+    return ""
+
+
+def _combine_unique_field_values(rows, field):
+    values = []
+    seen = set()
+
+    for row in rows:
+        value = clean_text(row.get(field, ""))
+        if value and value not in seen:
+            seen.add(value)
+            values.append(value)
+
+    return "; ".join(values)
+
+
+def _sum_numeric_field(rows, field):
+    values = []
+    for row in rows:
+        parsed_value = _parse_quantity(row.get(field, ""))
+        if parsed_value is None:
+            continue
+        values.append(parsed_value)
+
+    if not values:
+        return ""
+
+    return sum(values)
+
+
+def _preferred_supplier_row(rows):
+    def sort_key(row):
+        supplier = clean_text(row.get("supplier", "")).lower()
+        supplier_part_number = clean_text(row.get("supplier_part_number", ""))
+
+        return (
+            1 if supplier == "mouser" and supplier_part_number else 0,
+            1 if supplier_part_number else 0,
+            1 if supplier == "mouser" else 0,
+            1 if supplier else 0,
+        )
+
+    return max(rows, key=sort_key)
 
 
 def _parse_combined_manufacturer_mpn(value):
