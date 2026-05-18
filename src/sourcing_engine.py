@@ -1,6 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import inspect
+
+from supplier_lookup_cache import SupplierLookupCache, build_lookup_key
 
 
 @dataclass
@@ -36,10 +38,9 @@ def manufacturer_matches(expected, actual):
 
 
 def mpn_matches(expected, actual):
-    expected = str(expected or "").strip().lower()
-    actual = str(actual or "").strip().lower()
+    from manufacturer_aliases import part_numbers_equivalent
 
-    return expected == actual
+    return part_numbers_equivalent(expected, actual)
 
 
 def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
@@ -118,6 +119,8 @@ def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
 
 def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):
     updated = clean_bom.copy().astype(object)
+    persistent_cache = SupplierLookupCache()
+    run_cache = {}
 
     for col in [
         "selected_supplier",
@@ -145,18 +148,30 @@ def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):
             required_qty = parse_int(row.get("required_qty"))
 
             try:
-                mouser_result = mouser_lookup(row)
+                mouser_result = _cached_supplier_lookup(
+                    "mouser",
+                    row,
+                    persistent_cache,
+                    run_cache,
+                    lambda: mouser_lookup(row),
+                )
             except Exception as exc:
                 mouser_result = None
                 lookup_notes.append(f"Mouser lookup failed: {exc}")
 
             try:
                 if not mouser_result or required_qty is None or mouser_result.stock < required_qty:
-                    digikey_result = _call_digikey_lookup(
-                        digikey_lookup,
+                    digikey_result = _cached_supplier_lookup(
+                        "digikey",
                         row,
-                        mpn,
-                        manufacturer,
+                        persistent_cache,
+                        run_cache,
+                        lambda: _call_digikey_lookup(
+                            digikey_lookup,
+                            row,
+                            mpn,
+                            manufacturer,
+                        ),
                     )
             except Exception as exc:
                 digikey_result = None
@@ -173,7 +188,40 @@ def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):
         for key, value in decision.items():
             updated.at[index, key] = str(value)
 
+    persistent_cache.save()
     return updated
+
+
+def _cached_supplier_lookup(supplier_name, row, persistent_cache, run_cache, lookup_fn):
+    key = build_lookup_key(supplier_name, row)
+
+    if key in run_cache:
+        return run_cache[key]
+
+    cached_value = persistent_cache.get(key)
+    if cached_value:
+        result = _supplier_result_from_cache(cached_value)
+        run_cache[key] = result
+        return result
+
+    result = lookup_fn()
+    run_cache[key] = result
+
+    if result:
+        persistent_cache.set(key, _supplier_result_to_cache(result))
+
+    return result
+
+
+def _supplier_result_to_cache(result):
+    return asdict(result)
+
+
+def _supplier_result_from_cache(value):
+    try:
+        return SupplierResult(**value)
+    except TypeError:
+        return None
 
 
 def _call_digikey_lookup(digikey_lookup, row, mpn, manufacturer):

@@ -1,6 +1,9 @@
+import os
 import sys
 import unittest
 from pathlib import Path
+
+import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -8,7 +11,12 @@ SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
 
 from digikey_client import DigiKeyClient
+from manufacturer_aliases import (
+    manufacturers_equivalent,
+    part_numbers_equivalent,
+)
 from mouser_client import MouserClient
+from sourcing_engine import SupplierResult, apply_sourcing_decisions
 
 
 class FakeMouserClient(MouserClient):
@@ -165,6 +173,130 @@ class SourcingAccuracyTests(unittest.TestCase):
         self.assertEqual(result.supplier_part_number, "296-ABC123-ND")
         self.assertIn("ProductDetails failed; fallback search used", result.notes)
         self.assertIn(("keyword_search", "ABC123"), client.calls)
+
+    def test_digikey_leading_numeric_mpn_variant_prefers_stocked_candidate(self):
+        client = FakeDigiKeyClient(
+            product_details={
+                "6-292161-6": digikey_product(
+                    "6-292161-6",
+                    "TE Connectivity AMP Connectors",
+                    0,
+                    "6-292161-6-ND",
+                )
+            },
+            keyword_results={
+                "6-292161-6": [
+                    digikey_product(
+                        "292161-6",
+                        "TE Connectivity AMP Connectors",
+                        6951,
+                        "A98592-ND",
+                    ),
+                    digikey_product(
+                        "6-292161-6",
+                        "TE Connectivity AMP Connectors",
+                        0,
+                        "6-292161-6-ND",
+                    ),
+                ]
+            },
+        )
+
+        result = client.find_best_match_for_row(
+            {
+                "mpn": "6-292161-6",
+                "manufacturer": "TE-Connectivity",
+                "required_qty": "1",
+            }
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.mpn, "292161-6")
+        self.assertEqual(result.supplier_part_number, "A98592-ND")
+        self.assertGreaterEqual(result.stock, 1)
+
+    def test_wurth_alias_and_scientific_notation_part_number(self):
+        self.assertTrue(manufacturers_equivalent("Wurth Electronics", "Würth Elektronik"))
+        self.assertTrue(part_numbers_equivalent("8.85012207110E+11", "885012207110"))
+
+    def test_digikey_wurth_alias_sources_numeric_mpn(self):
+        client = FakeDigiKeyClient(
+            product_details={
+                "885012207110": digikey_product(
+                    "885012207110",
+                    "Würth Elektronik",
+                    1741,
+                    "732-12231-2-ND",
+                )
+            }
+        )
+
+        result = client.find_best_match_for_row(
+            {
+                "mpn": "885012207110",
+                "manufacturer": "Wurth Electronics",
+                "supplier": "Digikey",
+                "supplier_part_number": "732-12231-1-ND",
+                "required_qty": "1",
+            }
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.mpn, "885012207110")
+        self.assertEqual(result.stock, 1741)
+
+    def test_apply_sourcing_decisions_deduplicates_repeated_supplier_lookups(self):
+        old_cache_setting = os.environ.get("SUPPLIER_LOOKUP_CACHE_ENABLED")
+        os.environ["SUPPLIER_LOOKUP_CACHE_ENABLED"] = "false"
+        rows = pd.DataFrame(
+            [
+                {
+                    "manufacturer": "Yageo",
+                    "mpn": "ABC123",
+                    "supplier_part_number": "",
+                    "required_qty": "10",
+                },
+                {
+                    "manufacturer": "Yageo",
+                    "mpn": "ABC123",
+                    "supplier_part_number": "",
+                    "required_qty": "10",
+                },
+            ]
+        )
+        calls = {"mouser": 0, "digikey": 0}
+
+        def mouser_lookup(row):
+            calls["mouser"] += 1
+            return SupplierResult(
+                supplier="Mouser",
+                manufacturer="Yageo",
+                mpn="ABC123",
+                stock=0,
+                supplier_part_number="603-ABC123",
+            )
+
+        def digikey_lookup(row):
+            calls["digikey"] += 1
+            return SupplierResult(
+                supplier="DigiKey",
+                manufacturer="Yageo",
+                mpn="ABC123",
+                stock=100,
+                supplier_part_number="ABC123-ND",
+            )
+
+        try:
+            sourced = apply_sourcing_decisions(rows, mouser_lookup, digikey_lookup)
+        finally:
+            if old_cache_setting is None:
+                os.environ.pop("SUPPLIER_LOOKUP_CACHE_ENABLED", None)
+            else:
+                os.environ["SUPPLIER_LOOKUP_CACHE_ENABLED"] = old_cache_setting
+
+        self.assertEqual(calls["mouser"], 1)
+        self.assertEqual(calls["digikey"], 1)
+        self.assertEqual(list(sourced["selected_supplier"]), ["DigiKey", "DigiKey"])
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ __pycache__/
 
 # Generated files
 output/
+.cache/
 
 # Local BOM inputs; keep test BOMs versioned
 input/*
