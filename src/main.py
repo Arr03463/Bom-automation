@@ -98,7 +98,7 @@ def main():
                 result.clean_bom = apply_sourcing_decisions(
                     result.clean_bom,
                     mouser_lookup=lambda row: None,
-                    digikey_lookup=digikey.find_best_match,
+                    digikey_lookup=digikey.find_best_match_for_row,
                 )
             else:
                 print("Supplier mode: Mouser first, DigiKey fallback")
@@ -108,7 +108,7 @@ def main():
                 result.clean_bom = apply_sourcing_decisions(
                     result.clean_bom,
                     mouser_lookup=mouser.find_best_match_for_row,
-                    digikey_lookup=digikey.find_best_match,
+                    digikey_lookup=digikey.find_best_match_for_row,
                 )
 
             sourcing_report_path = export_sourcing_report(

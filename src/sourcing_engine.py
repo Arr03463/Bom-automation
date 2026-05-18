@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import inspect
+
 
 @dataclass
 class SupplierResult:
@@ -30,6 +32,7 @@ def manufacturer_matches(expected, actual):
         return True
 
     return expected == actual or expected in actual or actual in expected
+
 
 
 def mpn_matches(expected, actual):
@@ -74,6 +77,9 @@ def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
     digikey_stock = digikey_result.stock if digikey_result else 0
 
     if mouser_result and mouser_stock >= required_qty:
+        notes = ["Mouser can cover full required quantity."]
+        if mouser_result.notes:
+            notes.append(mouser_result.notes)
         return {
             "selected_supplier": "Mouser",
             "supplier_part_number": mouser_result.supplier_part_number,
@@ -82,10 +88,13 @@ def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
             "mouser_stock": mouser_stock,
             "digikey_stock": digikey_stock,
             "sourcing_status": "sourced_mouser",
-            "sourcing_notes": "Mouser can cover full required quantity.",
+            "sourcing_notes": "; ".join(notes),
         }
 
     if digikey_result and digikey_stock >= required_qty:
+        notes = ["Mouser could not cover full quantity; DigiKey can."]
+        if digikey_result.notes:
+            notes.append(digikey_result.notes)
         return {
             "selected_supplier": "DigiKey",
             "supplier_part_number": digikey_result.supplier_part_number,
@@ -94,7 +103,7 @@ def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
             "mouser_stock": mouser_stock,
             "digikey_stock": digikey_stock,
             "sourcing_status": "sourced_digikey",
-            "sourcing_notes": "Mouser could not cover full quantity; DigiKey can.",
+            "sourcing_notes": "; ".join(notes),
     }
 
     return {
@@ -143,7 +152,12 @@ def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):
 
             try:
                 if not mouser_result or required_qty is None or mouser_result.stock < required_qty:
-                    digikey_result = digikey_lookup(mpn, manufacturer)
+                    digikey_result = _call_digikey_lookup(
+                        digikey_lookup,
+                        row,
+                        mpn,
+                        manufacturer,
+                    )
             except Exception as exc:
                 digikey_result = None
                 lookup_notes.append(f"DigiKey lookup failed: {exc}")
@@ -160,3 +174,21 @@ def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):
             updated.at[index, key] = str(value)
 
     return updated
+
+
+def _call_digikey_lookup(digikey_lookup, row, mpn, manufacturer):
+    signature = inspect.signature(digikey_lookup)
+    positional_parameters = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    ]
+
+    if len(positional_parameters) == 1:
+        return digikey_lookup(row)
+
+    return digikey_lookup(mpn, manufacturer)

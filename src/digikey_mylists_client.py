@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote
 
 import requests
@@ -7,11 +8,14 @@ from dotenv import load_dotenv
 
 from digikey_client import DigiKeyClient
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 
 class DigiKeyMyListsClient:
     def __init__(self):
+        load_dotenv(PROJECT_ROOT / ".env", override=True)
+
         self.base_url = os.getenv("DIGIKEY_BASE_URL", "https://api.digikey.com").strip()
         self.client_id = os.getenv("DIGIKEY_CLIENT_ID", "").strip()
         self.account_id = os.getenv("DIGIKEY_ACCOUNT_ID", "").strip()
@@ -37,7 +41,7 @@ class DigiKeyMyListsClient:
         }
 
         if self.account_id:
-            headers["X-DIGIKEY-Account-ID"] = self.account_id
+            headers["X-DIGIKEY-Account-Id"] = self.account_id
 
         return headers
 
@@ -59,7 +63,7 @@ class DigiKeyMyListsClient:
         if response.status_code >= 400:
             print("DigiKey IsValidListName response:", response.text)
 
-        response.raise_for_status()
+        _raise_for_status(response, "DigiKey MyLists name validation failed")
         result = response.json()
 
         if isinstance(result, bool):
@@ -85,7 +89,7 @@ class DigiKeyMyListsClient:
         if response.status_code >= 400:
             print("DigiKey ValidListName response:", response.text)
 
-        response.raise_for_status()
+        _raise_for_status(response, "DigiKey MyLists valid-name request failed")
         result = response.json()
 
         if isinstance(result, str) and result.strip():
@@ -133,7 +137,7 @@ class DigiKeyMyListsClient:
         if response.status_code >= 400:
             print("DigiKey CreateList response:", response.text)
 
-        response.raise_for_status()
+        _raise_for_status(response, "DigiKey MyLists create-list request failed")
         return response.json()
 
     def add_parts_to_list(self, list_id, parts):
@@ -161,7 +165,7 @@ class DigiKeyMyListsClient:
         if response.status_code >= 400:
             print("DigiKey AddParts response:", response.text)
 
-        response.raise_for_status()
+        _raise_for_status(response, "DigiKey MyLists add-parts request failed")
         return response.json()
 
 
@@ -253,3 +257,22 @@ def create_digikey_mylist_from_bom(clean_bom, list_name):
         "create_result": create_result,
         "add_result": add_result,
     }
+
+
+def _raise_for_status(response, context):
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        detail = response.text.strip()
+        try:
+            payload = response.json()
+            message = payload.get("ErrorMessage") or payload.get("message")
+            error_detail = payload.get("ErrorDetails") or payload.get("detail")
+            request_id = payload.get("RequestId")
+            parts = [part for part in [message, error_detail, f"RequestId: {request_id}" if request_id else ""] if part]
+            if parts:
+                detail = " | ".join(parts)
+        except ValueError:
+            pass
+
+        raise RuntimeError(f"{context}: {response.status_code} {detail}") from exc

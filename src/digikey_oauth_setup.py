@@ -9,10 +9,17 @@ import requests
 from dotenv import load_dotenv
 
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ENV_PATH = PROJECT_ROOT / ".env"
+
+load_dotenv(ENV_PATH, override=True)
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].strip().lower() in {"--check", "check"}:
+        check_existing_refresh_token()
+        return
+
     client_id = os.getenv("DIGIKEY_CLIENT_ID", "").strip()
     client_secret = os.getenv("DIGIKEY_CLIENT_SECRET", "").strip()
     token_url = os.getenv("DIGIKEY_TOKEN_URL", "https://api.digikey.com/v1/oauth2/token").strip()
@@ -98,7 +105,7 @@ def _first(query, name):
 
 
 def _set_env_value(name, value):
-    env_path = Path(".env")
+    env_path = ENV_PATH
     lines = env_path.read_text().splitlines() if env_path.exists() else []
 
     for index, line in enumerate(lines):
@@ -113,6 +120,48 @@ def _set_env_value(name, value):
 
     lines.append(f"{name}={value}")
     env_path.write_text("\n".join(lines) + "\n")
+
+
+def check_existing_refresh_token():
+    client_id = os.getenv("DIGIKEY_CLIENT_ID", "").strip()
+    client_secret = os.getenv("DIGIKEY_CLIENT_SECRET", "").strip()
+    refresh_token = os.getenv("DIGIKEY_REFRESH_TOKEN", "").strip()
+    token_url = os.getenv("DIGIKEY_TOKEN_URL", "https://api.digikey.com/v1/oauth2/token").strip()
+
+    if not client_id or not client_secret:
+        raise ValueError("Missing DIGIKEY_CLIENT_ID or DIGIKEY_CLIENT_SECRET in .env")
+
+    if not refresh_token:
+        raise ValueError("Missing DIGIKEY_REFRESH_TOKEN in .env")
+
+    response = requests.post(
+        token_url,
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        },
+        timeout=30,
+    )
+
+    if response.status_code >= 400:
+        print("DigiKey refresh token check failed.")
+        print(response.text)
+        response.raise_for_status()
+
+    token_data = response.json()
+    new_refresh_token = token_data.get("refresh_token", "").strip()
+    access_token = token_data.get("access_token", "").strip()
+
+    if new_refresh_token and new_refresh_token != refresh_token:
+        _set_env_value("DIGIKEY_REFRESH_TOKEN", new_refresh_token)
+        print("DigiKey refresh token is valid. Saved rotated refresh token in .env.")
+    else:
+        print("DigiKey refresh token is valid.")
+
+    if access_token:
+        print("Received a user access token.")
 
 
 if __name__ == "__main__":
