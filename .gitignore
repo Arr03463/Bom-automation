@@ -8,3 +8,10 @@ __pycache__/
 
 # Secrets
 .env
+
+# Generated files
+output/
+
+# Local BOM inputs; keep test BOMs versioned
+input/*
+!input/test_bom*.csv
