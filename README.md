@@ -132,6 +132,9 @@ MOUSER_SEARCH_DELAY_SECONDS=2.1
 MOUSER_RATE_LIMIT_RETRY_SECONDS=65
 MOUSER_RATE_LIMIT_RETRIES=1
 
+SUPPLIER_LOOKUP_CACHE_ENABLED=true
+SUPPLIER_LOOKUP_CACHE_PATH=.cache/supplier_lookup_cache.json
+
 DIGIKEY_CLIENT_ID=
 DIGIKEY_CLIENT_SECRET=
 DIGIKEY_BASE_URL=https://api.digikey.com
@@ -179,6 +182,20 @@ Generated files are written to `output/`, including:
 - run summary JSON
 
 `output/` is ignored by Git.
+
+Supplier lookup cache is written to:
+
+```text
+.cache/supplier_lookup_cache.json
+```
+
+The cache stores successful Mouser/DigiKey lookup results by supplier, manufacturer, MPN, and supplier part number. Repeated parts in the same BOM are deduplicated during a run, and later runs can reuse cached successful results. `.cache/` is ignored by Git.
+
+To disable persistent supplier cache:
+
+```env
+SUPPLIER_LOOKUP_CACHE_ENABLED=false
+```
 
 ## Inputs And Git Tracking
 

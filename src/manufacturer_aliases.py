@@ -1,4 +1,5 @@
 import re
+import unicodedata
 
 
 MANUFACTURER_ALIASES = {
@@ -119,6 +120,12 @@ MANUFACTURER_ALIASES = {
     "wurth": "wurth elektronik",
     "würth": "wurth elektronik",
     "wurth elektronik": "wurth elektronik",
+    "wurth electronics": "wurth elektronik",
+    "w rth elektronik": "wurth elektronik",
+    "w rth electronics": "wurth elektronik",
+    "wuerth": "wurth elektronik",
+    "wuerth elektronik": "wurth elektronik",
+    "wuerth electronics": "wurth elektronik",
     "we": "wurth elektronik",
 
     # Renesas
@@ -217,11 +224,34 @@ MANUFACTURER_ALIASES = {
 
 
 def normalize_part_number(value):
-    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+    text = str(value or "").strip()
+    scientific_value = _scientific_notation_to_integer_text(text)
+    if scientific_value:
+        text = scientific_value
+    return re.sub(r"[^a-z0-9]+", "", _ascii_fold(text).lower())
+
+
+def part_number_variants(value):
+    text = str(value or "").strip().lower()
+    variants = {normalize_part_number(text)}
+
+    # Some connector MPNs appear with a leading packaging/color/tooling digit,
+    # for example TE Connectivity 6-292161-6 vs 292161-6.
+    match = re.match(r"^\d+-([a-z0-9].*)$", text)
+    if match:
+        variants.add(normalize_part_number(match.group(1)))
+
+    return {variant for variant in variants if variant}
+
+
+def part_numbers_equivalent(expected, actual):
+    expected_variants = part_number_variants(expected)
+    actual_variants = part_number_variants(actual)
+    return bool(expected_variants and actual_variants and expected_variants & actual_variants)
 
 
 def normalize_manufacturer(value):
-    text = str(value or "").lower()
+    text = _ascii_fold(value).lower()
     text = text.replace("&", " and ")
     text = re.sub(r"\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc)\b", " ", text)
     text = re.sub(r"[^a-z0-9]+", " ", text)
@@ -237,3 +267,31 @@ def manufacturers_equivalent(expected, actual):
         return True
 
     return expected == actual or expected in actual or actual in expected
+
+
+def _ascii_fold(value):
+    text = str(value or "")
+    text = (
+        text.replace("ü", "u")
+        .replace("Ü", "U")
+        .replace("Ã¼", "u")
+        .replace("Ãœ", "U")
+    )
+    normalized = unicodedata.normalize("NFKD", text)
+    return normalized.encode("ascii", "ignore").decode("ascii")
+
+
+def _scientific_notation_to_integer_text(value):
+    text = str(value or "").strip()
+    if not re.fullmatch(r"[+-]?\d+(?:\.\d+)?[eE][+-]?\d+", text):
+        return ""
+
+    try:
+        number = float(text)
+    except ValueError:
+        return ""
+
+    if not number.is_integer():
+        return ""
+
+    return str(int(number))

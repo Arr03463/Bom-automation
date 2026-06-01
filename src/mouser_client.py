@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from manufacturer_aliases import (
     manufacturers_equivalent,
     normalize_part_number,
+    part_numbers_equivalent,
 )
 from sourcing_engine import SupplierResult, manufacturer_matches, mpn_matches, parse_int
 
@@ -201,7 +202,7 @@ def _rank_candidates(
     for candidate in candidates:
         mpn_key = normalize_part_number(candidate.mpn)
         supplier_key = normalize_part_number(candidate.supplier_part_number)
-        mpn_matches_candidate = requested_key == mpn_key
+        mpn_matches_candidate = part_numbers_equivalent(requested_part_number, candidate.mpn)
         supplier_matches_candidate = requested_key == supplier_key
 
         if match_supplier_part_number:

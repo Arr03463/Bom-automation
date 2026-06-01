@@ -4,7 +4,11 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from manufacturer_aliases import manufacturers_equivalent, normalize_part_number
+from manufacturer_aliases import (
+    manufacturers_equivalent,
+    normalize_part_number,
+    part_numbers_equivalent,
+)
 from sourcing_engine import SupplierResult, manufacturer_matches, mpn_matches
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -162,7 +166,8 @@ class DigiKeyClient:
 
     def find_best_match(self, mpn, manufacturer="", required_qty=None):
         result = self.find_exact_match(mpn, manufacturer, required_qty=required_qty)
-        if result:
+        parsed_required_qty = _parse_int(required_qty)
+        if result and (parsed_required_qty is None or result.stock >= parsed_required_qty):
             return result
 
         return self.find_best_match_relaxed(mpn, manufacturer, required_qty=required_qty)
@@ -182,6 +187,18 @@ class DigiKeyClient:
         return _rank_candidates(candidates, mpn, manufacturer, required_qty, relaxed=False)
 
     def find_best_match_relaxed(self, mpn, manufacturer="", required_qty=None):
+        parsed_required_qty = _parse_int(required_qty)
+        try:
+            data = self.product_details(mpn)
+            candidate = _digikey_product_to_result(data.get("Product", data))
+            result = _rank_candidates([candidate], mpn, manufacturer, required_qty, relaxed=True)
+            if result and (parsed_required_qty is None or result.stock >= parsed_required_qty):
+                if manufacturer and manufacturers_equivalent(manufacturer, result.manufacturer):
+                    result.notes = _append_note(result.notes, "Found by relaxed manufacturer alias")
+                return result
+        except Exception:
+            pass
+
         candidates = self.search_candidates(mpn)
         result = _rank_candidates(candidates, mpn, manufacturer, required_qty, relaxed=True)
         if result and manufacturer and manufacturers_equivalent(manufacturer, result.manufacturer):
@@ -231,7 +248,7 @@ class DigiKeyClient:
         required_qty = _parse_int(row.get("required_qty"))
 
         result = self.find_exact_match(mpn, manufacturer, required_qty=required_qty)
-        if result:
+        if result and (required_qty is None or result.stock >= required_qty):
             return result
 
         if supplier == "digikey" and supplier_part_number:
@@ -350,7 +367,7 @@ def _rank_candidates(
     for candidate in candidates:
         mpn_key = normalize_part_number(candidate.mpn)
         supplier_key = normalize_part_number(candidate.supplier_part_number)
-        mpn_matches_candidate = requested_key == mpn_key
+        mpn_matches_candidate = part_numbers_equivalent(requested_part_number, candidate.mpn)
         supplier_matches_candidate = requested_key == supplier_key
 
         if match_supplier_part_number:
