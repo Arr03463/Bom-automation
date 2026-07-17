@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AutoBOM — Platform</title>
+<template id="__bundler_thumbnail">
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+<rect width="100" height="100" fill="#0D1117"/>
+<rect x="30" y="30" width="40" height="40" rx="9" fill="#2563EB"/>
+<text x="50" y="58" font-family="Inter,sans-serif" font-size="22" font-weight="800" fill="#fff" text-anchor="middle">A</text>
+</svg>
+</template>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+<body>
+<div id="root"></div>
+<script>
+/* Diagnostic error overlay — surfaces any load/transform/runtime error on-page
+   so a blank render is never silent. Remove once stable. */
+(function () {
+  function show(title, detail) {
+    var r = document.getElementById('root');
+    if (!r) return;
+    if (!r.querySelector('[data-err-overlay]')) {
+      r.innerHTML = '<div data-err-overlay style="font:13px/1.5 ui-monospace,Menlo,monospace;padding:24px;color:#b91c1c;background:#fff;white-space:pre-wrap;max-width:900px;margin:0 auto"></div>';
+    }
+    var box = r.querySelector('[data-err-overlay]');
+    box.textContent += '⚠ ' + title + '\n' + (detail || '') + '\n\n';
+  }
+  window.addEventListener('error', function (e) {
+    show(e.message || 'Script error', (e.filename || '') + ':' + (e.lineno || '') + (e.error && e.error.stack ? '\n' + e.error.stack : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    show('Unhandled promise rejection', (e.reason && (e.reason.stack || e.reason.message)) || String(e.reason));
+  });
+  /* After load, verify the CDN libraries and app actually arrived. */
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      var miss = [];
+      if (typeof React === 'undefined') miss.push('React (CDN)');
+      if (typeof ReactDOM === 'undefined') miss.push('ReactDOM (CDN)');
+      if (typeof Babel === 'undefined') miss.push('Babel (CDN)');
+      if (typeof window.seedState === 'undefined') miss.push('data.jsx');
+      if (typeof window.App === 'undefined') miss.push('app.jsx (App)');
+      var r = document.getElementById('root');
+      var empty = r && r.childElementCount === 0;
+      if (miss.length) show('Failed to load: ' + miss.join(', '), 'Likely a blocked CDN fetch or an SRI integrity mismatch. The app cannot start without these.');
+      else if (empty) show('Libraries loaded but nothing rendered', 'React/Babel are present and the app compiled, but <div id="root"> is empty — a runtime error in App render.');
+    }, 4000);
+  });
+})();
+</script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+<script type="text/babel" src="src/core/ui.jsx"></script>
+<script type="text/babel" src="src/core/permissions.jsx"></script>
+<script type="text/babel" src="src/core/inventory_data.jsx"></script>
+<script type="text/babel" src="src/core/data.jsx"></script>
+<script type="text/babel" src="src/core/store.jsx"></script>
+<script type="text/babel" src="src/core/nav.jsx"></script>
+<script type="text/babel" src="src/core/shell.jsx"></script>
+<script type="text/babel" src="src/screens/screen_dashboard.jsx"></script>
+<script type="text/babel" src="src/features/needs_attention.jsx"></script>
+<script type="text/babel" src="src/screens/screen_search.jsx"></script>
+<script type="text/babel" src="src/screens/screen_collections.jsx"></script>
+<script type="text/babel" src="src/screens/screen_collection_detail.jsx"></script>
+<script type="text/babel" src="src/screens/screen_production.jsx"></script>
+<script type="text/babel" src="src/screens/screen_production_pipeline.jsx"></script>
+<script type="text/babel" src="src/screens/screen_production_results.jsx"></script>
+<script type="text/babel" src="src/screens/screen_bom_overview.jsx"></script>
+<script type="text/babel" src="src/screens/screen_embedded.jsx"></script>
+<script type="text/babel" src="src/screens/screen_admin.jsx"></script>
+<script type="text/babel" src="src/screens/screen_development.jsx"></script>
+<script type="text/babel" src="src/screens/screen_dev_collections.jsx"></script>
+<script type="text/babel" src="src/features/inline_part_verify.jsx"></script>
+<script type="text/babel" src="src/features/pushback_resolve.jsx"></script>
+<script type="text/babel" src="src/screens/screen_addons.jsx"></script>
+<script type="text/babel" src="src/screens/screen_shared.jsx"></script>
+<script type="text/babel" src="src/screens/screen_login.jsx"></script>
+<script type="text/babel" src="src/screens/screen_create_flows.jsx"></script>
+<script type="text/babel" src="src/features/search.jsx"></script>
+<script type="text/babel" src="src/core/app.jsx"></script>
+</body>
+</html>
