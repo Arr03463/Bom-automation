@@ -8,10 +8,11 @@ from dotenv import load_dotenv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = PROJECT_ROOT.parent
 SRC_FOLDER = PROJECT_ROOT / "src"
 INPUT_FOLDER = PROJECT_ROOT / "input"
 
-load_dotenv(PROJECT_ROOT / ".env", override=True)
+load_dotenv(REPO_ROOT / ".env", override=True)
 
 if str(SRC_FOLDER) not in sys.path:
     sys.path.insert(0, str(SRC_FOLDER))

@@ -1,4 +1,10 @@
+import sys
+from pathlib import Path
+
 import pandas as pd
+
+SRC_FOLDER = Path(__file__).resolve().parents[1] / "src"
+sys.path.insert(0, str(SRC_FOLDER))
 
 from mouser_client import MouserClient
 from digikey_client import DigiKeyClient

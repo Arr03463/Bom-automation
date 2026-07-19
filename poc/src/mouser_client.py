@@ -13,7 +13,7 @@ from manufacturer_aliases import (
 from sourcing_engine import SupplierResult, manufacturer_matches, mpn_matches, parse_int
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
 

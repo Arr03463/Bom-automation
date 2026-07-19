@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 from digikey_client import DigiKeyClient
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 

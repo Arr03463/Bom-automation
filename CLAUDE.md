@@ -2,14 +2,79 @@
 
 **Source of truth:** the v1.5.1 baseline plus the four v4 module packages.
 
-- PRD: `uploads/AutoBOM_PRD_v1.5.1.docx`
-- Master Design Contract: `uploads/AutoBOM_Claude_Design_Package_v1.5.1.docx`
-- Permissions Matrix: `uploads/AutoBOM_Permissions_Matrix_v1.5.docx`
-- Module packages: Purchasing v4.1, Inventory Activation v3.1, Designer Workspace Alignment v1.1.1, Production Workspace Alignment v1.1.1
+- PRD: `docs/v1.5.1/00_Core_Spec/AutoBOM_PRD_v1.5.1.docx`
+- Master Design Contract: `docs/v1.5.1/00_Core_Spec/AutoBOM_Claude_Design_Package_v1.5.1.docx`
+- Permissions Matrix: `docs/v1.5.1/00_Core_Spec/AutoBOM_Permissions_Matrix_v1.5.docx`
+- Module packages: Purchasing **v4.2**, Inventory Activation v3.1, Designer Workspace Alignment v1.1.1, Production Workspace Alignment v1.1.1 — all in `docs/v1.5.1/01_Module_Packages/`. The **Purchasing v4.2** package (`AutoBOM_Purchasing_v4.2_Claude_Design_Package.docx`) is the authoritative full Purchasing spec (supersedes v4 / v4.1); the Purchasing section in this file is its operating summary.
+- Deployment plan: `docs/v1.5.1/04_Infrastructure/AutoBOM_Deployment_Readiness.md`
+- Supplier API integration guide: `docs/v1.5.1/04_Infrastructure/AutoBOM_Supplier_API_Integration_Guide.md` (DigiKey · Mouser · PartsBox implementation rules — read before touching any supplier client)
 
-**Ordering rule:** the PRD is *integrative* — it wins on cross-workflow, roles, data model, and integration topics. Module packages remain authoritative within their own scope. Earlier v1.1 / v1.3 / v1.4 / v1.5 texts are superseded but kept for history — do NOT treat them as current.
+**Ordering rule:** the PRD is *integrative* — it wins on cross-workflow, roles, data model, and integration topics. Module packages remain authoritative within their own scope. Earlier v1.1 / v1.3 / v1.4 / v1.5 texts are superseded but kept for history in `docs/archive/` — do NOT treat them as current.
 
-**Main build:** `autobom/AutoBOM Platform.html`.
+**Main build:** current working prototype lives in `docs/v1.5.1/06_Prototype/` (standalone HTML for viewing, ZIP for editing). Production code will live in `frontend/` (React + Vite) and `backend/` (Python + FastAPI). Existing POC code lives in `poc/`.
+
+---
+
+## Claude Code's mandate — activate the prototype, wire it to real systems
+
+**The prototype in `docs/v1.5.1/06_Prototype/` is the working source of truth for the product.** Every screen, sidebar, dashboard, button, table row, inline action, Push-Back handshake, bucket/flush flow, receiving scan, Build creation, notification, and role view already works as an interactive prototype on mock/seed data. This is what AutoBOM *is*.
+
+**Claude Code's job is to turn that prototype on — not to rebuild or redesign it.** Take the prototype's exact screens, components, workflows, and interactions and connect them to real systems so they go live:
+
+- **Backend + database** — FastAPI + Postgres for real persistence, state, versioning, audit (Programs, Projects, BOMs, Builds, Requests, Push-Backs, CPN issuance, buckets, notifications).
+- **Sourcing engine + supplier clients** — the proven `poc/` code (sourcing engine, BOM cleaner, Mouser / DigiKey / PartsBox clients) refactored into `backend/services/`, per the Supplier API Integration Guide.
+- **Microsoft Graph** — Daily Purchasing List writes at bucket flush (Purchasing v4.2).
+- **Auth** — seed users locally, Azure AD when credentials arrive (graceful fallback).
+
+**"Activate" means:** every interactive element the prototype demonstrates becomes real. Buttons fire real actions; rows load and mutate real records; Push-Backs move real state across Designer ↔ Production; bucket flushes call the real cart APIs and append the real sheet; receiving scans hit PartsBox; Builds call `build/create`; characteristic-match, coverage, and CPN routing run on live data. Replace mock data and stubbed handlers with live integrations.
+
+**Preserve the prototype faithfully.** Port its layout, flows, navigation, and behavior as-is. Do not re-architect the UI, rename flows, restructure screens, or "improve" the UX. Speed and usability over aesthetics — this is an internal tool, and the prototype already encodes the intended workflow. When a wiring decision would change prototype behavior, flag it rather than silently diverging.
+
+**Reuse and expand the POC — never rebuild blindly.** The `poc/` code is a proven proof-of-concept that already works at smaller scale (sourcing engine, BOM cleaner, Mouser / DigiKey / PartsBox clients, cart / list building). It is the reference for *how the real logic behaves*. We are not inventing something new from a blank page — we are **scaling up a thing that already works**: port the POC's functions into `backend/services/`, expand their abilities to full scale, and refactor where necessary to fit the new architecture and connect to the prototype UI.
+
+**The POC is read-only and permanent — do NOT edit it.** Never modify, refactor-in-place, move, or delete anything under `poc/`. It stays exactly as-is, indefinitely, as a living reference you can always open to see what worked and why. All new work happens in `frontend/` and `backend/`; the POC is *copied-from and learned-from*, never changed. The new system is built **on top of / based on** the POC, not by mutating it.
+
+All of this stays inside the operating tenets below (leverage APIs, human approval, no autonomous purchases, trace ripples).
+
+---
+
+## Workspace layout
+
+The repository (`BOM-AUTOMATION/`) is organized as:
+
+```
+BOM-AUTOMATION/
+├── CLAUDE.md                    # This file — operating context for Claude sessions
+├── .env                         # Local development credentials (gitignored)
+├── .gitignore
+├── .agents/                     # Agent configuration
+├── .codex/                      # Codex / agent workspace
+├── .venv/                       # Python virtualenv (gitignored)
+├── __pycache__/                 # Python bytecode cache (not source)
+├── backend/                     # Python + FastAPI backend (Claude Code builds this)
+├── frontend/                    # React + Vite frontend (Claude Code builds this)
+├── poc/                         # Proven Python POC — READ-ONLY reference, never edited; port from it
+├── output/                      # Runtime outputs (not source)
+└── docs/
+    ├── README.md                # Index of all documentation
+    ├── archive/                 # Historical versions (v1.0 - v1.4). Not current.
+    ├── decisions/               # Architecture decision records
+    ├── reference/               # External reference docs
+    └── v1.5.1/                  # Current baseline. Everything here is authoritative.
+        ├── 00_Core_Spec/        # PRD, Permissions Matrix, Master Design Contract
+        ├── 01_Module_Packages/  # Purchasing v4.2, Inventory Activation, Designer, Production
+        ├── 02_Architecture/     # Platform arch, data flow, API map, code-to-service
+        ├── 03_Coordination_Notes/  # Notes 1-4 + Note 4 Rollback
+        ├── 04_Infrastructure/   # Deployment + supplier API rules
+        │   ├── AutoBOM_Deployment_Readiness.md
+        │   ├── AutoBOM_Supplier_API_Integration_Guide.md / .docx
+        │   └── partsbox api rules.pdf   # (corrupted export — re-export needed)
+        ├── 05_Reference/        # AutoBOM_Product_Discovery_Report.md
+        └── 06_Prototype/        # Standalone HTML + working ZIP
+```
+
+**Superseded documents:**
+- `AutoBOM_Azure_Requirements_Checklist.md` (in `04_Infrastructure/`) — replaced by `AutoBOM_Deployment_Readiness.md`. Move to `docs/archive/` when convenient.
 
 ---
 
@@ -37,6 +102,44 @@ Automation assists decisions; automation does not replace responsibility. Critic
 
 ### Nothing is an isolated system
 Every architectural decision intertwines with others. When Claude Design lands one change, they check the ripples: Does this touch Push-Back arrival? Does it touch the CPN issuance table? Does it change what Josh sees on the sheet? Cross-boundary effects must be traced explicitly. Isolated fixes that ignore ripples become sources of drift.
+
+---
+
+## Supplier & Inventory API integration rules (DigiKey · Mouser · PartsBox)
+
+**Authoritative implementation reference:** `docs/v1.5.1/04_Infrastructure/AutoBOM_Supplier_API_Integration_Guide.md` (`.docx` mirror alongside it). Claude Code MUST read that guide before writing or modifying any supplier-client code (`backend/services/digikey_client.py`, `mouser_client.py`, `mouser_cart_client.py`, `partsbox_client.py`, and the POC equivalents in `poc/`). The rules below are the non-negotiable summary; the guide holds exact request/response envelopes, headers, error codes, and Python examples.
+
+This section sits **under** the Operating tenets above — nothing here overrides *No autonomous purchases*, *API leverage principle*, or *Human approval*. It makes those tenets concrete at the HTTP layer.
+
+### Credentials (from `.env` — never hardcode, never log)
+`DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET`, `MOUSER_API_KEY`, `PARTSBOX_API_KEY`. Empty/placeholder values follow the deployment doc's graceful-fallback pattern. Mask secrets to last 4 chars in any log line.
+
+### DigiKey — OAuth 2.0 (Product Information V4 is the sourcing API)
+- **2-legged (client credentials)** for automated sourcing; 3-legged only when acting for a specific signed-in DigiKey user. Access token lives **10 minutes** — cache it, refresh proactively (~9 min) or reactively on a `401`. Never fetch a token per call.
+- Every V4 call needs **all** of: `Authorization: Bearer {token}`, `X-DIGIKEY-Client-Id`, and the three locale headers `X-DIGIKEY-Locale-Site` / `-Language` / `-Currency`, plus `Content-Type`/`Accept: application/json`. Omitting the locale headers is a top cause of silent `400`s.
+- Base path `{host}/products/v4`. Keyword search `POST /products/v4/search/keyword` (Limit ≤ 50, page with Offset); single MPN → `GET /products/v4/search/{urlencoded_pn}/productdetails`. Pricing/qty live under `ProductVariations[]`, keyed by `DigiKeyProductNumber` — one MPN can have several variations (Cut Tape / T&R / DigiReel).
+- Limits: Product Information **120/min, 1000/day**. Read `X-RateLimit-*` headers and back off on `429`.
+
+### Mouser — API key in the query string (no OAuth)
+- Key is passed as `?apiKey={key}`, **never** a header. Search and Order use **separate keys** in principle; the current POC `.env` uses a single `MOUSER_API_KEY` — confirm before wiring the Order API.
+- **Every request body is wrapped in a named root object** (`{"SearchByKeywordRequest": {…}}`, `{"SearchByPartRequest": {…}}`, `{"Order": {…}}`, etc.). Sending the inner object alone errors. Responses wrap in `{ "Errors": [...], "SearchResults": {...} }` — **check `Errors` first**; a `200` with non-empty `Errors` is a failure.
+- Batch up to **10 part numbers** per `search/partnumber` call, pipe-separated (`|`), 3–40 chars each. Enums: `searchOptions` = None|Rohs|InStock|RohsAndInStock; `partSearchOptions` = None|Exact.
+- Cart building is allowed (Cart API); **`Order.SubmitOrder` stays `false`** so the call returns a preview only. `true` places a real order and is out of scope (see gate below).
+- ~**1000 calls/day** ceiling — cache aggressively via `supplier_lookup_cache.py`.
+
+### PartsBox — inventory source of truth (see "Inventory and Receiving via PartsBox")
+- AutoBOM orchestrates; PartsBox owns inventory, storage, scanning, builds, and attachments. Use `stock/add` for receiving, `part/attachments` (`attachment/type = "datasheet"`) for datasheet lifecycle, `build/create` for consumption, and the **ID Anything™ QR image endpoint** for build QR delivery — do not build a QR generator in AutoBOM.
+- **Do not cross-wire APIs** (API leverage principle): PartsBox validates receiving scans; Mouser/DigiKey do catalog + cart only. Distributor barcode APIs are **not** called during receiving.
+- Exact PartsBox auth/endpoint/body formats: see `docs/v1.5.1/04_Infrastructure/partsbox api rules.pdf`. ⚠️ **The committed PDF is corrupted** (truncated tiled-image export, no text layer, no trailer — unreadable). Re-export a clean copy (prefer a text-based PDF or Markdown) before relying on it; until then, PartsBox usage rules in this file plus the POC `partsbox_client.py` are the working reference.
+
+### Cross-cutting (both distributors)
+- **Retry** only `429`/`5xx`/timeouts with exponential backoff (honor `X-RateLimit-Reset`); on `401` refresh the DigiKey token once then retry; never blind-retry `400`/`404`.
+- **Cache** part lookups keyed by `(supplier, part_number, options)` with sensible TTL — the single biggest lever for staying under the ~1000/day caps and keeping the platform fast.
+- **Normalize** DigiKey and Mouser fields into one internal schema (mapping table in the guide, §6.7) so the rest of AutoBOM stays supplier-agnostic. Casing trap: datasheet URL is `DatasheetUrl` on DigiKey V4 vs `DataSheetUrl` on Mouser.
+- **Traceability:** log supplier, endpoint, status, rate-limit-remaining, and latency for every outbound call so any sourced price traces back to its source call.
+
+### Human-approval gate (reinforces *No autonomous purchases*)
+Automation may source, compare, recommend, build carts, and generate order **previews/packages**. Automation MUST NOT submit an order, approve a purchase, or move money. Concretely: keep Mouser `SubmitOrder=false`; do not call DigiKey Ordering submit; every purchasing action ends at a human clicking "Place Order" in the distributor's own UI (Josh on the Daily Purchasing List). Order-submission APIs are never called.
 
 ---
 
@@ -281,7 +384,9 @@ Wall parts appear in Designer sourcing ONLY when both suppliers fail. In Product
 
 ---
 
-## Purchasing v4 — bucket model
+## Purchasing v4.2 — bucket model
+
+> **Authoritative spec:** the full Purchasing design lives in `docs/v1.5.1/01_Module_Packages/AutoBOM_Purchasing_v4.2_Claude_Design_Package.docx` (bucket model, request submission, flush pipeline, CPN traceability, embedded Purchasing UI, failure modes, full rejection criteria). This section is the **operating summary** — the 14-column sheet contract, write defaults, and append-only rule below are current and supersede any older 12-column text in earlier package revisions. If this summary and the v4.2 package ever diverge, flag it.
 
 **Purchasing is a shared bucket, not a workflow role.** Every Request from every workflow pools into one embedded view accessible from Designer, Production, and Admin sidebars.
 
@@ -296,32 +401,59 @@ Boolean, default off. On → Critical stream. Off → Main stream. Cannot be edi
 - **Filtered** — requester = current user only. Designer / Production default.
 
 ### Batch flush pipeline (Pattern A — mirrors POC)
-Timer fires → group entries by supplier → build Mouser cart via Cart API → build DigiKey list via MyLists API → write to Josh's sheet (one row per supplier per batch, 12 columns fixed) → batch state = WRITTEN.
+Timer fires → group entries by supplier → build Mouser cart via Cart API → build DigiKey list via MyLists API → write to Josh's sheet via Microsoft Graph (one row per supplier per batch, 14-column schema fixed) → batch state = WRITTEN.
 
 Atomic: all steps succeed or batch stays Pending.
 
 **CPN written into each cart line via customer reference field.** NOT written to sheet.
 
-### Josh's sheet — 12 columns, per-supplier-per-batch rows
+### Josh's sheet — 14 columns, per-supplier-per-batch rows
 
-| Column | AutoBOM writes | Post-write |
-|---|---|---|
-| Date | Batch timestamp | Josh's business |
-| Project | **Blank** | Manual |
-| Vendor | Supplier name | Josh's business |
-| Item | Category label | Josh's business |
-| Need | Free-text (or blank) | Josh's business |
-| Unit Price | **Blank** | Josh's business |
-| Quantity | **1** | Josh may override |
-| Total Cost | cart_total at Qty=1 | Josh may override |
-| Link to Product | Cart URL | Josh clicks |
-| Urgency | `Next Day` or `2-Day` | Josh's business |
-| Requestor | **Blank** | Manual |
-| Status | Blank | Josh manages |
+The live Daily Purchasing List has **14 columns** (it is a shared sheet — humans also add manual, non-electronic purchase rows to it). AutoBOM writes **only** its defined columns below for the Mouser/DigiKey electronic-component batches, and leaves the human-managed columns blank. AutoBOM never adds, reorders, or renames columns.
 
-**No new columns. No CPN column. 12-column absolute.**
+| # | Column | AutoBOM writes | Post-write |
+|---|---|---|---|
+| 1 | Date | Date/time the row is written to the sheet (write timestamp) | Buyer-managed |
+| 2 | Project | `Other` (fixed default) | Buyer may override |
+| 3 | Vendor | Supplier name (`Mouser` / `DigiKey`) | Buyer-managed |
+| 4 | Item | Category label | Buyer-managed |
+| 5 | Need | `Component Purchasing` (fixed default) | Buyer may override |
+| 6 | Unit Price | Cart total (cost of the cart) | Buyer may override |
+| 7 | Quantity | **1** | Buyer may override |
+| 8 | Total Cost | Unit Price × Quantity | Buyer may override |
+| 9 | Link to Product | Mouser/DigiKey cart **share link** (the cart's share key/URL) | Buyer clicks to purchase |
+| 10 | Urgency | `Next Day` (Critical) or `2-Day` (Main) — set by the AutoBOM user's Critical toggle | Fixed at submission |
+| 11 | Requestor | `Aaron Jones` (default for now) | Buyer may override |
+| 12 | Status | **Blank** | Buyer-managed (`Purchased` / `Processed`) |
+| 13 | Purchase Date | **Blank** | Filled when the order is placed |
+| 14 | Long Link (alternative) | **Blank** | Buyer-managed (backup / full URL) |
+
+**AutoBOM adds no new columns and no CPN column. The schema is a fixed 14 columns.**
+
+> **Fixed write defaults (current):** `Project = Other`, `Need = Component Purchasing`, `Requestor = Aaron Jones` (temporary default until real requester routing is wired). `Date` = write timestamp; `Unit Price` = cart total; `Quantity = 1`; `Total Cost = Unit Price × Quantity`; `Link to Product` = the Mouser/DigiKey cart **share link**. The sheet's add-item form marks Date, Project, Vendor, Need, Unit Price, Quantity, Link to Product, Urgency, and Requestor as **required** — these defaults guarantee every required field is populated on each Graph write so the append never fails validation. (`Total Cost`, `Status`, `Purchase Date`, and `Long Link` are not required.)
+
+> **Urgency scope:** AutoBOM only ever writes `Next Day` (Critical stream) or `2-Day` (Main stream). Other values seen on the live sheet (`Amazon Prime`, `Ground`, etc.) are entered by humans for manual non-distributor purchases and are outside AutoBOM's scope — AutoBOM is electronic-components-only (Mouser + DigiKey).
 
 **Sheet-write one-way.** AutoBOM writes at flush; does not read back.
+
+### Append-only, write-once (hard rule — program this in)
+AutoBOM's **only** sheet operation is appending a new row. It MUST NOT edit, overwrite, reorder, clear, or delete any existing row or cell — including rows AutoBOM wrote in earlier batches and rows people added by hand. Use only the Graph row-append call; never a delete, clear, or update call.
+
+- **Write-once.** Each bucket entry is written to the sheet exactly one time. Guard on `bucketState` — an entry already `WRITTEN` is never re-written, updated, or re-flushed, and no duplicate row is ever created for the same entry.
+- **No empty rows.** Never append a row for a cart that has no items / no content. Skip empty carts entirely — do not create blank or placeholder rows. A row is written only when it carries real data (a real cart with a share link and a cost).
+
+### Sheet integration — Microsoft Graph API (SharePoint / OneDrive in Teams)
+
+The Daily Purchasing List is an Excel workbook living in the SharePoint / OneDrive document library behind a Microsoft Teams team. AutoBOM writes to it **through the Microsoft Graph API** — there is no other integration path. Build the writer so that when credentials arrive it plugs in with no code change (graceful-fallback pattern from `AutoBOM_Deployment_Readiness.md`).
+
+- **Credentials (`.env`, never hardcode/log):** `MICROSOFT_GRAPH_TENANT_ID`, `MICROSOFT_GRAPH_CLIENT_ID`, `MICROSOFT_GRAPH_CLIENT_SECRET`, `ONEDRIVE_PURCHASING_SHEET_ID` (the workbook's drive-item id). Same Azure AD app registration as SSO.
+- **Auth (app-only / client credentials):** `POST https://login.microsoftonline.com/{MICROSOFT_GRAPH_TENANT_ID}/oauth2/v2.0/token` with `grant_type=client_credentials`, `client_id`, `client_secret`, `scope=https://graph.microsoft.com/.default`. Token ~60 min — cache and refresh like the DigiKey token. The app registration needs application permission `Sites.ReadWrite.All` (or `Files.ReadWrite.All`) with admin consent.
+- **Locate the workbook:** by drive-item id — `/drives/{driveId}/items/{ONEDRIVE_PURCHASING_SHEET_ID}` (or `/sites/{siteId}/drive/items/{itemId}`). The workbook should contain a formatted Table over the 14-column header row (e.g. named `PurchasingList`).
+- **Append rows:** `POST /drives/{driveId}/items/{itemId}/workbook/tables/{tableName}/rows/add` with body `{ "values": [ [ <14 cells in column order> ], ... ] }` — one inner array per per-supplier-per-batch row, empty string for human-managed columns. If the sheet has no Table, fall back to a range write: `PATCH .../workbook/worksheets('{sheet}')/range(address='A{row}:N{row}')` — targeting the **next empty row only, never an existing row**.
+- **Atomic batch write:** open a workbook session — `POST .../workbook/createSession {"persistChanges": true}` → send the returned id as the `workbook-session-id` header on every write in the batch → `POST .../workbook/closeSession`. This holds the batch's rows to the Pattern-A all-or-nothing boundary.
+- **Column order is fixed** exactly as the 14-column table above. Write cells in that order; never reorder or rename.
+- **Graceful fallback:** if the `MICROSOFT_GRAPH_*` / `ONEDRIVE_PURCHASING_SHEET_ID` values are empty or placeholders (local dev), the writer **logs the batch rows to console** instead of calling Graph — Aaron can develop the whole purchasing pipeline without touching Josh's real sheet. When the values are real (Azure mode), writes go to the live workbook. Same code path, gated on whether the env vars hold real values. Implement in `backend/integrations/microsoft_graph.py` + `backend/services/purchasing_sheet_writer.py`.
+- **One-way:** AutoBOM only writes at flush; it never reads the sheet back. Josh owns everything post-write.
 
 ### Bucket state values
 `QUEUED_MAIN` · `QUEUED_CRITICAL` · `WRITTEN` · `PURCHASED` / `PROCESSED`. No `approved`, no `partially-ordered`, no `ordered`, no `shipped`.
@@ -333,12 +465,13 @@ Atomic: all steps succeed or batch stays Pending.
 - Half-writes / interleaved batches
 - Hard-coded timer intervals
 - Order Execution / cart-submission UI
-- New sheet columns
+- AutoBOM adding new sheet columns
 - CPN column on sheet
 - `approveRequest` / `rejectRequest` flow
 - Order lifecycle objects (POs, Shipments) as first-class state
-
----
+- Editing, overwriting, reordering, or deleting existing sheet rows or cells (append-only)
+- Empty or placeholder rows written to the sheet
+- Duplicate / repeat writes of an already-`WRITTEN` entry
 
 ## Notification routing
 

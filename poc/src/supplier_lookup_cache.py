@@ -5,7 +5,7 @@ from pathlib import Path
 from manufacturer_aliases import normalize_manufacturer, normalize_part_number
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CACHE_PATH = PROJECT_ROOT / ".cache" / "supplier_lookup_cache.json"
 
 
