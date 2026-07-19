@@ -1,0 +1,13 @@
+# AutoBOM backend — Python 3.11+ (built/tested on 3.12).
+#
+# Phase 0 keeps this minimal (web shell + config). Later phases add:
+#   Phase 1 — sqlalchemy>=2.0, alembic, psycopg[binary], passlib, msal
+#   Phase 2 — requests (supplier clients), tenacity (retry/backoff)
+#   Phase 2 — msgraph / httpx for Microsoft Graph
+# They are intentionally NOT installed yet to keep the shell lean.
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-dotenv==1.0.1
+# pydantic v2 ships transitively with fastapi; pinned here for clarity.
+pydantic==2.10.4

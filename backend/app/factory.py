@@ -1,0 +1,49 @@
+"""FastAPI application factory.
+
+Phase 0 wires only the shell: CORS for the Vite dev server, the health route,
+and the auth stub. Domain routers (Programs, Projects, BOMs, Builds, buckets,
+receiving, …) mount here in later phases via `include_router`.
+"""
+
+import logging
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from config import settings
+from api.health import router as health_router
+from api.auth import router as auth_router
+
+log = logging.getLogger("autobom")
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="AutoBOM Backend",
+        version="0.1.0",
+        description="Local-first, Azure-ready backend for AutoBOM.",
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # All API routes live under /api so the Vite dev server can proxy one prefix.
+    app.include_router(health_router, prefix="/api")
+    app.include_router(auth_router, prefix="/api")
+
+    @app.on_event("startup")
+    def _log_mode() -> None:
+        s = settings.status()
+        log.info("AutoBOM backend starting — mode=%s auth=%s graph=%s db=%s",
+                 s["mode"], s["auth"], s["graph_sheet_writer"], s["database"])
+        log.info("Suppliers configured: %s", s["suppliers"])
+
+    return app
+
+
+app = create_app()
