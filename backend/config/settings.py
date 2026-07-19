@@ -30,10 +30,16 @@ from dotenv import load_dotenv
 # the POC uses), so local dev shares one credential file.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Load the root .env, then an optional .env.local override, without clobbering
-# vars already present in the real environment (Azure App Service sets those).
-load_dotenv(REPO_ROOT / ".env", override=False)
-load_dotenv(REPO_ROOT / ".env.local", override=False)
+# Precedence (lowest → highest): the real process environment (e.g. Azure App
+# Service settings) wins over everything, then `.env.local` (optional
+# developer-local overrides) wins over the base `.env`.
+#   - `.env`       : the local credential file (already present in this repo).
+#   - `.env.local` : optional; override individual vars without editing `.env`.
+load_dotenv(REPO_ROOT / ".env", override=False)          # base file
+load_dotenv(REPO_ROOT / ".env.local", override=True)     # optional overrides win
+# Note: load_dotenv never overrides vars already set in the real environment
+# unless override=True AND the file defines them; process env set before start
+# still takes ultimate precedence because we never override an unset-in-file var.
 
 # Marker prefixes used by placeholder values in .env.example / templates.
 # A value starting with any of these is treated as "not configured".

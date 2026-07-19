@@ -8,11 +8,23 @@ __pycache__/
 
 # Secrets
 .env
+env
+*.env
+.env*
+# committed template — contains only placeholders, no secrets
+!.env.example
 
 # Generated files
 output/
 .cache/
 
 # Local BOM inputs; keep test BOMs versioned
-input/*
-!input/test_bom*.csv
+poc/input/*
+!poc/input/test_bom*.csv
+
+# Local IDE state
+.vs/
+
+# Obsolete local extraction wrappers
+_old_wrappers/
+AutoBOM Platform Design_UI/
