@@ -44,7 +44,23 @@ cd ..
 # The repo already has a local `.env` with working supplier keys (gitignored).
 # If starting fresh, copy the template and fill it in:
 cp .env.example .env
+
+# 4. Database (Phase 1) — create the local DBs, run migrations, seed demo data
+#    (Postgres must be installed and running; superuser/password as in .env)
+createdb autobom_local        # or: psql -U postgres -c "CREATE DATABASE autobom_local;"
+createdb autobom_test         # used by the test suite
+cd backend
+.venv/Scripts/python -m alembic upgrade head    # build the schema (POSIX: .venv/bin/python)
+.venv/Scripts/python -m db.seed                 # load the demo seed data
+cd ..
 ```
+
+**Log in** (local mode) as one of the three seed users:
+`aaron.jones@yanktech.com` (Designer), `maria.chen@yanktech.com` (Production),
+`grace.hill@yanktech.com` (Admin). Everyone else in the seed is inert
+referential data (no login).
+
+**Run the backend tests:** `cd backend && .venv/Scripts/python -m pytest tests/`
 
 The `.env` file is the local credential source. Every Azure-facing value may be
 left empty/placeholder — the backend falls back to local behavior (seed-user
