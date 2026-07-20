@@ -88,7 +88,42 @@ class GraphClient:
             next_link = data.get("@odata.nextLink")
         return items
 
-    # -- Future write path slots in here (Phase 4), same client, additive: --
+    def post(self, path: str, json: dict | None = None, headers: dict | None = None) -> dict:
+        token = self._acquire_token()
+        url = path if path.startswith("http") else f"{GRAPH_BASE}{path}"
+        hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        if headers:
+            hdrs.update(headers)
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(url, headers=hdrs, json=json)
+            resp.raise_for_status()
+            return resp.json() if resp.content else {}
+
+    # -- Excel workbook writing (Phase 2, purchasing sheet) -------------------
+    # Additive on the SAME client. Used ONLY when Graph is configured; the
+    # purchasing sheet writer falls back to console logging otherwise.
+    def _workbook_base(self, item_id: str, drive_id: str | None) -> str:
+        if drive_id:
+            return f"/drives/{drive_id}/items/{item_id}/workbook"
+        return f"/me/drive/items/{item_id}/workbook"
+
+    def excel_create_session(self, item_id: str, drive_id: str | None = None) -> str:
+        data = self.post(f"{self._workbook_base(item_id, drive_id)}/createSession",
+                         json={"persistChanges": True})
+        return data.get("id", "")
+
+    def excel_close_session(self, item_id: str, session_id: str, drive_id: str | None = None) -> None:
+        self.post(f"{self._workbook_base(item_id, drive_id)}/closeSession",
+                  headers={"workbook-session-id": session_id})
+
+    def excel_add_table_rows(self, item_id: str, table_name: str, values: list[list],
+                             session_id: str | None = None, drive_id: str | None = None) -> dict:
+        """APPEND rows to a workbook table — the ONLY sheet mutation AutoBOM makes."""
+        headers = {"workbook-session-id": session_id} if session_id else None
+        return self.post(f"{self._workbook_base(item_id, drive_id)}/tables/{table_name}/rows/add",
+                         json={"values": values}, headers=headers)
+
+    # -- Future group write path slots in here (Phase 4), same client, additive:
     #   def add_member(self, group_id, user_object_id): ...
     #   def remove_member(self, group_id, user_object_id): ...
 
