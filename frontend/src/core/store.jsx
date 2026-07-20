@@ -156,6 +156,20 @@ const actions = {
       if (bom && bom.id) { STATE.boms = STATE.boms.map(b => (b.id === bom.id ? bom : b)); emit(); }
     } catch (e) {}
   },
+  /* Real BOM upload — the user's file bytes go to the server, bom_cleaner parses
+     them, and a real BOM comes back. Throws on error (screen surfaces it). */
+  async uploadBom(file, meta) {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('project_id', meta.project);
+    fd.append('name', meta.name);
+    fd.append('build_qty', String(meta.buildQty));
+    fd.append('overage', String(meta.overage != null ? meta.overage : 10));
+    const bom = await window.api.upload('/boms/upload', fd);
+    STATE.boms = [bom, ...STATE.boms.filter(b => b.id !== bom.id)];
+    emit();
+    return bom;
+  },
 
   /* DESIGNER */
   addToCollection(mpn, collectionId, newName) {
@@ -326,19 +340,8 @@ const actions = {
   },
 
   /* PRODUCTION */
-  createBom({ name, project, buildQty, overage }) {
-    // One BOM per PCB Project (1:1). Refuse if this project already has a non-draft BOM.
-    if (STATE.boms.some(b => b.project === project && b.state !== 'draft')) return null;
-    const id = 'BOM-0' + (STATE.seq.bom++);
-    const bom = { id, name, project, state: 'validated', creator: actorName(), ownerId: STATE.currentUserId, role: 'production',
-      updated: 'just now', updatedBy: actorName(), created: 'Today', buildQty, overage,
-      validation: { errors: 0, warnings: 2, notes: ['Line 4: quantity inferred from reference designators.', 'Lines 6–7: duplicate MPN consolidated.'] },
-      items: [ line(1, 'STM32G431CBT6', buildQty, 'validated'), line(2, 'GRM188R71H104KA93D', buildQty * 20, 'validated'),
-        line(3, 'ERJ-3EKF1002V', buildQty * 32, 'validated'), line(4, 'TPS54560DDAR', buildQty, 'validated') ] };
-    STATE.boms = [bom, ...STATE.boms];
-    pushAudit({ action: 'BOM uploaded & validated', entity: id, before: '—', after: 'VALIDATED' });
-    emit(); return id;
-  },
+  /* BOM creation is real file upload -> bom_cleaner (see uploadBom above). The
+     simulated CATALOG-seeded createBom was removed in Phase 3. */
   completeSourcing(bomId) {
     const bom = STATE.boms.find(b => b.id === bomId); if (!bom) return;
     bom.items = bom.items.map((i, k) => i.status === 'needs-review' ? i : { ...i, status: k % 2 ? 'sourced-digikey' : 'sourced-mouser', supplier: k % 2 ? 'digikey' : 'mouser' });

@@ -31,11 +31,26 @@ async function request(path, { method = 'GET', body, headers } = {}) {
   return data;
 }
 
+// Multipart upload (real file bytes) — the browser sets the multipart boundary,
+// so we must NOT set Content-Type ourselves.
+async function upload(path, formData) {
+  const res = await fetch(`${BASE}${path}`, { method: 'POST', credentials: 'include', body: formData });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    const err = new Error((data && data.detail) || `HTTP ${res.status}`);
+    err.status = res.status; err.data = data;
+    throw err;
+  }
+  return data;
+}
+
 export const api = {
   get: (path, opts) => request(path, { ...opts, method: 'GET' }),
   post: (path, body, opts) => request(path, { ...opts, method: 'POST', body }),
   patch: (path, body, opts) => request(path, { ...opts, method: 'PATCH', body }),
   del: (path, opts) => request(path, { ...opts, method: 'DELETE' }),
+  upload,
   health: () => request('/health'),
 };
 

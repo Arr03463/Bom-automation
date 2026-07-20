@@ -16,6 +16,7 @@ from api.health import router as health_router
 from api.suppliers import router as suppliers_router
 from api.bootstrap import router as bootstrap_router
 from api.sourcing import router as sourcing_router
+from api.boms import router as boms_router
 from auth.routes import router as auth_router
 
 log = logging.getLogger("autobom")
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(suppliers_router, prefix="/api")
     app.include_router(bootstrap_router, prefix="/api")
     app.include_router(sourcing_router, prefix="/api")
+    app.include_router(boms_router, prefix="/api")
 
     return app
 

@@ -4,6 +4,7 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-dotenv==1.0.1
+python-multipart==0.0.20        # multipart/form-data (real BOM file upload)
 pydantic[email]==2.10.4        # v2 + email validation for users
 
 # --- database (Phase 1) ---
