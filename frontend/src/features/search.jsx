@@ -79,17 +79,9 @@ function search(query, includeSuppliers) {
   }
   stHits.sort((a, b) => a.rank - b.rank);
 
-  // 3 — Available from suppliers (Mouser + DigiKey overlay, toggle-gated)
+  // 3 — Available from suppliers: fetched LIVE (Mouser + DigiKey) in the overlay
+  //     component and merged in; no static catalog here.
   const supHits = [];
-  if (includeSuppliers) {
-    for (const c of Object.values(CATALOG)) {
-      const supplierPns = [c.mouser?.pn, c.digikey?.pn].filter(Boolean);
-      const r = rankHit({ kind: 'component', mpn: c.mpn, mfrMpn: `${c.mfr} ${c.mpn}`, supplierPns }, q);
-      if (r < 99 || has(c.mfr, q) || has(c.desc, q))
-        supHits.push({ kind: 'supplier', id: c.mpn, mpn: c.mpn, mfr: c.mfr, desc: c.desc, lifecycle: c.lifecycle, recommend: c.recommend, mouser: c.mouser, digikey: c.digikey, rank: r < 99 ? r : 5 });
-    }
-    supHits.sort((a, b) => a.rank - b.rank);
-  }
 
   // Workflow objects (AutoBOM's own DB)
   const colHits = [], devHits = [], bomHits = [], projHits = [], reqHits = [];
@@ -163,6 +155,33 @@ function SearchOverlay({ open, mode, anchorRect, initialQuery, onClose, go }) {
   const [includeSuppliers, setIncludeSuppliers] = useStateS(() => sessionStorage.getItem('autobom.search.includeSuppliers') === '1');
   const toggleSuppliers = () => setIncludeSuppliers(v => { const nv = !v; sessionStorage.setItem('autobom.search.includeSuppliers', nv ? '1' : '0'); return nv; });
 
+  // Live supplier overlay (Mouser + DigiKey) — real backend call, debounced.
+  const [supLive, setSupLive] = useStateS([]);
+  const [supLoading, setSupLoading] = useStateS(false);
+  const supTimer = useRefS(null);
+  useEffS(() => {
+    clearTimeout(supTimer.current);
+    if (!open || !includeSuppliers || !q.trim()) { setSupLive([]); setSupLoading(false); return; }
+    setSupLoading(true);
+    supTimer.current = setTimeout(async () => {
+      try {
+        const res = await window.api.post('/suppliers/search', { query: q.trim() });
+        const m = res.mouser, d = res.digikey, hits = [];
+        if (m || d) hits.push({
+          kind: 'supplier', id: (m && m.mpn) || (d && d.mpn) || q, mpn: (m && m.mpn) || (d && d.mpn) || q,
+          mfr: (m && m.manufacturer) || (d && d.manufacturer) || '', desc: (m && m.description) || (d && d.description) || '',
+          lifecycle: (m && m.lifecycle_status) || (d && d.lifecycle_status) || '',
+          mouser: m ? { pn: m.supplier_part_number, stock: m.stock, price: m.unit_price } : null,
+          digikey: d ? { pn: d.supplier_part_number, stock: d.stock, price: d.unit_price } : null,
+          recommend: (m && m.stock > 0) ? 'mouser' : (d && d.stock > 0) ? 'digikey' : null, rank: 1,
+        });
+        setSupLive(hits);
+      } catch (e) { setSupLive([]); }
+      finally { setSupLoading(false); }
+    }, 450);
+    return () => clearTimeout(supTimer.current);
+  }, [q, includeSuppliers, open]);
+
   // capture focus + scroll on open; restore on close
   useEffS(() => {
     if (open) {
@@ -184,7 +203,18 @@ function SearchOverlay({ open, mode, anchorRect, initialQuery, onClose, go }) {
   }, [q, open]);
 
   const groups = useMemoS(() => search(q, includeSuppliers), [q, includeSuppliers]);
-  const flat = useMemoS(() => groups ? groups.flatMap(g => g.items) : [], [groups]);
+  // Merge the live supplier group into the sync results (in ORDER position).
+  const displayGroups = useMemoS(() => {
+    if (!q.trim()) return groups;
+    const base = groups || [];
+    if (!includeSuppliers || !supLive.length) return base;
+    const supGroup = { kind: 'supplier', items: supLive };
+    const out = []; let inserted = false;
+    for (const g of base) { out.push(g); if (g.kind === 'storage') { out.push(supGroup); inserted = true; } }
+    if (!inserted) { const idx = out.findIndex(g => g.kind === 'invpart'); if (idx >= 0) out.splice(idx + 1, 0, supGroup); else out.unshift(supGroup); }
+    return out;
+  }, [groups, supLive, includeSuppliers, q]);
+  const flat = useMemoS(() => displayGroups ? displayGroups.flatMap(g => g.items) : [], [displayGroups]);
   // clamp cursor
   useEffS(() => { if (cursor >= flat.length) setCursor(Math.max(0, flat.length - 1)); }, [flat.length]);
 
@@ -219,7 +249,7 @@ function SearchOverlay({ open, mode, anchorRect, initialQuery, onClose, go }) {
           <input ref={inputRef} value={q} onChange={e => { setQ(e.target.value); setCursor(0); }} onKeyDown={onKey}
             placeholder={mode === 'palette' ? 'Search anything — MPN, BOM, project, PO… (esc to close)' : 'Search parts, BOMs, projects…'}
             spellCheck={false} autoComplete="off" />
-          {loading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : (q && <button className="icon-btn" style={{ width: 28, height: 28 }} onClick={() => { setQ(''); inputRef.current.focus(); }}><Icon name="x" size={15} /></button>)}
+          {(loading || supLoading) ? <span className="spinner" style={{ width: 14, height: 14 }} /> : (q && <button className="icon-btn" style={{ width: 28, height: 28 }} onClick={() => { setQ(''); inputRef.current.focus(); }}><Icon name="x" size={15} /></button>)}
           <span className="kbd kbd-esc">ESC</span>
         </div>
 
@@ -233,7 +263,7 @@ function SearchOverlay({ open, mode, anchorRect, initialQuery, onClose, go }) {
         <div className="search-body">
           {!q.trim() ? (
             <IdleView recents={recents} go={(r) => { onClose(); go(r); }} onActivate={activate} />
-          ) : groups && groups.length === 0 ? (
+          ) : (!displayGroups || displayGroups.length === 0) && !supLoading ? (
             <div className="search-empty">
               <div style={{ fontWeight: 600 }}>{includeSuppliers ? `No matches found for "${q}"` : 'No matches on hand'}</div>
               <div className="caption" style={{ marginTop: 4 }}>{includeSuppliers
@@ -243,7 +273,7 @@ function SearchOverlay({ open, mode, anchorRect, initialQuery, onClose, go }) {
             </div>
           ) : (
             <>
-              {groups.map(g => (
+              {(displayGroups || []).map(g => (
                 <div key={g.kind} className="search-group">
                   <div className="search-group-head"><Icon name={KIND_META[g.kind].icon} size={12} /><span>{KIND_META[g.kind].label}</span><span className="caption">{g.items.length}</span></div>
                   {g.items.map(h => {
