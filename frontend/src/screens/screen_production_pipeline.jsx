@@ -73,38 +73,69 @@ const LOG_LINES = [
   { t: '00:12', m: 'BAT54S-7-F → DigiKey 120k @ $0.05 ✓', c: 'ok' },
   { t: '00:14', m: 'TPS54560DDAR → Mouser 1,890 @ $2.41 ✓', c: 'ok' },
 ];
+/* Live sourcing — consumes the SSE stream from GET /api/sourcing/boms/:id/run,
+   surfacing each line's real outcome (sourced / needs-review / check-wall) as a
+   calm status. Rate-limit backoff happens server-side (honoring X-RateLimit-
+   Reset), so a slow line just resolves later — never an error toast. */
+const SOURCE_LABEL = {
+  'sourced-mouser': { t: 'sourced · Mouser', c: 'ok' },
+  'sourced-digikey': { t: 'sourced · DigiKey', c: 'ok' },
+  'check-wall': { t: 'check wall inventory', c: 'warn' },
+  'needs-review': { t: 'needs manual review', c: 'err' },
+};
 function SourcingProgressScreen({ id, go }) {
   const b = bomById(id);
-  const [pct, setPct] = useStatePB(b && b.state === 'normalised' ? 40 : 12);
-  const [running, setRunning] = useStatePB(true);
-  const [phase, setPhase] = useStatePB('run'); // run | ratelimit | done | cancelled
-  const timer = useRefPB(null);
-  useEffPB(() => {
-    if (!running) return;
-    timer.current = setInterval(() => setPct(p => {
-      const np = Math.min(100, p + 6);
-      if (np >= 100) { clearInterval(timer.current); setRunning(false); setPhase('done'); }
-      else if (np >= 52 && np < 64) setPhase('ratelimit'); else setPhase('run');
-      return np;
-    }), 420);
-    return () => clearInterval(timer.current);
-  }, [running]);
+  const [lines, setLines] = useStatePB([]);      // per-line events, in arrival order
+  const [total, setTotal] = useStatePB((b && b.items.length) || 0);
+  const [phase, setPhase] = useStatePB('run');    // run | done | interrupted | cancelled
+  const esRef = useRefPB(null);
+
+  const start = React.useCallback(() => {
+    setLines([]); setPhase('run');
+    const es = new EventSource('/api/sourcing/boms/' + id + '/run');
+    esRef.current = es;
+    es.onmessage = (e) => {
+      let ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
+      if (ev.type === 'start') setTotal(ev.total);
+      else if (ev.type === 'line') setLines(prev => [...prev, ev]);
+      else if (ev.type === 'done') { es.close(); if (ev.bom) storeActions.applySourcingResult(ev.bom); setPhase('done'); }
+      else if (ev.type === 'error') { es.close(); setPhase('interrupted'); }
+    };
+    es.onerror = () => { es.close(); setPhase(p => (p === 'done' ? p : 'interrupted')); };
+  }, [id]);
+
+  useEffPB(() => { start(); return () => { if (esRef.current) esRef.current.close(); }; }, [id]);
+
   if (!b) return <div className="page"><EmptyState icon="boms" title="BOM not found." /></div>;
-  const total = b.items.length, done = Math.round(total * pct / 100);
-  const counts = { mouser: Math.round(done * 0.5), digikey: Math.round(done * 0.35), wall: Math.max(0, Math.round(done * 0.08)), review: phase === 'done' ? b.items.filter(i => i.exReason).length : 0, pending: total - done };
+
+  const done = lines.length;
+  const pct = total ? Math.round(done / total * 100) : 0;
+  const counts = {
+    mouser: lines.filter(l => l.status === 'sourced-mouser').length,
+    digikey: lines.filter(l => l.status === 'sourced-digikey').length,
+    wall: lines.filter(l => l.status === 'check-wall').length,
+    review: lines.filter(l => l.status === 'needs-review').length,
+    pending: Math.max(0, total - done),
+  };
+  const head = phase === 'done' ? { bg: 'var(--success-soft)', fg: 'var(--success)', title: 'Sourcing complete' }
+    : phase === 'interrupted' ? { bg: 'var(--warning-soft)', fg: 'var(--warning)', title: 'Sourcing interrupted' }
+    : phase === 'cancelled' ? { bg: 'var(--warning-soft)', fg: 'var(--warning)', title: 'Sourcing cancelled' }
+    : { bg: 'var(--info-soft)', fg: 'var(--info)', title: 'Sourcing in progress' };
+  const cancel = () => { if (esRef.current) esRef.current.close(); setPhase('cancelled'); };
 
   return (
     <div className="page page-wide">
       <PipelineHeader b={b} go={go} stage="sourcing" />
       <div className="panel" style={{ marginTop: 16 }}>
-        <div className="panel-head" style={{ background: phase === 'done' ? 'var(--success-soft)' : 'var(--info-soft)' }}>
-          {phase === 'done' ? <Icon name="check" size={17} style={{ color: 'var(--success)' }} /> : <span className="spinner" style={{ borderTopColor: 'var(--info)' }} />}
-          <span className="ph-title" style={{ color: phase === 'done' ? 'var(--success)' : 'var(--info)' }}>
-            {phase === 'done' ? 'Sourcing complete' : phase === 'ratelimit' ? 'Rate-limit wait — DigiKey' : phase === 'cancelled' ? 'Sourcing cancelled' : 'Sourcing in progress'}</span>
-          <span className="ph-meta">{done} of {total} lines · {pct}%{phase !== 'done' ? ` · ~${Math.max(1, Math.round((100 - pct) / 6 * 0.42))}s remaining` : ''}</span>
+        <div className="panel-head" style={{ background: head.bg }}>
+          {phase === 'done' ? <Icon name="check" size={17} style={{ color: head.fg }} />
+            : phase === 'interrupted' || phase === 'cancelled' ? <Icon name="alert" size={17} style={{ color: head.fg }} />
+            : <span className="spinner" style={{ borderTopColor: head.fg }} />}
+          <span className="ph-title" style={{ color: head.fg }}>{head.title}</span>
+          <span className="ph-meta">{done} of {total} lines · {pct}%</span>
         </div>
         <div className="panel-body">
-          <div className="progress" style={{ height: 10 }}><i style={{ width: pct + '%', background: phase === 'done' ? 'var(--success)' : phase === 'ratelimit' ? 'var(--warning)' : 'var(--action)' }} /></div>
+          <div className="progress" style={{ height: 10 }}><i style={{ width: pct + '%', background: head.fg }} /></div>
           <div className="sourcing-grid" style={{ marginTop: 16 }}>
             <div className="scount"><div className="sc-n" style={{ color: 'var(--supplier-mouser)' }}>{counts.mouser}</div><div className="sc-l"><span className="dot" style={{ background: 'var(--supplier-mouser)' }} />Mouser</div></div>
             <div className="scount"><div className="sc-n" style={{ color: 'var(--supplier-digikey)' }}>{counts.digikey}</div><div className="sc-l"><span className="dot" style={{ background: 'var(--supplier-digikey)' }} />DigiKey</div></div>
@@ -113,28 +144,30 @@ function SourcingProgressScreen({ id, go }) {
             <div className="scount"><div className="sc-n">{counts.pending}</div><div className="sc-l"><Icon name="clock" size={12} />Pending</div></div>
           </div>
           <div className="logbox" style={{ marginTop: 16 }}>
-            {LOG_LINES.slice(0, Math.max(2, Math.round(done))).map((l, i) => (
-              <div key={i} className={`lg ${l.c}`}><span className="lt">{l.t}</span><span>{l.m}</span></div>
-            ))}
-            {phase === 'ratelimit' && <div className="lg warn"><span className="lt">····</span><span>Backing off — DigiKey rate limit, retrying…</span></div>}
-            {phase === 'done' && <div className="lg ok"><span className="lt">done</span><span>Run finished — {counts.review} line(s) need engineering review</span></div>}
+            {lines.slice(-14).map((l, i) => {
+              const meta = SOURCE_LABEL[l.status] || { t: l.status, c: '' };
+              return <div key={i} className={`lg ${meta.c}`}><span className="lt">L{l.line_no}</span><span>{l.mpn || '—'} → {meta.t}{l.note && meta.c !== 'ok' ? ` (${l.note})` : ''}</span></div>;
+            })}
+            {phase === 'run' && <div className="lg"><span className="lt">····</span><span>Querying Mouser + DigiKey (live)…</span></div>}
+            {phase === 'done' && <div className="lg ok"><span className="lt">done</span><span>Run finished — {counts.review} line(s) need engineering review, {counts.wall} on wall</span></div>}
           </div>
+          {phase === 'interrupted' && (
+            <Banner kind="warning" icon="alert" title="Sourcing interrupted"
+              actions={<button className="btn sm" onClick={start}><Icon name="refresh" size={13} />Retry</button>}>
+              The connection dropped mid-run. Completed lines are saved — retry to source the rest.
+            </Banner>
+          )}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
-            {phase !== 'done' ? (
-              <button className="btn danger" onClick={() => { clearInterval(timer.current); setRunning(false); setPhase('cancelled'); }}><Icon name="x" size={15} />Cancel run</button>
+            {phase === 'run' ? (
+              <button className="btn danger" onClick={cancel}><Icon name="x" size={15} />Cancel run</button>
             ) : (
-              <button className="btn primary" onClick={() => { storeActions.completeSourcing(b.id); go({ screen: 'p.results', id: b.id }); }}>View results<Icon name="arrow" size={15} /></button>
+              <button className="btn primary" onClick={() => go({ screen: 'p.results', id: b.id })}>View results<Icon name="arrow" size={15} /></button>
             )}
-            {phase === 'cancelled' && <button className="btn" onClick={() => { setPhase('run'); setRunning(true); }}><Icon name="refresh" size={15} />Re-run on unsourced lines</button>}
-            {phase === 'cancelled' && <button className="btn primary" onClick={() => { storeActions.completeSourcing(b.id); go({ screen: 'p.results', id: b.id }); }}>View partial results<Icon name="arrow" size={15} /></button>}
+            {(phase === 'cancelled' || phase === 'interrupted') && <button className="btn" onClick={start}><Icon name="refresh" size={15} />Re-run</button>}
           </div>
           {phase === 'cancelled' && (
-            /* FR-P05 — Cancel sourcing preserves completed lines. BOM returns to NORMALISED.
-               User can re-run sourcing on the remaining unsourced lines only, or proceed
-               with what we have. We never lose work already done. */
-            <Banner kind="info" icon="check" title="Partial results preserved"
-              actions={<button className="btn sm" onClick={() => { setPhase('run'); setRunning(true); }}><Icon name="refresh" size={13} />Re-run unsourced lines</button>}>
-              {Math.max(0, Math.round(done))} of {LOG_LINES.length} lines sourced. The remaining lines are unsourced — re-run sourcing on just those, or proceed to results with partial data.
+            <Banner kind="info" icon="check" title="Partial results preserved">
+              {done} of {total} lines sourced. Completed lines are saved — re-run for the rest, or proceed to results with partial data.
             </Banner>
           )}
         </div>

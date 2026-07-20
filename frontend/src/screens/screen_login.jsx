@@ -14,10 +14,10 @@ function LoginScreen() {
   const [email, setEmail] = useLoginState('');
   const [error, setError] = useLoginState(null);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     if (e) e.preventDefault();
-    const res = storeActions.logIn(email);
-    if (!res.ok) setError(res.error);
+    const res = await storeActions.logIn(email);
+    if (res && !res.ok) setError(res.error);
   };
 
   return (

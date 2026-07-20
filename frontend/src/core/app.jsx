@@ -14,6 +14,15 @@ function screenRole(screen) {
 
 function App() {
   const authed = useStore(s => s.authed);
+  const booting = useStore(s => s.booting);
+  // While restoring a possible backend session, show a calm splash (avoids a
+  // login-screen flash for already-authenticated users).
+  if (booting) return (
+    <div style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', background: '#0D1117' }}>
+      <div style={{ width: 44, height: 44, borderRadius: 10, background: '#2563EB', color: '#fff',
+        display: 'grid', placeItems: 'center', font: '800 22px Inter, sans-serif', animation: 'none' }}>A</div>
+    </div>
+  );
   if (!authed) return window.LoginScreen ? <window.LoginScreen /> : <EmptyState icon="lock" title="Sign in required" />;
   return <AuthedApp />;
 }

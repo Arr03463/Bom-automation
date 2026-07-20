@@ -3,7 +3,22 @@
    mutate global state and propagate notifications + audit across every role. */
 const { useSyncExternalStore } = React;
 
-let STATE = seedState();
+/* Phase 3: the store is now a client cache over the real backend. STATE starts
+   empty and is hydrated from GET /api/bootstrap after login. Auth goes through
+   the real /api/auth/* endpoints (session cookie); the client-side seed login is
+   gone. In dev mode the backend login is the seed-email path (3 role users). */
+function emptyState() {
+  return {
+    authed: false, currentUserId: null, activeRole: 'designer', booting: true,
+    users: [], projects: {}, collections: [], boms: [], requests: [], programs: [],
+    inventory: [], notifications: [], audit: [], suppliers: [],
+    system: { status: [], workflow: {}, settings: {}, batch: { main: {}, critical: {} }, jobs: [], stuck: [] },
+    investigations: [], recommendations: [], reworks: [], firmwares: [],
+    comments: {}, datasheets: {}, seq: { req: 100, po: 3000, bom: 100, col: 100, inv: 100, rec: 100 },
+  };
+}
+
+let STATE = emptyState();
 
 const listeners = new Set();
 function emit() { STATE = { ...STATE }; listeners.forEach(l => l()); }
@@ -12,34 +27,36 @@ function getState() { return STATE; }
 
 const actorName = () => (STATE.users.find(u => u.id === STATE.currentUserId) || {}).name || 'You';
 
-/* ---- Prototype auth (Note 4). Email-only; sessionStorage persistence; Model D landing.
-   No backend — real Microsoft SSO replaces logIn/logOut in Phase 2, UX contract unchanged. ---- */
-const AUTH_KEY = 'autobom.auth.v1';
-function lastRoleKey(uid) { return 'autobom.lastRole.' + uid; }
-function persistAuth() {
-  try {
-    if (STATE.authed && STATE.currentUserId) {
-      sessionStorage.setItem(AUTH_KEY, JSON.stringify({ userId: STATE.currentUserId, activeRole: STATE.activeRole }));
-      sessionStorage.setItem(lastRoleKey(STATE.currentUserId), STATE.activeRole);
-    } else { sessionStorage.removeItem(AUTH_KEY); }
-  } catch (e) {}
-}
 function landingRoleFor(user) {
   const roles = (user && user.roles) || [];
-  let last = null; try { last = sessionStorage.getItem(lastRoleKey(user.id)); } catch (e) {}
-  if (last && roles.includes(last)) return last;                 // return session → last-active role
-  if (user.primaryRole && roles.includes(user.primaryRole)) return user.primaryRole; // first login → primary
+  if (user && user.primaryRole && roles.includes(user.primaryRole)) return user.primaryRole;
   return roles[0] || 'designer';
 }
-(function hydrateAuth() {
+
+/* Merge the backend bootstrap slices into STATE (single source of truth). */
+function applyBootstrap(data) {
+  Object.assign(STATE, data);
+}
+
+/* Load the session user's authorized slice and mark authed. */
+async function hydrateSession(user) {
+  const data = await window.api.get('/bootstrap');
+  applyBootstrap(data);
+  STATE.authed = true;
+  STATE.booting = false;
+  STATE.currentUserId = user.id;
+  STATE.activeRole = user.activeRole || landingRoleFor(user);
+  emit();
+}
+
+/* On load, restore an existing session (valid cookie) if any. */
+async function boot() {
   try {
-    const raw = sessionStorage.getItem(AUTH_KEY);
-    if (!raw) return;
-    const { userId, activeRole } = JSON.parse(raw);
-    const u = STATE.users.find(x => x.id === userId && x.active);
-    if (u) { STATE.authed = true; STATE.currentUserId = userId; STATE.activeRole = u.roles.includes(activeRole) ? activeRole : landingRoleFor(u); }
-  } catch (e) {}
-})();
+    const me = await window.api.get('/auth/me');   // { user, auth_mode }
+    if (me && me.user) { await hydrateSession(me.user); return; }
+  } catch (e) { /* backend unreachable -> show login */ }
+  STATE.booting = false; emit();
+}
 
 function pushNotif(n) {
   // Derive the new-shape fields when callers haven't set them yet.
@@ -94,32 +111,50 @@ const grand = (items) => items.reduce((a, i) => a + (i.ext || 0), 0);
 /* ---------------- ACTIONS ---------------- */
 const ROLE_PREFIX = { designer: 'd', production: 'p', purchasing: 'b', development: 'v', admin: 'a' };
 const actions = {
-  /* Prototype auth — email-only login against seed users (Note 4). */
-  logIn(email) {
-    const e = (email || '').trim().toLowerCase();
+  /* Real backend auth (dev mode = seed-email login for the 3 role users). */
+  async logIn(email) {
+    const e = (email || '').trim();
     if (!e) return { ok: false, error: 'Enter your work email.' };
-    const u = STATE.users.find(x => x.email.toLowerCase() === e);
-    if (!u) return { ok: false, error: "We don't recognize that email. Try a seed user." };
-    if (!u.active) return { ok: false, error: 'This account is deactivated. Contact an administrator.' };
-    STATE.currentUserId = u.id; STATE.authed = true; STATE.activeRole = landingRoleFor(u);
-    persistAuth();
-    pushAudit({ action: 'Logged in (prototype)', entity: u.id, before: '—', after: u.email });
-    emit(); return { ok: true };
+    try {
+      const user = await window.api.post('/auth/login', { email: e });
+      await hydrateSession(user);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err && err.message) || 'Login failed.' };
+    }
   },
-  logOut() {
-    const u = STATE.users.find(x => x.id === STATE.currentUserId);
-    if (u) pushAudit({ action: 'Logged out (prototype)', entity: u.id, before: u.email, after: '—' });
-    STATE.authed = false;
-    try { sessionStorage.removeItem(AUTH_KEY); } catch (err) {}
+  async logOut() {
+    try { await window.api.post('/auth/logout', {}); } catch (err) {}
+    STATE = emptyState();
+    STATE.booting = false;
     emit();
   },
   /* Role switcher — scoped to roles the logged-in user actually holds. */
-  setRole(role) {
+  async setRole(role) {
     const u = STATE.users.find(x => x.id === STATE.currentUserId);
     if (u && u.roles && !u.roles.includes(role)) return;
-    STATE.activeRole = role;
-    persistAuth();
+    try {
+      const user = await window.api.post('/auth/role', { role });
+      STATE.activeRole = (user && user.activeRole) || role;
+    } catch (err) {
+      STATE.activeRole = role;
+    }
     emit();
+  },
+
+  /* Apply the authoritative sourced BOM returned by the live sourcing stream. */
+  applySourcingResult(bom) {
+    if (!bom || !bom.id) return;
+    STATE.boms = STATE.boms.map(b => (b.id === bom.id ? bom : b));
+    emit();
+  },
+  /* Re-read a single BOM from the backend (used after apply/version bumps so the
+     UI shows the new version, not stale state). */
+  async refetchBom(bomId) {
+    try {
+      const bom = await window.api.get('/boms/' + bomId);
+      if (bom && bom.id) { STATE.boms = STATE.boms.map(b => (b.id === bom.id ? bom : b)); emit(); }
+    } catch (e) {}
   },
 
   /* DESIGNER */
@@ -732,3 +767,7 @@ function useStore(selector) {
 }
 
 Object.assign(window, { useStore, storeActions: actions, getState, resolveNotificationRoute });
+
+/* Restore an existing backend session (valid cookie) on load. Runs after
+   window.api is installed by main.jsx. Safe if the backend is unreachable. */
+boot();
