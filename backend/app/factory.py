@@ -6,15 +6,25 @@ receiving, …) mount here in later phases via `include_router`.
 """
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from api.health import router as health_router
-from api.auth import router as auth_router
+from auth.routes import router as auth_router
 
 log = logging.getLogger("autobom")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    s = settings.status()
+    log.info("AutoBOM backend starting — mode=%s auth=%s graph=%s db=%s",
+             s["mode"], s["auth"], s["graph_sheet_writer"], s["database"])
+    log.info("Suppliers configured: %s", s["suppliers"])
+    yield
 
 
 def create_app() -> FastAPI:
@@ -22,6 +32,7 @@ def create_app() -> FastAPI:
         title="AutoBOM Backend",
         version="0.1.0",
         description="Local-first, Azure-ready backend for AutoBOM.",
+        lifespan=lifespan,
     )
 
     app.add_middleware(
@@ -35,13 +46,6 @@ def create_app() -> FastAPI:
     # All API routes live under /api so the Vite dev server can proxy one prefix.
     app.include_router(health_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
-
-    @app.on_event("startup")
-    def _log_mode() -> None:
-        s = settings.status()
-        log.info("AutoBOM backend starting — mode=%s auth=%s graph=%s db=%s",
-                 s["mode"], s["auth"], s["graph_sheet_writer"], s["database"])
-        log.info("Suppliers configured: %s", s["suppliers"])
 
     return app
 
