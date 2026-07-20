@@ -22,6 +22,15 @@ function partRows(requests) {
 
 const fmtC = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 
+/* Safe project-name lookup: static catalog, then the live store, then 'Other'
+   (a Collection/Request may be Program-bound with no Project). */
+function projName(pid) {
+  if (!pid) return 'Other';
+  const st = (typeof getState === 'function' && getState().projects) || {};
+  const p = (typeof PROJECTS !== 'undefined' && PROJECTS[pid]) || st[pid];
+  return (p && p.name) || 'Other';
+}
+
 /* ============================================================
    Embedded Purchasing view (v4) — Full / My submissions toggle.
    ============================================================ */
@@ -68,7 +77,7 @@ function EmbeddedPurchasing({ go, focusReq }) {
         <span className="od-dot" /><Icon name="external" size={15} />
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600 }}>Live integration — Daily Purchasing List (OneDrive)</div>
-          <div className="caption">Critical batches every {fmtC(batch.critical.intervalMin)} · Main every {fmtC(batch.main.intervalMin)} · atomic writes · 12-column sheet unchanged, no CPN column.</div>
+          <div className="caption">Critical batches every {fmtC(batch.critical.intervalMin)} · Main every {fmtC(batch.main.intervalMin)} · atomic writes · 14-column sheet unchanged, no CPN column.</div>
         </div>
       </div>
 
@@ -107,7 +116,7 @@ function BucketSection({ critical, parts, cfg, mode, flashReq }) {
             <tr key={p.key} style={flashReq && p.reqId === flashReq ? { background: 'var(--action-soft)' } : undefined}>
               <td><div className="mono" style={{ fontWeight: 600 }}>{p.mpn}</div><div className="caption">{p.mfr}{p.desc && p.desc !== '—' ? ` · ${p.desc}` : ''}</div></td>
               <td><span className="cpn-cell"><span className="mono caption" title="Customer Part Number — read-only">{p.cpn}</span><span className={`scope-pill ${p.scope}`}>{p.scope}</span></span></td>
-              <td className="secondary">{PROJECTS[p.project].name}</td>
+              <td className="secondary">{projName(p.project)}</td>
               {mode === 'full' && <td><RoleTag role={p.fromRole} /> <span className="caption">{p.from}</span></td>}
               <td>{p.supplier ? <SupplierTag supplier={p.supplier} /> : <span className="muted">—</span>}</td>
               <td className="num">{p.qty}</td>
@@ -173,7 +182,7 @@ function ArchiveBatch({ batch, mode, flashReq }) {
                 <td className="mono" style={{ fontWeight: 600 }}>{l.mpn}</td>
                 <td className="num">{l.qty}</td>
                 <td>{l.supplier ? <SupplierTag supplier={l.supplier} /> : '—'}</td>
-                <td className="secondary">{l.scope === 'wall' ? 'Wall' : PROJECTS[l.project].name}</td>
+                <td className="secondary">{l.scope === 'wall' ? 'Wall' : projName(l.project)}</td>
                 <td className="caption">{batch.type === 'Critical' ? 'Next Day' : '2-Day'}</td>
                 <td>{state === 'full'
                   ? <span className="badge filled" style={{ background: 'var(--success)' }}><Icon name="check" size={11} />Fully received</span>

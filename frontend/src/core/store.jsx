@@ -172,87 +172,47 @@ const actions = {
   },
 
   /* DESIGNER */
-  addToCollection(mpn, collectionId, newName) {
-    let col = STATE.collections.find(c => c.id === collectionId);
-    if (!col && newName) {
-      col = { id: 'COL-0' + (STATE.seq.col++), name: newName, project: 'tvca-rev2', state: 'active',
-        creator: actorName(), ownerId: STATE.currentUserId, role: 'designer', updated: 'just now', updatedBy: actorName(), created: 'Today', desc: '', items: [] };
-      STATE.collections = [col, ...STATE.collections];
-    }
-    if (!col) return;
-    const c = CATALOG[mpn];
-    const no = col.items.length + 1;
-    const rec = c && c.recommend;
-    col.items = [...col.items, line(no, mpn, 1, rec ? 'sourced-' + rec : 'needs-review')];
-    col.updated = 'just now'; col.updatedBy = actorName();
-    pushAudit({ action: 'Part added to collection', entity: col.id, before: `${no - 1} parts`, after: `${no} parts` });
-    emit();
-    return col;
+  async addToCollection(mpn, collectionId) {
+    if (!collectionId) return null;
+    try {
+      const c = CATALOG[mpn] || {};
+      const col = await window.api.post('/collections/' + collectionId + '/items', { mpn, mfr: c.mfr, desc: c.desc, qty: 1 });
+      STATE.collections = STATE.collections.map(x => x.id === col.id ? col : x); emit();
+      return col;
+    } catch (e) { return null; }
   },
-  updateQty(collectionId, no, qty) {
-    const col = STATE.collections.find(c => c.id === collectionId); if (!col) return;
-    col.items = col.items.map(i => i.no === no ? { ...i, qty, ext: i.unit != null ? +(i.unit * qty).toFixed(2) : null } : i);
-    col.updated = 'just now'; emit();
+  async updateQty(collectionId, no, qty) {
+    try {
+      const col = await window.api.patch('/collections/' + collectionId + '/items/' + no, { qty });
+      STATE.collections = STATE.collections.map(x => x.id === col.id ? col : x); emit();
+    } catch (e) {}
   },
-  requestToOrder(collectionId, note, critical) {
-    const col = STATE.collections.find(c => c.id === collectionId); if (!col) return;
-    const reqId = 'REQ-0' + (STATE.seq.req++);
-    col.state = 'order-requested'; col.reqId = reqId; col.updated = 'just now'; col.updatedBy = actorName();
-    STATE.requests = [{ id: reqId, title: col.name, kind: 'collection', sourceId: col.id, project: col.project,
-      from: actorName(), fromRole: 'designer', submitted: 'just now', age: 0, critical: !!critical, bucketState: critical ? 'QUEUED_CRITICAL' : 'QUEUED_MAIN', note: note || '', resubmit: !!col.rejection, items: col.items }, ...STATE.requests];
-    // Dropping a request into the bucket is NOT a request for Purchasing's permission —
-    // Purchasing doesn't approve/reject/review. No action notification is sent to Purchasing.
-    // (The bucket view is the surface; an item simply appears there.)
-    pushAudit({ action: 'Collection submitted to Purchasing', entity: col.id, before: 'ACTIVE', after: 'ORDER REQUESTED' });
-    emit(); return reqId;
+  async requestToOrder(collectionId, note, critical) {
+    try {
+      const res = await window.api.post('/collections/' + collectionId + '/request-order', { note, critical: !!critical });
+      STATE.collections = STATE.collections.map(x => x.id === res.collection.id ? res.collection : x);
+      STATE.requests = [res.request, ...STATE.requests.filter(r => r.id !== res.request.id)];
+      emit(); return res.request.id;
+    } catch (e) { return null; }
   },
   /* Designer resolves a Push-Back — produces a RECOMMENDATION, never mutates the master BOM.
      Production applies it from their Dashboard (applyPushbackRecommendation). */
-  resolvePushback(bomId, { recommendations, note }) {
-    const bom = STATE.boms.find(b => b.id === bomId); if (!bom || !bom.pushback) return;
-    bom.pushback.recommendation = {
-      by: actorName(), when: 'just now', note: note || '',
-      picks: (recommendations || []).map(r => ({ lineNo: r.lineNo != null ? r.lineNo : null, added: !!r.added,
-        mpn: r.candidate.mpn, mfr: r.candidate.mfr || '', desc: r.candidate.desc || '', section: r.candidate.section || 'supplier',
-        location: r.candidate.location || null, datasheet: r.candidate.datasheet || null, request: r.request || null })),
-    };
-    bom.pushback.recommendation.picks.forEach(p => actions.attachDatasheet(p.mpn, p.datasheet)); // datasheet on user-action
-    bom.updated = 'just now'; bom.updatedBy = actorName();
-    const n = bom.pushback.recommendation.picks.length;
-    pushNotif({ forRoles: ['production'], targetRole: 'production', sourceRole: 'designer', kind: 'action',
-      type: 'REPLACEMENTS RECOMMENDED', actorRole: 'designer',
-      actionLabel: 'Apply replacements', verb: 'Resolve',
-      body: `${bom.name} · ${n} replacement${n > 1 ? 's' : ''} recommended by ${actorName()} — review and Apply to the master BOM.`,
-      who: actorName(), entity: bom.id,
-      routes: { production: { screen: 'p.dashboard' }, designer: { screen: 'p.bomOverview', id: bom.id } } });
-    pushAudit({ action: 'Push-Back resolved — recommendations sent', entity: bom.id, before: 'EXCEPTIONS', after: 'EXCEPTIONS (recommended)' });
-    emit();
+  async resolvePushback(bomId, { recommendations, note }) {
+    const picks = (recommendations || []).map(r => ({ lineNo: r.lineNo != null ? r.lineNo : null, added: !!r.added,
+      mpn: r.candidate.mpn, mfr: r.candidate.mfr || '', desc: r.candidate.desc || '' }));
+    try {
+      const bom = await window.api.post('/boms/' + bomId + '/resolve-pushback', { recommendations: picks, note });
+      STATE.boms = STATE.boms.map(b => b.id === bom.id ? bom : b); emit();
+    } catch (e) {}
   },
-  /* Production commits Designer's recommendation to the master BOM (version increments). */
-  applyPushbackRecommendation(bomId) {
-    const bom = STATE.boms.find(b => b.id === bomId); if (!bom || !bom.pushback || !bom.pushback.recommendation) return;
-    const rec = bom.pushback.recommendation;
-    rec.picks.forEach(p => {
-      if (p.added) {
-        const no = bom.items.length + 1; const c = CATALOG[p.mpn] || {};
-        bom.items = [...bom.items, line(no, p.mpn, (p.request && p.request.quantityPerBoard) || 1, c.recommend ? 'sourced-' + c.recommend : 'needs-review')];
-      } else {
-        bom.items = bom.items.map(i => {
-          if (i.no !== p.lineNo) return i; const c = CATALOG[p.mpn] || {};
-          return { ...i, mpn: p.mpn, mfr: p.mfr || c.mfr || i.mfr, desc: c.desc || p.desc || i.desc, status: 'validated', exReason: null, replacement: { from: i.mpn, by: rec.by } };
-        });
-      }
-      actions.attachDatasheet(p.mpn, p.datasheet);
-    });
-    bom.version = (bom.version || 1) + 1;
-    bom.state = 'normalised'; bom.updated = 'just now'; bom.updatedBy = actorName();
-    bom.pushback.appliedBy = actorName(); bom.pushback.appliedWhen = 'just now';
-    pushNotif({ forRoles: ['production'], targetRole: 'production', sourceRole: 'production', kind: 'action',
-      type: 'REPLACEMENTS APPLIED', actorRole: 'production', actionLabel: 'Re-run sourcing', verb: 'Resolve',
-      body: `${bom.name} · recommendations applied to master BOM v${bom.version} — ready for re-sourcing.`, who: actorName(), entity: bom.id,
-      routes: { production: { screen: 'p.sourcing', id: bom.id }, designer: { screen: 'p.bomOverview', id: bom.id } } });
-    pushAudit({ action: `Recommendations applied to master BOM (v${bom.version})`, entity: bom.id, before: 'EXCEPTIONS', after: 'NORMALISED' });
-    emit();
+  /* Production commits Designer's recommendation to the master BOM. The returned
+     BOM is the NEW version (re-read from the authoritative server return, per the
+     guardrail — Production sees the post-apply state, not stale). */
+  async applyPushbackRecommendation(bomId) {
+    try {
+      const bom = await window.api.post('/boms/' + bomId + '/apply-recommendation', {});
+      STATE.boms = STATE.boms.map(b => b.id === bom.id ? bom : b); emit();
+    } catch (e) {}
   },
   /* Datasheet lifecycle — attach to PartsBox on user-action; skip if already attached.
      Background op; a real failure would surface to Admin diagnostics (not modelled here). */
@@ -350,37 +310,26 @@ const actions = {
     pushAudit({ action: 'Sourcing run complete', entity: bom.id, before: 'SOURCING', after: hasEx ? 'RESULTS (exceptions)' : 'RESULTS' });
     emit();
   },
-  sendPushback(bomId, opts) {
-    const { lineNos = [], reason = 'other', urgency = 'standard', note = '', perLineComments = {}, addedComponentRequest = null } = opts || {};
-    const bom = STATE.boms.find(b => b.id === bomId); if (!bom) return;
-    bom.state = 'exceptions';
-    const flaggedLines = lineNos.map(no => ({ lineNo: no, exReason: (bom.items.find(i => i.no === no) || {}).exReason || 'Needs engineering review', comments: perLineComments[no] ? [{ by: actorName(), when: 'just now', body: perLineComments[no] }] : [] }));
-    bom.pushback = { by: actorName(), when: 'just now', to: bom.creator, reason, urgency, note, loop: (bom.pushback?.loop || 0) + 1, flaggedLines, addedComponentRequest, recommendation: null, comments: [] };
-    if (flaggedLines.length) bom.items = bom.items.map(i => flaggedLines.find(f => f.lineNo === i.no) ? { ...i, status: 'needs-review' } : i);
-    const count = flaggedLines.length + (addedComponentRequest ? 1 : 0);
-    pushNotif({ forRoles: ['designer'], targetRole: 'designer', sourceRole: 'production', kind: 'action',
-      type: 'BOM EXCEPTION', actorRole: 'production',
-      actionLabel: `Resolve ${count} item${count > 1 ? 's' : ''}`, verb: 'Resolve',
-      body: `${bom.name} · ${reason === 'missing-component' ? 'missing component requested' : count + ' line' + (count > 1 ? 's' : '') + ' flagged'} for engineering review.`, who: actorName(), entity: bom.id,
-      routes: { designer: { screen: 'd.dashboard' }, production: { screen: 'p.bomOverview', id: bom.id } } });
-    pushAudit({ action: 'Push-Back sent to Designer', entity: bom.id, before: 'RESULTS', after: 'EXCEPTIONS' });
-    emit();
+  async sendPushback(bomId, opts) {
+    const { lineNos = [], reason = 'other', urgency = 'standard', note = '', addedComponentRequest = null } = opts || {};
+    const bom = STATE.boms.find(b => b.id === bomId);
+    const flaggedLines = lineNos.map(no => ({ lineNo: no, exReason: ((bom && bom.items.find(i => i.no === no)) || {}).exReason || 'Needs engineering review', comments: [] }));
+    try {
+      const updated = await window.api.post('/boms/' + bomId + '/pushback', { reason, urgency, note, flaggedLines, addedComponentRequest });
+      STATE.boms = STATE.boms.map(b => b.id === updated.id ? updated : b); emit();
+    } catch (e) {}
   },
-  createPackage(bomId) {
-    const bom = STATE.boms.find(b => b.id === bomId); if (!bom) return;
-    bom.partsbox = 'PB-' + bom.id.replace('BOM-', ''); bom.updated = 'just now';
-    pushAudit({ action: 'PartsBox project created', entity: bom.id, before: 'RESULTS', after: 'PACKAGED' });
-    emit();
+  async createPackage(bomId) {
+    // PartsBox project box is created with inventory wiring; record the ref for now.
+    const bom = STATE.boms.find(b => b.id === bomId); if (bom) { bom.partsbox = 'PB-' + bom.id.replace('BOM-', ''); emit(); }
   },
-  submitBomToPurchasing(bomId, note) {
-    const bom = STATE.boms.find(b => b.id === bomId); if (!bom) return;
-    const reqId = 'REQ-0' + (STATE.seq.req++);
-    bom.state = 'submitted'; bom.reqId = reqId; bom.updated = 'just now'; bom.updatedBy = actorName();
-    STATE.requests = [{ id: reqId, title: bom.name, kind: 'bom', sourceId: bom.id, project: bom.project,
-      from: actorName(), fromRole: 'production', submitted: 'just now', age: 0, critical: false, bucketState: 'QUEUED_MAIN', note: note || '', resubmit: false, items: bom.items }, ...STATE.requests];
-    // No approval notification to Purchasing — the request simply enters the Main bucket.
-    pushAudit({ action: 'BOM submitted to Purchasing', entity: bom.id, before: 'PACKAGED', after: 'SUBMITTED' });
-    emit(); return reqId;
+  async submitBomToPurchasing(bomId, note, critical) {
+    try {
+      const res = await window.api.post('/boms/' + bomId + '/submit', { note, critical: !!critical });
+      STATE.boms = STATE.boms.map(b => b.id === res.bom.id ? res.bom : b);
+      STATE.requests = [res.request, ...STATE.requests.filter(r => r.id !== res.request.id)];
+      emit(); return res.request.id;
+    } catch (e) { return null; }
   },
 
   /* PURCHASING — order execution retired (v4). AutoBOM never places orders, approves
@@ -440,38 +389,40 @@ const actions = {
   },
 
   /* ADMIN */
-  setUserRoles(userId, roles) {
-    const u = STATE.users.find(x => x.id === userId); if (!u) return;
-    const before = '[' + u.roles.join(', ') + ']'; u.roles = roles;
-    pushAudit({ action: 'Roles updated', entity: userId, before, after: '[' + roles.join(', ') + ']' });
-    emit();
+  async setUserRoles(userId, roles) {
+    try {
+      const u = await window.api.patch('/users/' + userId, { roles });
+      STATE.users = STATE.users.map(x => x.id === u.id ? u : x); emit();
+    } catch (e) {}
   },
-  setUserOverrides(userId, overrides) {
-    const u = STATE.users.find(x => x.id === userId); if (!u) return;
-    const before = '[' + (u.overrides || []).join(', ') + ']';
-    u.overrides = overrides;
-    pushAudit({ action: 'User permission overrides updated', entity: userId, before, after: '[' + overrides.join(', ') + ']' });
-    emit();
+  async setUserOverrides(userId, overrides) {
+    try {
+      const u = await window.api.patch('/users/' + userId, { overrides });
+      STATE.users = STATE.users.map(x => x.id === u.id ? u : x); emit();
+    } catch (e) {}
   },
-  toggleUserActive(userId) {
-    const u = STATE.users.find(x => x.id === userId); if (!u) return;
-    u.active = !u.active;
-    pushAudit({ action: u.active ? 'User activated' : 'User deactivated', entity: userId, before: u.active ? 'INACTIVE' : 'ACTIVE', after: u.active ? 'ACTIVE' : 'INACTIVE' });
-    emit();
+  async toggleUserActive(userId) {
+    const cur = STATE.users.find(x => x.id === userId);
+    try {
+      const u = await window.api.patch('/users/' + userId, { active: !(cur && cur.active) });
+      STATE.users = STATE.users.map(x => x.id === u.id ? u : x); emit();
+    } catch (e) {}
   },
   inviteUser({ name, email, roles }) {
-    const id = 'u-' + name.toLowerCase().split(' ')[0];
-    STATE.users = [...STATE.users, { id, name, email, roles: roles && roles.length ? roles : ['readonly'], active: true, intern: false, lastActive: 'Never', created: 'Today', title: '—' }];
-    pushAudit({ action: 'User invited', entity: id, before: '—', after: 'ACTIVE (' + (roles?.join(', ') || 'readonly') + ')' });
-    emit();
+    // User invite (create) lands with the Admin write surface; no-op fallback avoided.
+    console.warn('inviteUser: create-user endpoint not wired in this build');
   },
-  toggleSupplier(id) {
-    const s = STATE.suppliers.find(x => x.id === id); if (!s) return;
-    s.enabled = !s.enabled; pushAudit({ action: s.enabled ? 'Supplier enabled' : 'Supplier disabled', entity: id, before: s.enabled ? 'OFF' : 'ON', after: s.enabled ? 'ON' : 'OFF' }); emit();
+  async toggleSupplier(id) {
+    const cur = STATE.suppliers.find(x => x.id === id);
+    try {
+      const s = await window.api.patch('/suppliers/' + id, { enabled: !(cur && cur.enabled) });
+      STATE.suppliers = STATE.suppliers.map(x => x.id === s.id ? s : x); emit();
+    } catch (e) {}
   },
-  setConfig(path, value) {
+  async setConfig(path, value) {
     const [grp, key] = path.split('.');
-    if (STATE.system[grp]) { STATE.system[grp][key] = value; pushAudit({ action: 'Config changed: ' + path, entity: 'system', before: '—', after: String(value) }); emit(); }
+    if (STATE.system[grp]) { STATE.system[grp][key] = value; emit(); }   // optimistic UI mirror
+    try { await window.api.patch('/config', { section: grp, key: grp, value: { [key]: value } }); } catch (e) {}
   },
   /* v2 bucket batching — Admin sets each stream's cadence; both are configurable, never hard-coded. */
   setBatchInterval(stream, min) {
@@ -641,111 +592,71 @@ const actions = {
     emit(); return linkedId;
   },
 
-  markAllRead() { STATE.notifications = STATE.notifications.map(n => ({ ...n, unread: false })); emit(); },
-  markRead(id) { const n = STATE.notifications.find(x => x.id === id); if (n) { n.unread = false; emit(); } },
+  async markAllRead() { STATE.notifications = STATE.notifications.map(n => ({ ...n, unread: false })); emit(); try { await window.api.post('/notifications/read-all', {}); } catch (e) {} },
+  async markRead(id) { const n = STATE.notifications.find(x => x.id === id); if (n) { n.unread = false; emit(); } try { await window.api.post('/notifications/' + id + '/read', {}); } catch (e) {} },
 
   /* COMMENTS — every commentable object */
-  addComment(entityId, body) {
+  async addComment(entityId, body) {
     const text = (body || '').trim(); if (!text || !entityId) return null;
-    const u = STATE.users.find(x => x.id === STATE.currentUserId);
-    const c = { id: uid('cmt'), userId: STATE.currentUserId, name: u?.name || actorName(), role: STATE.activeRole, when: 'just now', body: text };
-    STATE.comments = { ...STATE.comments, [entityId]: [...(STATE.comments[entityId] || []), c] };
-    pushAudit({ action: 'Comment posted', entity: entityId, before: '—', after: text.length > 60 ? text.slice(0, 60) + '…' : text });
-    emit(); return c.id;
+    try {
+      const res = await window.api.post('/comments', { entityId, body: text });
+      STATE.comments = { ...STATE.comments, [entityId]: [...(STATE.comments[entityId] || []), res.comment] };
+      emit(); return res.id;
+    } catch (e) { return null; }
   },
 
   /* PROGRAMS — Create (v4). Pure AutoBOM concept: no PartsBox side effect, no notifications. */
-  createProgram({ identifier, name, owner, customer, description, tags }) {
-    const id = 'prog-' + Math.random().toString(36).slice(2, 8);
-    const idf = (identifier || '').trim();
-    const prog = { id, identifier: idf, code: idf, name: (name || '').trim(), owner: owner || actorName(),
-      customer: (customer || '').trim() || null, desc: (description || '').trim(), status: 'Active',
-      started: 'Jul 2026', target: null, tags: tags || [], notifyOnEquivalentSwap: true, projects: [] };
-    STATE.programs = [...(STATE.programs || []), prog];
-    pushAudit({ action: 'Program created', entity: id, before: '—', after: `${idf} · ${prog.name}` });
-    emit(); return id;
-  },
-  /* PROJECTS — Create (v4). program_id required (Standalone retired). Optional PartsBox create at save. */
-  createProject({ identifier, name, lead, program_id, description, createPartsBoxNow }) {
-    const id = 'proj-' + Math.random().toString(36).slice(2, 8);
-    const proj = { id, identifier: (identifier || '').trim(), name: (name || '').trim(),
-      lead: lead || actorName(), program_id, desc: (description || '').trim(), status: 'active', created: 'Today',
-      partsbox: { created: false, pending: false, projectId: null, storageId: null } };
-    if (createPartsBoxNow) actions._doPartsBoxSetup(proj);
-    STATE.projects = { ...STATE.projects, [id]: proj };
-    const prog = (STATE.programs || []).find(p => p.id === program_id);
-    if (prog) prog.projects = [...(prog.projects || []), id];
-    pushAudit({ action: 'Project created', entity: id, before: '—', after: `${proj.name} · PartsBox ${createPartsBoxNow ? 'requested' : 'deferred'}` });
-    emit(); return id;
-  },
-  /* Idempotent PartsBox project + storage create (mirrors POC find-or-create). Used at save and via the detail affordance. */
-  _doPartsBoxSetup(proj) {
+  async createProgram({ identifier, name, owner, customer, description, tags }) {
     try {
-      proj.partsbox = { created: true, pending: false, projectId: 'PB-' + proj.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 8).toUpperCase(), storageId: 'PBS-' + proj.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 8).toUpperCase() };
-      pushAudit({ action: 'PartsBox project + storage location created', entity: proj.id, before: '—', after: proj.partsbox.projectId });
-    } catch (e) {
-      proj.partsbox = { created: false, pending: true, projectId: null, storageId: null };
-      pushAudit({ action: 'PartsBox creation failed — pending retry', entity: proj.id, before: '—', after: 'PENDING' });
-    }
+      const prog = await window.api.post('/programs', { name: (name || '').trim(), code: (identifier || '').trim(),
+        customer: (customer || '').trim() || null, desc: (description || '').trim(), tags: tags || [] });
+      STATE.programs = [...(STATE.programs || []), prog]; emit(); return prog.id;
+    } catch (e) { return null; }
   },
-  createProjectPartsBox(projectId) {
-    const proj = STATE.projects[projectId]; if (!proj || proj.partsbox?.created) return;
-    actions._doPartsBoxSetup(proj); proj.updated = 'just now'; emit();
+  /* PROJECTS — Create (v4). program_id required. Optional PartsBox create at save. */
+  async createProject({ identifier, name, lead, program_id, description, createPartsBoxNow }) {
+    try {
+      let proj = await window.api.post('/projects', { name: (name || '').trim(), identifier: (identifier || '').trim(),
+        program_id, desc: (description || '').trim() });
+      if (createPartsBoxNow) { try { proj = await window.api.post('/projects/' + proj.id + '/partsbox', {}); } catch (e) {} }
+      STATE.projects = { ...STATE.projects, [proj.id]: proj };
+      const prog = (STATE.programs || []).find(p => p.id === program_id);
+      if (prog) prog.projects = [...(prog.projects || []), proj.id];
+      emit(); return proj.id;
+    } catch (e) { return null; }
+  },
+  async createProjectPartsBox(projectId) {
+    try {
+      const proj = await window.api.post('/projects/' + projectId + '/partsbox', {});
+      STATE.projects = { ...STATE.projects, [proj.id]: proj }; emit();
+    } catch (e) {}
   },
 
-  /* COLLECTIONS — live editing + creation (designer + development share the same shape) */
-  createCollection({ kind, name, program_id, project, category, desc, notes, tags, priority, relatedBom, relatedDevTask }) {
-    const isDev = kind === 'development';
-    const id = (isDev ? 'DCOL-0' : 'COL-0') + String(STATE.seq.col++).padStart(2, '0');
-    const c = { id, name: name.trim(), program_id: program_id || null, project: project || null, state: isDev ? 'draft' : 'active',
-      role: isDev ? 'development' : 'designer', kind: isDev ? 'development' : 'designer',
-      creator: actorName(), ownerId: STATE.currentUserId,
-      category: category || (isDev ? 'Investigation' : null),
-      updated: 'just now', updatedBy: actorName(), created: 'Today',
-      desc: desc || '', notes: notes || '',
-      tags: tags || [], priority: priority || null, relatedBom: relatedBom || null, relatedDevTask: relatedDevTask || null,
-      items: [], outcomes: isDev ? [] : undefined };
-    STATE.collections = [c, ...STATE.collections];
-    pushAudit({ action: `${isDev ? 'Development' : 'Designer'} Collection created`, entity: id, before: '—', after: 'DRAFT' });
-    emit(); return id;
+  /* COLLECTIONS — real create + edit (Designer; Development deferred). */
+  async createCollection({ name, program_id, project, category, desc }) {
+    try {
+      const c = await window.api.post('/collections', { name: (name || '').trim(), program: program_id, project: project || null, category, desc: desc || '' });
+      STATE.collections = [c, ...STATE.collections]; emit(); return c.id;
+    } catch (e) { return null; }
   },
-  renameCollection(cid, name) {
-    const c = STATE.collections.find(x => x.id === cid); if (!c) return;
-    const before = c.name; const after = name.trim(); if (!after || after === before) return;
-    c.name = after; c.updated = 'just now'; c.updatedBy = actorName();
-    pushAudit({ action: 'Collection renamed', entity: cid, before, after });
-    emit();
+  async renameCollection(cid, name) {
+    const after = (name || '').trim(); if (!after) return;
+    try { const c = await window.api.patch('/collections/' + cid, { name: after }); STATE.collections = STATE.collections.map(x => x.id === c.id ? c : x); emit(); } catch (e) {}
   },
-  setCollectionDescription(cid, desc) {
-    const c = STATE.collections.find(x => x.id === cid); if (!c) return;
-    c.desc = desc; c.updated = 'just now'; c.updatedBy = actorName();
-    pushAudit({ action: 'Collection description updated', entity: cid, before: '—', after: '—' });
-    emit();
+  async setCollectionDescription(cid, desc) {
+    try { const c = await window.api.patch('/collections/' + cid, { desc }); STATE.collections = STATE.collections.map(x => x.id === c.id ? c : x); emit(); } catch (e) {}
   },
-  setCollectionProject(cid, project) {
-    const c = STATE.collections.find(x => x.id === cid); if (!c) return;
-    const before = c.project; c.project = project; c.updated = 'just now'; c.updatedBy = actorName();
-    pushAudit({ action: 'Collection project changed', entity: cid, before, after: project });
-    emit();
+  async setCollectionProject(cid, project) {
+    try { const c = await window.api.patch('/collections/' + cid, { project }); STATE.collections = STATE.collections.map(x => x.id === c.id ? c : x); emit(); } catch (e) {}
   },
-  setCollectionProgram(cid, programId) {
-    const c = STATE.collections.find(x => x.id === cid); if (!c) return;
-    const before = c.program_id; c.program_id = programId; c.project = null; c.updated = 'just now'; c.updatedBy = actorName();
-    pushAudit({ action: 'Collection program changed', entity: cid, before, after: programId });
-    emit();
+  async setCollectionProgram(cid, programId) {
+    try { const c = await window.api.patch('/collections/' + cid, { program: programId }); STATE.collections = STATE.collections.map(x => x.id === c.id ? c : x); emit(); } catch (e) {}
   },
-  removeFromCollection(cid, no) {
-    const c = STATE.collections.find(x => x.id === cid); if (!c) return;
-    const gone = c.items.find(i => i.no === no);
-    c.items = c.items.filter(i => i.no !== no).map((i, k) => ({ ...i, no: k + 1 }));
-    c.updated = 'just now'; c.updatedBy = actorName();
-    if (gone) pushAudit({ action: 'Part removed from collection', entity: cid, before: gone.mpn, after: '—' });
-    emit();
+  async removeFromCollection(cid, no) {
+    try { const c = await window.api.del('/collections/' + cid + '/items/' + no); STATE.collections = STATE.collections.map(x => x.id === c.id ? c : x); emit(); } catch (e) {}
   },
-  setItemNote(cid, no, note) {
-    const c = STATE.collections.find(x => x.id === cid); if (!c) return;
-    c.items = c.items.map(i => i.no === no ? { ...i, note } : i);
-    c.updated = 'just now'; c.updatedBy = actorName(); emit();
+  async setItemNote(cid, no, note) {
+    try { const c = await window.api.patch('/collections/' + cid + '/items/' + no, { note }); STATE.collections = STATE.collections.map(x => x.id === c.id ? c : x); emit(); } catch (e) {}
   },
   refreshSourcing(cid, no) {
     const c = STATE.collections.find(x => x.id === cid); if (!c) return;
