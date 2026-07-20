@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from api.health import router as health_router
+from api.suppliers import router as suppliers_router
 from auth.routes import router as auth_router
 
 log = logging.getLogger("autobom")
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     # All API routes live under /api so the Vite dev server can proxy one prefix.
     app.include_router(health_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
+    app.include_router(suppliers_router, prefix="/api")
 
     return app
 

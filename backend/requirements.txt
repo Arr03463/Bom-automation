@@ -1,8 +1,5 @@
 # AutoBOM backend — Python 3.11+ (built/tested on 3.12).
 #
-# Phase 2 will add: requests + tenacity (supplier clients), and the Microsoft
-# Graph Excel writer (reuses httpx below).
-
 # --- web shell (Phase 0) ---
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
@@ -19,5 +16,13 @@ itsdangerous==2.2.0            # signed session tokens
 msal==1.31.1                  # Azure AD (SSO) — only used when creds present
 httpx==0.28.1                 # Microsoft Graph calls (+ FastAPI TestClient)
 
-# --- tests (Phase 1) ---
+# --- supplier services + sheet writer (Phase 2) ---
+requests==2.32.3              # supplier HTTP clients (faithful to POC + guide)
+# retry/backoff is implemented manually in services/supplier_base.py (guide §6.2)
+# to honor Retry-After / X-RateLimit-Reset headers precisely — no tenacity needed.
+pandas==2.2.3                # BOM cleaner
+openpyxl==3.1.5              # BOM cleaner workbook export
+
+# --- tests (Phase 1+2) ---
 pytest==8.3.4
+responses==0.25.3           # mock supplier HTTP in tests (no live calls in CI)
