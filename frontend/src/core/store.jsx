@@ -402,11 +402,16 @@ const actions = {
     if (STATE.system && STATE.system.stuck) STATE.system.stuck = STATE.system.stuck.filter(s => s.id !== entityId);
     emit();
   },
-  refreshDigiKeyToken() {
-    const row = STATE.system?.status?.find(s => s.id === 'digikey');
-    if (row) { row.state = 'green'; row.detail = 'Token refreshed · valid 24h'; row.tokenExpiry = null; }
-    pushAudit({ action: 'DigiKey token refreshed (from dashboard)', entity: 'digikey-api', before: 'EXPIRING', after: 'VALID' });
-    emit();
+  async refreshDigiKeyToken() {
+    try {
+      const res = await window.api.get('/system/status');
+      if (res && res.status) { STATE.system = { ...STATE.system, status: res.status }; emit(); }
+    } catch (e) {}
+  },
+  /* Build a DRY-RUN cart/list preview for a BOM's sourced lines (never submits). */
+  async buildCartPreview(bomId) {
+    try { return await window.api.post('/purchasing/cart/preview', { bomId }); }
+    catch (e) { return null; }
   },
 
   /* ADMIN */

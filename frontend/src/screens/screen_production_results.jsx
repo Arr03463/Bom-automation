@@ -126,10 +126,14 @@ function ProcurementPackageScreen({ id, go }) {
   const [pb, setPb] = useStateRes(b && b.partsbox ? 'created' : 'idle'); // idle | creating | created | failed
   const [note, setNote] = useStateRes('');
   const [sendOpen, setSendOpen] = useStateRes(false);
+  const [cart, setCart] = useStateRes(null);
+  const [cartLoading, setCartLoading] = useStateRes(false);
   if (!b) return <div className="page"><EmptyState icon="boms" title="BOM not found." /></div>;
   const m = bomMeta(b);
+  const projName = (PROJECTS[b.project] || ((window.getState && window.getState().projects) || {})[b.project] || {}).name || 'Other';
   const createPB = () => { setPb('creating'); setTimeout(() => { storeActions.createPackage(b.id); setPb('created'); }, 1100); };
-  const submit = (n) => { storeActions.submitBomToPurchasing(b.id, n != null ? n : note); go({ screen: 'p.bomOverview', id: b.id }); };
+  const submit = async (n) => { await storeActions.submitBomToPurchasing(b.id, n != null ? n : note); go({ screen: 'p.bomOverview', id: b.id }); };
+  const buildCart = async () => { setCartLoading(true); const p = await storeActions.buildCartPreview(b.id); setCart(p); setCartLoading(false); };
 
   return (
     <div className="page page-wide">
@@ -156,13 +160,31 @@ function ProcurementPackageScreen({ id, go }) {
           </div>
           <BomTable items={b.items} editable={false} showSource defaultSort={{ col: 'ext', dir: -1 }} maxHeight={360} />
           <div className="tbl-wrap" style={{ borderTop: 0, borderRadius: 0, marginTop: -1 }}><Totals items={b.items} /></div>
+
+          {/* Cart DRY-RUN preview — build + review a supplier cart end-to-end; never submits. */}
+          <div className="panel" style={{ marginTop: 16 }}>
+            <div className="panel-head"><Icon name="cart" size={16} /><span className="ph-title">Supplier cart — dry-run preview</span></div>
+            <div className="panel-body">
+              {!cart ? (<>
+                <p style={{ marginTop: 0 }} className="secondary">Build a Mouser cart + DigiKey list from this BOM's sourced lines to review before purchasing. AutoBOM never submits an order — a human places it in the supplier's own UI.</p>
+                <button className="btn" disabled={cartLoading} onClick={buildCart}><Icon name={cartLoading ? 'clock' : 'cart'} size={15} />{cartLoading ? 'Building…' : 'Build cart (dry-run)'}</button>
+              </>) : (<>
+                <div style={{ display: 'flex', gap: 24, marginBottom: 12 }}>
+                  <div><span className="st-num" style={{ color: 'var(--supplier-mouser)' }}>{cart.mouser.count}</span> <span className="caption">Mouser cart items</span></div>
+                  <div><span className="st-num" style={{ color: 'var(--supplier-digikey)' }}>{cart.digikey.count}</span> <span className="caption">DigiKey list parts</span></div>
+                </div>
+                <Banner kind="info" icon="lock" title="Preview only — never submits">{cart.note}</Banner>
+                <button className="btn ghost sm" style={{ marginTop: 10 }} onClick={() => setCart(null)}><Icon name="refresh" size={13} />Rebuild</button>
+              </>)}
+            </div>
+          </div>
         </div>
 
         <div className="card" style={{ padding: 16, position: 'sticky', top: 0 }}>
           <div className="h2" style={{ marginBottom: 12 }}>Submit to Purchasing</div>
           <dl className="kv" style={{ marginBottom: 14 }}>
             <dt>BOM</dt><dd style={{ fontWeight: 600 }}>{b.name}</dd>
-            <dt>PCB Project</dt><dd>{PROJECTS[b.project].name}</dd>
+            <dt>PCB Project</dt><dd>{projName}</dd>
             <dt>Build qty</dt><dd>{fmtInt(b.buildQty)} +{b.overage}%</dd>
             <dt>Lines</dt><dd>{m.lines}</dd>
             <dt>Est. total</dt><dd className="mono" style={{ fontWeight: 600 }}>{fmtUSD(m.total)}</dd>
@@ -175,7 +197,7 @@ function ProcurementPackageScreen({ id, go }) {
         </div>
       </div>
       {sendOpen && window.SendToBucketPanel && <window.SendToBucketPanel title="Send to purchasing bucket" sourceId={b.id} items={b.items} allowRecheck={false}
-        summaryRows={[['BOM', b.name], ['PCB Project', PROJECTS[b.project].name], ['Build qty', `${fmtInt(b.buildQty)} +${b.overage}%`], ['Lines', m.lines], ['Est. total', <span className="mono" style={{ fontWeight: 600 }}>{fmtUSD(m.total)}</span>]]}
+        summaryRows={[['BOM', b.name], ['PCB Project', projName], ['Build qty', `${fmtInt(b.buildQty)} +${b.overage}%`], ['Lines', m.lines], ['Est. total', <span className="mono" style={{ fontWeight: 600 }}>{fmtUSD(m.total)}</span>]]}
         onClose={() => setSendOpen(false)} onConfirm={(n) => { setSendOpen(false); submit(n); }} />}
     </div>
   );
