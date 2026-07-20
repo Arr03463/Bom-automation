@@ -249,21 +249,49 @@ Non-structural metadata (line notes, description, designator text) is freely edi
 
 ---
 
-## CPN (Customer Part Number) — sigil format
+## CPN (Component Part Number)
 
-**Format:** `#` for project-bound, `~` for wall-bound. Initials removed (v1.3 residue).
+CPNs use a **continuous-identifier chain**, NOT sigils. Any sigil format
+(#project-bound / ~wall-bound, e.g. #TVCA-B052-001 / ~A-3-7-001) is RETIRED
+per Coordination Note 3 and must not appear anywhere in code, seed data, or UI.
 
-Project-bound example: `#TVCA-B052-001` (project code `TVCA`, source bucket `B052`, line 001 zero-padded).
+### Format
+The CPN is a continuous identifier derived by walking the succession chain:
 
-Wall-bound example: `~A-3-7-001` (PartsBox wall location `A-3-7`, line 001 zero-padded). Wall CPN pulls the location name dynamically from PartsBox — AutoBOM never hard-codes wall bin structure.
+    Program.identifier → Project.identifier → BOM line sequence
 
-**CPN travels with the cart line item** to Mouser/DigiKey via the customer reference field at cart-build time. Prints on packing slip / QR label. Read at receiving. Routes physical bag via lookup against CPN issuance table.
+Example: `TVCA-R2-042`
+  - `TVCA`  — Program identifier
+  - `R2`    — Project identifier
+  - `042`   — line sequence, incrementing onto the end as parts are added
 
-**CPN is NOT written to Josh's Daily Purchasing List.** Josh's sheet has no CPN column. Per-CPN traceability lives inside AutoBOM's internal state and on the supplier cart line — never on the sheet.
+The next part appends the next number in the chain (…-042 → …-043). This mirrors
+the prototype's `cpnFor` derivation in data.jsx.
 
-**Display in monospace.** Read-only everywhere except the initial generation moment.
+### Scope
+Scope (project-bound vs wall-bound) is NOT encoded as a sigil in the string.
+It is surfaced separately via `cpnScope()` and rendered in the UI as
+**Project / Wall pills**. The CPN string itself carries no scope character.
 
-**Admin can configure CPN format string** within grammar validation (Bounded Admin Authority).
+### Configurability
+The format is configurable, not hard-coded. It is stored as `cpn_format` in the
+`configuration` table (Bounded-Admin value). Changing the naming nomenclature is a
+config update — NOT a code change or system rehaul. The `cpn_issuance` table is
+format-agnostic: it stores the resulting string + `format_version` + `scope`, so
+history remains valid across format changes.
+
+### Generation (single source of truth)
+CPN generation is ONE service, in ONE place (Phase 4). It walks the chain,
+increments, and applies the configurable `cpn_format`. No other component ever
+constructs, increments, or formats a CPN. In particular, supplier cart/list writers
+(Mouser `CustomerPartNumber`, DigiKey MyLists `CustomerReference`) are pure
+passthroughs — they receive an already-generated CPN string and place it in the
+supplier field, nothing more.
+
+### Program-code validation
+Program codes are validated as continuous-identifier segments (alphanumeric chain
+components), NOT against any sigil scheme. Remove any "sigil validation on Program
+code" rule.
 
 ---
 
