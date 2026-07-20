@@ -47,6 +47,27 @@ async function hydrateSession(user) {
   STATE.currentUserId = user.id;
   STATE.activeRole = user.activeRole || landingRoleFor(user);
   emit();
+  loadInventory();   // fire-and-forget — a slow/flaky PartsBox never blocks the app
+}
+
+/* Live PartsBox inventory (cache-if-flaky on the server). Loaded after the app
+   is already interactive; sets the inventory slice + PartsBox stats. */
+async function loadInventory() {
+  try {
+    const res = await window.api.get('/inventory');
+    const inv = res.inventory || [];
+    STATE.inventory = inv;
+    const bins = new Set();
+    inv.forEach(p => (p.locations || []).forEach(l => bins.add(l.name)));
+    // Shape must match what the Inventory screen reads (totalParts/totalUnits/distinctBins).
+    window.PARTSBOX_STATS = {
+      totalParts: (res.stats && res.stats.parts) || inv.length,
+      totalUnits: inv.reduce((a, p) => a + (p.onHand || 0), 0),
+      distinctBins: bins.size,
+    };
+    window.__pbSource = res.source;   // 'live' | 'cache' | 'empty'
+    emit();
+  } catch (e) { /* leave inventory empty (calm state) */ }
 }
 
 /* On load, restore an existing session (valid cookie) if any. */
