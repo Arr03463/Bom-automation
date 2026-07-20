@@ -112,12 +112,30 @@ class Settings:
         return all(is_real(_get(k)) for k in (
             "AZURE_AD_CLIENT_ID", "AZURE_AD_CLIENT_SECRET", "AZURE_TENANT_ID"))
 
-    # ---- Microsoft Graph (graceful fallback → console log) -------------------
+    # ---- Microsoft Graph -----------------------------------------------------
     @cached_property
-    def graph_enabled(self) -> bool:
+    def graph_configured(self) -> bool:
+        """App-only Graph creds present (tenant/client/secret). Enough for
+        reading Azure AD group memberships. Does NOT require the sheet id."""
         return all(is_real(_get(k)) for k in (
             "MICROSOFT_GRAPH_TENANT_ID", "MICROSOFT_GRAPH_CLIENT_ID",
-            "MICROSOFT_GRAPH_CLIENT_SECRET", "ONEDRIVE_PURCHASING_SHEET_ID"))
+            "MICROSOFT_GRAPH_CLIENT_SECRET"))
+
+    @cached_property
+    def graph_enabled(self) -> bool:
+        """Full sheet-writer config: Graph creds + the purchasing workbook id.
+        When False the purchasing sheet writer logs to console (graceful fallback)."""
+        return self.graph_configured and is_real(_get("ONEDRIVE_PURCHASING_SHEET_ID"))
+
+    # Azure AD group name -> AutoBOM role. Admin may override the naming later.
+    @property
+    def azure_group_role_map(self) -> dict:
+        return {
+            "AutoBOM-Designers": "designer",
+            "AutoBOM-Production": "production",
+            "AutoBOM-Admins": "admin",
+            "AutoBOM-Development": "development",
+        }
 
     # ---- Supplier / inventory APIs (same in local + Azure modes) -------------
     @cached_property

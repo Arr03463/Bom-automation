@@ -1,13 +1,23 @@
 # AutoBOM backend — Python 3.11+ (built/tested on 3.12).
 #
-# Phase 0 keeps this minimal (web shell + config). Later phases add:
-#   Phase 1 — sqlalchemy>=2.0, alembic, psycopg[binary], passlib, msal
-#   Phase 2 — requests (supplier clients), tenacity (retry/backoff)
-#   Phase 2 — msgraph / httpx for Microsoft Graph
-# They are intentionally NOT installed yet to keep the shell lean.
+# Phase 2 will add: requests + tenacity (supplier clients), and the Microsoft
+# Graph Excel writer (reuses httpx below).
 
+# --- web shell (Phase 0) ---
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-dotenv==1.0.1
-# pydantic v2 ships transitively with fastapi; pinned here for clarity.
-pydantic==2.10.4
+pydantic[email]==2.10.4        # v2 + email validation for users
+
+# --- database (Phase 1) ---
+sqlalchemy==2.0.36
+alembic==1.14.0
+psycopg[binary]==3.2.3         # Postgres driver (psycopg v3)
+
+# --- auth (Phase 1) ---
+itsdangerous==2.2.0            # signed session tokens
+msal==1.31.1                  # Azure AD (SSO) — only used when creds present
+httpx==0.28.1                 # Microsoft Graph calls (+ FastAPI TestClient)
+
+# --- tests (Phase 1) ---
+pytest==8.3.4
