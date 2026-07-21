@@ -28,3 +28,6 @@ poc/input/*
 # Obsolete local extraction wrappers
 _old_wrappers/
 AutoBOM Platform Design_UI/
+
+# Pre-edit backups (git history is the backup)
+*.bak
