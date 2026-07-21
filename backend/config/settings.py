@@ -127,6 +127,28 @@ class Settings:
         When False the purchasing sheet writer logs to console (graceful fallback)."""
         return self.graph_configured and is_real(_get("ONEDRIVE_PURCHASING_SHEET_ID"))
 
+    # ---- Bucket flush (ONE switch, mirrors the azure_enabled pattern) --------
+    @property
+    def flush_mode(self) -> str:
+        """dry_run (default) | live. The single production-readiness switch:
+        add keys + flip this. Same code path in both modes."""
+        return (_get("FLUSH_MODE", "dry_run") or "dry_run").strip().lower()
+
+    @property
+    def flush_live(self) -> bool:
+        return self.flush_mode == "live"
+
+    @property
+    def legacy_flush_flags(self) -> dict:
+        """Deprecated per-client flags — surfaced for visibility only. The
+        orchestrator's dry_run decision is authoritative and is passed DOWN into
+        the clients; these no longer control the flush."""
+        return {
+            "MOUSER_CART_DRY_RUN": _get("MOUSER_CART_DRY_RUN"),
+            "SUPPLIER_DRY_RUN": _get("SUPPLIER_DRY_RUN"),
+            "DIGIKEY_MYLISTS_ENABLED": _get("DIGIKEY_MYLISTS_ENABLED"),
+        }
+
     # Azure AD group name -> AutoBOM role. Admin may override the naming later.
     @property
     def azure_group_role_map(self) -> dict:

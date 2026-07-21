@@ -324,6 +324,9 @@ class Batch(Base, TimestampMixin):
     state: Mapped[str] = mapped_column(_enum(BatchState), default=BatchState.pending.value)
     supplier: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cart_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Supplier-side identifier for traceability: Mouser CartKey / DigiKey listId.
+    # NEVER written to Josh's sheet in API-URL form (that would leak the API key).
+    supplier_ref: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     item_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     written_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 

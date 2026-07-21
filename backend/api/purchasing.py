@@ -54,6 +54,38 @@ def cart_preview(body: dict = Body(...), user: User = Depends(require_user), db:
     }
 
 
+@router.post("/purchasing/flush")
+def flush_bucket(body: dict = Body(...), user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Admin manual flush escape hatch (audit-logged). Honors the single
+    FLUSH_MODE switch — dry-run by default; never submits an order."""
+    if "admin" not in (user.roles or []):
+        raise HTTPException(403, "Admin only")
+    from services.bucket_flush import flush_stream
+    result = flush_stream(db, body.get("stream", "main"), actor_id=user.id)
+    from db.models import Audit
+    from datetime import datetime, timezone
+    import uuid
+    db.add(Audit(id=f"au-flush-{uuid.uuid4().hex[:10]}",
+                 ts="Today " + datetime.now(timezone.utc).strftime("%H:%M"), actor_id=user.id,
+                 role="admin", action=f"Bucket flush ({result.get('stream')}, "
+                                      f"{'dry-run' if result.get('dryRun') else 'LIVE'})",
+                 entity_id="purchasing-bucket", entity_type="batch",
+                 before="QUEUED", after=str(result.get("status")).upper()))
+    db.commit()
+    return result
+
+
+@router.get("/purchasing/flush/status")
+def flush_status(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Flush-mode visibility: the one switch + queued counts + legacy flags."""
+    from db.models import Request
+    counts = {s: db.query(Request).filter(Request.bucket_state == st).count()
+              for s, st in (("critical", "QUEUED_CRITICAL"), ("main", "QUEUED_MAIN"))}
+    return {"flushMode": settings.flush_mode, "live": settings.flush_live,
+            "queued": counts, "legacyFlags": settings.legacy_flush_flags,
+            "sheet": "live" if settings.graph_enabled else "console-fallback"}
+
+
 @router.get("/system/status")
 def system_status(user: User = Depends(require_user)):
     """Fresh non-secret health snapshot for the Admin dashboard."""

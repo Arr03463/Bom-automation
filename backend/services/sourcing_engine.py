@@ -24,6 +24,34 @@ SOURCING_COLUMNS = [
 ]
 
 
+# A part is only "sourced" when it is genuinely BUYABLE. Unavailable / $0 /
+# obsolete / EOL / insufficient-quantity is a SOURCING FAILURE: it gets flagged
+# and must never reach the purchasing bucket (root-cause fix — a $0 cart at
+# flush time is only the symptom).
+_DEAD_LIFECYCLE = ("obsolete", "discontinued", "end of life", "eol", "nrnd", "not recommended")
+
+
+def _price_ok(unit_price) -> bool:
+    try:
+        return float(str(unit_price).replace("$", "").replace(",", "").strip()) > 0
+    except (ValueError, TypeError):
+        return False
+
+
+def sourceable(result, required_qty):
+    """(ok, reason) — is this supplier result actually purchasable?"""
+    if not result:
+        return False, "no match"
+    if required_qty is not None and (result.stock or 0) < required_qty:
+        return False, f"insufficient stock ({result.stock or 0} of {required_qty})"
+    if not _price_ok(result.unit_price):
+        return False, "no price returned ($0)"
+    haystack = f"{result.lifecycle_status or ''} {result.notes or ''}".lower()
+    if any(w in haystack for w in _DEAD_LIFECYCLE) or "not available" in haystack:
+        return False, f"lifecycle {result.lifecycle_status or 'unavailable'}"
+    return True, ""
+
+
 def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
     required_qty = parse_int(row.get("required_qty"))
     mpn = str(row.get("mpn", "")).strip()
@@ -40,8 +68,10 @@ def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
 
     mouser_stock = mouser_result.stock if mouser_result else 0
     digikey_stock = digikey_result.stock if digikey_result else 0
+    m_ok, m_why = sourceable(mouser_result, required_qty)
+    d_ok, d_why = sourceable(digikey_result, required_qty)
 
-    if mouser_result and mouser_stock >= required_qty:
+    if m_ok:
         notes = ["Mouser can cover full required quantity."]
         if mouser_result.notes:
             notes.append(mouser_result.notes)
@@ -50,8 +80,8 @@ def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
                 "mouser_stock": mouser_stock, "digikey_stock": digikey_stock,
                 "sourcing_status": "sourced_mouser", "sourcing_notes": "; ".join(notes)}
 
-    if digikey_result and digikey_stock >= required_qty:
-        notes = ["Mouser could not cover full quantity; DigiKey can."]
+    if d_ok:
+        notes = [f"Mouser not sourceable ({m_why}); DigiKey can cover."]
         if digikey_result.notes:
             notes.append(digikey_result.notes)
         return {"selected_supplier": "DigiKey", "supplier_part_number": digikey_result.supplier_part_number,
@@ -61,7 +91,7 @@ def decide_no_split_supplier(row, mouser_result=None, digikey_result=None):
 
     return {"selected_supplier": "", "supplier_order_qty": "", "mouser_stock": mouser_stock,
             "digikey_stock": digikey_stock, "sourcing_status": "check_wall_inventory",
-            "sourcing_notes": "Neither Mouser nor DigiKey can cover full required quantity."}
+            "sourcing_notes": f"Not sourceable — Mouser: {m_why}; DigiKey: {d_why}."}
 
 
 def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):

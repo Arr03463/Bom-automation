@@ -28,10 +28,19 @@ def _alembic_config() -> Config:
     return cfg
 
 
-def test_migration_upgrade_builds_all_tables():
-    # Start clean (the autouse fixture created tables via metadata; drop them so
-    # alembic builds from empty).
+def _reset_to_empty():
+    """Truly empty DB: drop the model tables AND alembic_version. The version
+    table is not part of Base.metadata, so a stale stamp would otherwise make
+    `upgrade head` a silent no-op and the schema would never be built."""
+    from sqlalchemy import text
     Base.metadata.drop_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+
+
+def test_migration_upgrade_builds_all_tables():
+    # Start truly clean so alembic builds from empty.
+    _reset_to_empty()
     cfg = _alembic_config()
     command.upgrade(cfg, "head")
 
@@ -39,9 +48,12 @@ def test_migration_upgrade_builds_all_tables():
     tables = set(insp.get_table_names()) - {"alembic_version"}
     assert EXPECTED_TABLES.issubset(tables), f"missing: {EXPECTED_TABLES - tables}"
 
+    # Stamped at the current head (0001 baseline + later incremental migrations).
+    from alembic.script import ScriptDirectory
+    head = ScriptDirectory.from_config(cfg).get_current_head()
     with engine.connect() as conn:
         from sqlalchemy import text
-        assert conn.execute(text("select version_num from alembic_version")).scalar() == "0001"
+        assert conn.execute(text("select version_num from alembic_version")).scalar() == head
 
     command.downgrade(cfg, "base")
     insp = inspect(engine)
@@ -51,7 +63,7 @@ def test_migration_upgrade_builds_all_tables():
 def test_models_match_migration_no_drift():
     """After upgrade head, the ORM metadata should match the DB (autogenerate
     would emit nothing)."""
-    Base.metadata.drop_all(engine)
+    _reset_to_empty()
     command.upgrade(_alembic_config(), "head")
 
     with engine.connect() as conn:
