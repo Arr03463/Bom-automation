@@ -87,7 +87,10 @@ class PartsBoxClient:
         )
 
         if response.status_code >= 400:
-            print("PartsBox response:", response.text)
+            # logger, not print: honors the app's logging config and level, and
+            # goes through the same scrubbing/formatting as every other trace.
+            _log.warning("PartsBox %s -> %s: %s", operation, response.status_code,
+                         (response.text or "")[:500])
 
         response.raise_for_status()
         data = response.json()

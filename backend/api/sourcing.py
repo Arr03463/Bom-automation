@@ -17,6 +17,7 @@ from auth.deps import require_user
 from db.models import User
 from db.session import SessionLocal
 from services.sourcing_runner import iterate_sourcing
+from services.supplier_base import scrub_secrets
 
 router = APIRouter(prefix="/sourcing", tags=["sourcing"])
 
@@ -30,7 +31,8 @@ def run_sourcing(bom_id: str, user: User = Depends(require_user)):
             for event in iterate_sourcing(db, bom_id):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as exc:  # never break the stream with a raw 500 mid-render
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            # scrub_secrets, never str(exc) — this string is streamed to the browser.
+            yield f"data: {json.dumps({'type': 'error', 'message': scrub_secrets(exc)})}\n\n"
         finally:
             db.close()
 

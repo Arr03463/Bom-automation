@@ -11,6 +11,7 @@ response into `SupplierResult`, then calls `rank_candidates`.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -160,6 +161,37 @@ def _mask_url(url: str) -> str:
     return re.sub(r"(apiKey=)[^&]+", lambda m: m.group(1) + "****", url)
 
 
+# Credential shapes that must never reach a response body, a log line, or a sheet.
+# Mouser is the live case: it passes apiKey in the QUERY STRING, so a network-level
+# `requests` failure stringifies as
+#   HTTPSConnectionPool(...): Max retries exceeded with url: /api/v1/search/keyword?apiKey=REAL_KEY
+# The others are defensive, so a future header/body change cannot reopen this.
+_SECRET_PATTERNS = [
+    re.compile(r"(apiKey=)[^&\s\"']+", re.IGNORECASE),
+    re.compile(r"(api[_-]?key[\"']?\s*[:=]\s*[\"']?)[^&\s\"',}]+", re.IGNORECASE),
+    re.compile(r"(client_secret=)[^&\s\"']+", re.IGNORECASE),
+    re.compile(r"(Bearer\s+)[A-Za-z0-9._\-]+", re.IGNORECASE),
+    re.compile(r"(APIKey\s+)[A-Za-z0-9._\-]+"),
+]
+
+
+def scrub_secrets(value) -> str:
+    """Strip credentials out of any text headed for a client, log, or sheet.
+
+    Exists because exception objects are not safe to stringify: a `requests`
+    network error embeds the FULL request URL, and Mouser's key lives in that
+    URL's query string. `_mask_url` protects the log line we format ourselves,
+    but not the re-raised exception - so `str(exc)` echoed into an API response
+    would put a live supplier key in the browser.
+
+    Call this at every boundary that returns error text to a caller.
+    """
+    text = str(value)
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(lambda m: m.group(1) + "****", text)
+    return text
+
+
 def _retry_wait_seconds(resp: requests.Response, attempt: int) -> float:
     for header in ("Retry-After", "X-RateLimit-Reset"):
         val = resp.headers.get(header)
@@ -184,8 +216,11 @@ def http_request(method: str, url: str, *, supplier: str = "supplier",
         try:
             resp = requests.request(method, url, timeout=timeout, **kwargs)
         except (requests.Timeout, requests.ConnectionError) as exc:
+            # scrub_secrets(exc), never a raw exc: _mask_url covers the url we
+            # format, but the exception re-embeds the SAME url - key included -
+            # which would write the live key into the log file in plaintext.
             log.warning("%s %s %s -> network error: %s (attempt %d)",
-                        supplier, method, _mask_url(url), exc, attempt + 1)
+                        supplier, method, _mask_url(url), scrub_secrets(exc), attempt + 1)
             if attempt < max_attempts - 1:
                 sleep(min(2 ** attempt, 30.0))
                 continue

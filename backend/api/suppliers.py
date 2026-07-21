@@ -21,6 +21,7 @@ from config import settings
 from services.digikey_client import DigiKeyClient
 from services.mouser_client import MouserClient
 from services.sourcing_engine import validate_mpn
+from services.supplier_base import scrub_secrets
 
 router = APIRouter(prefix="/suppliers", tags=["suppliers"])
 
@@ -49,11 +50,13 @@ def search(req: SearchRequest) -> dict:
     try:
         out["mouser"] = _result(mouser.find_best_match(req.query, req.manufacturer or "", req.required_qty))
     except Exception as exc:  # surface supplier errors without failing the whole call
-        out["errors"]["mouser"] = str(exc)
+        # scrub_secrets, never str(exc): a network-level failure stringifies with
+        # the full request URL, and Mouser's apiKey lives in that query string.
+        out["errors"]["mouser"] = scrub_secrets(exc)
     try:
         out["digikey"] = _result(digikey.find_best_match(req.query, req.manufacturer or "", req.required_qty))
     except Exception as exc:
-        out["errors"]["digikey"] = str(exc)
+        out["errors"]["digikey"] = scrub_secrets(exc)
     return out
 
 

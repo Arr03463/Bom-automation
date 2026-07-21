@@ -34,6 +34,7 @@ from services import flush_mapping
 from services.digikey_mylists_client import DigiKeyMyListsClient, build_digikey_mylists_parts
 from services.mouser_cart_client import MouserCartClient, build_mouser_cart_items
 from services.purchasing_sheet_writer import write_batch
+from services.supplier_base import scrub_secrets
 
 log = logging.getLogger("autobom.flush")
 
@@ -134,9 +135,12 @@ def flush_stream(db: Session, stream: str, dry_run: bool | None = None, actor_id
         if d:
             built.append(d)
     except Exception as exc:
-        log.warning("flush %s: cart/list build failed: %s", stream, exc)
+        # scrub_secrets, never the raw exception: the Mouser cart client passes its
+        # apiKey in the query string, so a network-level failure stringifies with it.
+        safe = scrub_secrets(exc)
+        log.warning("flush %s: cart/list build failed: %s", stream, safe)
         return {"stream": stream, "dryRun": dry_run, "status": "failed", "written": 0,
-                "message": f"Cart/list build failed — batch stays queued: {exc}"}
+                "message": f"Cart/list build failed — batch stays queued: {safe}"}
 
     if not built:
         return {"stream": stream, "dryRun": dry_run, "status": "no_sourced_lines", "written": 0,
