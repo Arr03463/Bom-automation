@@ -2,6 +2,17 @@
    useStore, storeActions, PROJECTS, BOM_BADGE, fmtUSD, fmtInt */
 const { useState: useStateProd, useRef: useRefProd } = React;
 
+/* Safe project-name lookup: static catalog, then the live store, then 'Other'.
+   PROJECTS is the seed catalog; a Project created at runtime (or a BOM whose
+   project was uploaded this session) is NOT in it, so PROJECTS[id].name threw
+   and blanked the whole Production dashboard. */
+function projNameProd(pid) {
+  if (!pid) return 'Other';
+  const st = (typeof getState === 'function' && getState().projects) || {};
+  const p = (typeof PROJECTS !== 'undefined' && PROJECTS[pid]) || st[pid];
+  return (p && p.name) || 'Other';
+}
+
 function bomMeta(b) {
   const exceptions = b.items.filter(i => i.status === 'needs-review' || i.status === 'exception').length;
   const sourced = b.items.filter(i => i.supplier).length;
@@ -80,7 +91,7 @@ function ProductionDashboard({ go, flashId }) {
         : list.map(b => { const m = bomMeta(b); return (
           <div key={b.id} className="attn-item" style={{ cursor: 'pointer' }} onClick={() => go({ screen: 'p.bomOverview', id: b.id })}>
             <div className="attn-main"><div style={{ display: 'flex', alignItems: 'center', gap: 9 }}><span style={{ fontWeight: 600, fontSize: 14 }}>{b.name}</span><StatusBadge status={BOM_BADGE[b.state]} /></div>
-              <div className="am-meta">{PROJECTS[b.project].name} · build {fmtInt(b.buildQty)} · {m.lines} lines · updated {b.updated}</div></div>
+              <div className="am-meta">{projNameProd(b.project)} · build {fmtInt(b.buildQty)} · {m.lines} lines · updated {b.updated}</div></div>
             <Icon name="chevright" size={16} style={{ color: 'var(--text-muted)' }} />
           </div>
         ); })}
@@ -114,7 +125,7 @@ function BomListScreen({ go }) {
           <div key={b.id} className="lrow" onClick={() => go({ screen: 'p.bomOverview', id: b.id })} style={m.exceptions > 0 ? { boxShadow: 'inset 3px 0 0 var(--danger)' } : undefined}>
             <div style={{ minWidth: 0 }}>
               <div className="lr-title">{b.name}<StatusBadge status={BOM_BADGE[b.state]} /></div>
-              <div className="lr-meta"><span className="mono">{b.id}</span><span className="tr-sep" /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="folder" size={13} />{PROJECTS[b.project].name}</span>
+              <div className="lr-meta"><span className="mono">{b.id}</span><span className="tr-sep" /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="folder" size={13} />{projNameProd(b.project)}</span>
                 <span className="tr-sep" /><span>build {fmtInt(b.buildQty)} +{b.overage}%</span><span className="tr-sep" /><span>{m.lines} lines</span>
                 {m.exceptions > 0 && <><span className="tr-sep" /><span style={{ color: 'var(--danger)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}><Icon name="alert" size={12} />{m.exceptions} exceptions</span></>}</div>
             </div>

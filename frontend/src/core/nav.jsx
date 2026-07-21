@@ -135,14 +135,20 @@ function buildCrumbs(route, state) {
 }
 
 /* ---- useHashRoute: drive route from the URL hash (Back/Forward + deep links) ---- */
-function useHashRoute() {
+function useHashRoute(defaultScreen) {
   const [route, setRoute] = useStateNav(() => decodeRoute(location.hash));
   useEffNav(() => {
     const onHash = () => setRoute(decodeRoute(location.hash));
     window.addEventListener('hashchange', onHash);
-    if (!location.hash) location.replace(encodeRoute({ screen: 'd.dashboard' }));
+    // Caller supplies the landing screen for the signed-in role; 'd.dashboard'
+    // was hardcoded here, which sent every role to the Designer workspace.
+    if (!location.hash) {
+      const home = defaultScreen || 'd.dashboard';
+      location.replace(encodeRoute({ screen: home }));
+      setRoute(decodeRoute(encodeRoute({ screen: home })));
+    }
     return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  }, [defaultScreen]);
   // navigate: push a new history entry (unless replacing)
   const navigate = (r, replace) => {
     if (typeof r === 'string') r = { screen: r };

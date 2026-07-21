@@ -35,8 +35,13 @@ function App() {
    renders and crashed React with "Rendered more hooks than during the previous
    render." Behavior is otherwise unchanged. */
 function AuthedApp() {
-  const [route, navigate] = useHashRoute();
   const activeRole = useStore(s => s.activeRole);
+  // Landing route must follow the signed-in user's role. useHashRoute used to
+  // hardcode 'd.dashboard' when the URL had no hash, so a Production or Admin
+  // user logged in and landed in the DESIGNER workspace. Resolve home first and
+  // hand it to the router. (Hook order is unchanged - both are unconditional.)
+  const roleHome = (ROLE_META[activeRole] && ROLE_META[activeRole].home) || 'd.dashboard';
+  const [route, navigate] = useHashRoute(roleHome);
   const user = useStore(s => s.users.find(u => u.id === s.currentUserId));
   const notifications = useStore(s => s.notifications);
 

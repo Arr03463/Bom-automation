@@ -91,7 +91,7 @@ function search(query, includeSuppliers) {
     const r = rankHit({ kind: 'collection', name: x.name }, q);
     const catMatch = isDev && x.category && has(x.category, q);
     if (r < 99 || has(x.id, q) || catMatch) {
-      const scopeName = (isDev && !x.project) || !PROJECTS[x.project] ? ((s.programs || []).find(pp => pp.id === x.program_id) || {}).name || '—' : PROJECTS[x.project].name;
+      const scopeName = (isDev && !x.project) || !PROJECTS[x.project] ? ((s.programs || []).find(pp => pp.id === x.program_id) || {}).name || '—' : projectName(x.project);
       const hit = { kind: isDev ? 'devcollection' : 'collection', id: x.id, name: x.name,
         sub: `${scopeName} · ${isDev ? (x.category + ' · ') : ''}${x.items.length} parts`,
         state: isDev ? window.DC_BADGE[x.state] : x.state, rank: r < 99 ? r : 5 };
@@ -101,7 +101,7 @@ function search(query, includeSuppliers) {
   for (const x of s.boms) {
     if (x.state === 'draft') continue;
     const r = rankHit({ kind: 'bom', name: x.name }, q);
-    if (r < 99 || has(x.id, q)) bomHits.push({ kind: 'bom', id: x.id, name: x.name, sub: `${PROJECTS[x.project].name} · ${x.items.length} lines`, state: window.BOM_BADGE[x.state], rank: r < 99 ? r : 5 });
+    if (r < 99 || has(x.id, q)) bomHits.push({ kind: 'bom', id: x.id, name: x.name, sub: `${projectName(x.project)} · ${x.items.length} lines`, state: window.BOM_BADGE[x.state], rank: r < 99 ? r : 5 });
   }
   for (const x of Object.values(s.projects)) {
     const r = rankHit({ kind: 'project', name: x.name }, q);
@@ -405,7 +405,7 @@ function AddToCollectionInline({ mpn, onClose, onDone }) {
       <div className="menu-label">Add {mpn} to…</div>
       {collections.map(x => (
         <div key={x.id} className="mi" onClick={() => { storeActions.addToCollection(mpn, x.id, x.name); onDone(x.name); }}>
-          <Icon name="layers" size={15} style={{ color: 'var(--role-designer)' }} /><span>{x.name}</span><span className="mi-sub">{PROJECTS[x.project].name}</span>
+          <Icon name="layers" size={15} style={{ color: 'var(--role-designer)' }} /><span>{x.name}</span><span className="mi-sub">{projectName(x.project)}</span>
         </div>
       ))}
       <div className="mi new" onClick={() => { const name = mpn + ' research'; storeActions.addToCollection(mpn, null, name); onDone(name); }}>

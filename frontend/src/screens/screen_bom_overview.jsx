@@ -35,11 +35,11 @@ function BomOverviewScreen({ id, go, tab }) {
         </div>
       </div>
       <TraceabilityStrip name={b.name} status={BOM_BADGE[b.state]} creator={b.creator} role="production"
-        project={PROJECTS[b.project].name} updated={b.updated} updatedBy={b.updatedBy} recordId={b.reqId || b.id}
+        project={projectName(b.project)} updated={b.updated} updatedBy={b.updatedBy} recordId={b.reqId || b.id}
         onProject={() => go({ screen: 'projectDetail', id: b.project })} />
 
       {window.RelatedLinks && <window.RelatedLinks items={[
-        { kind: 'PCB Project', label: PROJECTS[b.project].name, icon: 'folder', onClick: () => go({ screen: 'projectDetail', id: b.project }) },
+        { kind: 'PCB Project', label: projectName(b.project), icon: 'folder', onClick: () => go({ screen: 'projectDetail', id: b.project }) },
         b.sourceCollection && { kind: 'Source Collection', label: b.sourceCollection, icon: 'layers', onClick: () => go({ screen: 'd.collectionDetail', id: b.sourceCollection }) },
         b.reqId && { kind: 'Request', label: b.reqId, icon: 'inbox', onClick: () => go({ screen: 'purchasingEmbed', tab: b.reqId }) },
       ]} />}
@@ -63,7 +63,7 @@ function BomOverviewScreen({ id, go, tab }) {
             <div className="h2" style={{ marginBottom: 12 }}>Details</div>
             <dl className="kv">
               <dt>Status</dt><dd><StatusBadge status={BOM_BADGE[b.state]} /></dd>
-              <dt>PCB Project</dt><dd>{PROJECTS[b.project].name}</dd>
+              <dt>PCB Project</dt><dd>{projectName(b.project)}</dd>
               <dt>Build quantity</dt><dd>{fmtInt(b.buildQty)} units +{b.overage}% overage</dd>
               <dt>Created by</dt><dd>{b.creator}</dd>
               <dt>Source</dt><dd>{b.sourceCollection ? <span className="mono" style={{ color: 'var(--action)', cursor: 'pointer' }} onClick={() => go({ screen: 'd.collectionDetail', id: b.sourceCollection })}>{b.sourceCollection}</span> : <span className="muted">Manual upload</span>}</dd>

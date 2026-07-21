@@ -509,4 +509,16 @@ function seedState() {
   };
 }
 
-Object.assign(window, { fmtUSD, fmtInt, uid, CATALOG, PROJECTS, RECENT_SEARCHES, seedState, line, cpnFor, cpnScope, userByName, userById });
+/* Safe project-name lookup - the ONE canonical helper.
+   PROJECTS is the static seed catalog. Projects created at runtime (uploaded
+   this session, or fetched from the backend) are NOT in it, so the direct
+   PROJECTS[id].name form throws on undefined and blanks the entire screen.
+   Falls back: static catalog -> live store -> 'Other'. */
+function projectName(pid) {
+  if (!pid) return 'Other';
+  const st = (typeof getState === 'function' && getState().projects) || {};
+  const pr = (typeof PROJECTS !== 'undefined' && PROJECTS[pid]) || st[pid];
+  return (pr && pr.name) || 'Other';
+}
+
+Object.assign(window, { fmtUSD, fmtInt, uid, CATALOG, PROJECTS, RECENT_SEARCHES, seedState, line, cpnFor, cpnScope, userByName, userById, projectName });

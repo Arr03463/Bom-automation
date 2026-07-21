@@ -58,7 +58,7 @@ function ResultCard({ c, onAdd }) {
             {addable.map(x => (
               <div key={x.id} className="mi" onClick={() => { setMenu(false); onAdd(c.mpn, { id: x.id, name: x.name }); }}>
                 <Icon name="layers" size={15} style={{ color: 'var(--role-designer)' }} />
-                <span>{x.name}</span><span className="mi-sub">{PROJECTS[x.project].name}</span>
+                <span>{x.name}</span><span className="mi-sub">{projectName(x.project)}</span>
               </div>
             ))}
             <div className="mi new" onClick={() => { setMenu(false); onAdd(c.mpn, { id: null, name: c.mpn + ' research' }); }}>

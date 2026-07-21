@@ -16,7 +16,7 @@ function PipelineHeader({ b, go, stage }) {
         </div>
       </div>
       <TraceabilityStrip name={b.name} status={BOM_BADGE[b.state]} creator={b.creator} role="production"
-        project={PROJECTS[b.project].name} updated={b.updated} updatedBy={b.updatedBy} recordId={b.id}
+        project={projectName(b.project)} updated={b.updated} updatedBy={b.updatedBy} recordId={b.id}
         onProject={() => go({ screen: 'projects' })} />
       <div className="pipeline-rail">
         {stages.map((s, i) => (
