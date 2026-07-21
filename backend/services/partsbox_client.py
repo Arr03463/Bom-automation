@@ -1,5 +1,9 @@
+import logging
 import os
+
 import requests
+
+_log = logging.getLogger("autobom.partsbox")
 
 
 MANUFACTURER_ALIASES = {
@@ -61,12 +65,15 @@ class PartsBoxClient:
             "project/create",
             "storage/create",
             "project/add-entries",
+            "build/create",   # DECREMENTS REAL STOCK - must honor the dry-run gate
+            "stock/add",      # receiving; same reason
         ]
 
         if self.dry_run and operation in write_operations:
-            print("\n[DRY RUN] Would call:", operation)
-            print("Payload:", payload)
-            return {"dry_run": True}
+            # Echo the operation + payload back so callers can render an honest
+            # preview of exactly what the live call would do.
+            _log.info("[PARTSBOX DRY RUN] would call %s payload=%s", operation, payload)
+            return {"dry_run": True, "operation": operation, "payload": payload}
 
         url = f"{self.base_url}/{operation}"
         response = requests.post(
@@ -214,3 +221,53 @@ class PartsBoxClient:
          #   payload["project/tags"] = tags
 
         return self.call("project/create", payload)
+
+    # ---- Builds (Phase 4) --------------------------------------------------
+    # NOTE: build/create DECREMENTS REAL STOCK. It is registered as a write
+    # operation so PARTSBOX_DRY_RUN gates it exactly like the other writes.
+    def create_build(self, project_id, build_qty, entries, notes=""):
+        """Consume stock for one physical assembly.
+
+        `entries` come from services.build_service.consumption_plan()['consume']
+        - already filtered to the lines that actually consume ('used' + the
+        substitutes from 'rework'); 'skipped' and 'deferred' never reach here.
+        """
+        payload = {
+            "project/id": project_id,
+            "build/quantity": int(build_qty or 1),
+            "build/entries": [
+                {"part/mpn": e["mpn"], "part/manufacturer": e.get("mfr") or "",
+                 "build/quantity": int(e["qty"])}
+                for e in entries
+            ],
+        }
+        if notes:
+            payload["build/notes"] = notes
+        return self.call("build/create", payload)
+
+    def build_qr_image_url(self, build_id):
+        """PartsBox ID Anything(TM) QR image URL for a build.
+
+        Per the API-leverage tenet, AutoBOM never generates QR codes - it asks
+        PartsBox for the image and renders it. The caller falls back to the
+        'Open Build in PartsBox' link when this is unavailable.
+
+        UNVERIFIED: the exact ID-Anything path could not be confirmed - the
+        committed `partsbox api rules.pdf` is a corrupted export with no text
+        layer (flagged in CLAUDE.md). The template is therefore configurable via
+        PARTSBOX_QR_URL_TEMPLATE so it can be corrected without a code change.
+        """
+        if not build_id:
+            return None
+        template = os.getenv(
+            "PARTSBOX_QR_URL_TEMPLATE",
+            "https://api.partsbox.com/api/1/id-anything/qr/{id}",
+        ).strip()
+        return template.replace("{id}", str(build_id))
+
+    def build_web_url(self, build_id):
+        """Human fallback: open the build in the PartsBox web app."""
+        if not build_id:
+            return None
+        base = os.getenv("PARTSBOX_WEB_URL", "https://partsbox.com").strip().rstrip("/")
+        return f"{base}/builds/{build_id}"

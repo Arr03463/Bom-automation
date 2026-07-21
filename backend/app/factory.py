@@ -20,6 +20,7 @@ from api.boms import router as boms_router
 from api.entities import router as entities_router
 from api.inventory import router as inventory_router
 from api.purchasing import router as purchasing_router
+from api.builds import router as builds_router
 from auth.routes import router as auth_router
 
 log = logging.getLogger("autobom")
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(entities_router, prefix="/api")
     app.include_router(inventory_router, prefix="/api")
     app.include_router(purchasing_router, prefix="/api")
+    app.include_router(builds_router, prefix="/api")
 
     return app
 
