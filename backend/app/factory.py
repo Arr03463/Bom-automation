@@ -25,6 +25,28 @@ from auth.routes import router as auth_router
 log = logging.getLogger("autobom")
 
 
+def _configure_logging() -> None:
+    """Make AutoBOM's own logging work under ANY ASGI runner.
+
+    This used to live only in main.py, so `uvicorn app.factory:app` (or gunicorn,
+    or a container entrypoint) started the app with the autobom.* loggers at the
+    root default — silently swallowing every INFO line: supplier call traces,
+    DigiKey token refreshes, and the purchasing sheet's console-fallback rows.
+    The sheet fallback exists precisely so the batch is inspectable without
+    touching Josh's real workbook; invisible logs defeat it.
+
+    Attach a handler to the 'autobom' logger itself (not the root) so we never
+    fight uvicorn's own logging configuration.
+    """
+    lvl = getattr(logging, (settings.log_level or "INFO").upper(), logging.INFO)
+    log.setLevel(lvl)
+    if not log.handlers:
+        h = logging.StreamHandler()
+        h.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        log.addHandler(h)
+    log.propagate = False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     s = settings.status()
@@ -35,6 +57,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    _configure_logging()
     app = FastAPI(
         title="AutoBOM Backend",
         version="0.1.0",

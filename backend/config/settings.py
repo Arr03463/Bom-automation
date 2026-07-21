@@ -127,6 +127,12 @@ class Settings:
         When False the purchasing sheet writer logs to console (graceful fallback)."""
         return self.graph_configured and is_real(_get("ONEDRIVE_PURCHASING_SHEET_ID"))
 
+    @property
+    def log_level(self) -> str:
+        """Level for AutoBOM's own loggers (set in app.factory, so it applies
+        under any ASGI runner, not just `python main.py`)."""
+        return (_get("LOG_LEVEL", "INFO") or "INFO").strip().upper()
+
     # ---- Bucket flush (ONE switch, mirrors the azure_enabled pattern) --------
     @property
     def flush_mode(self) -> str:
