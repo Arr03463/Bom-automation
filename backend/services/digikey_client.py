@@ -29,8 +29,9 @@ class DigiKeyClient:
         self.dry_run = os.getenv("SUPPLIER_DRY_RUN", "true").lower() == "true"
         self.client_id = os.getenv("DIGIKEY_CLIENT_ID", "").strip()
         self.account_id = os.getenv("DIGIKEY_ACCOUNT_ID", "").strip()
-        self.refresh_token = os.getenv("DIGIKEY_REFRESH_TOKEN", "").strip()
-        self.user_access_token = os.getenv("DIGIKEY_ACCESS_TOKEN", "").strip()
+        # 3-legged (user) token state lives in services.digikey_user_auth — a
+        # process-wide manager. Do NOT re-read it per client instance: DigiKey
+        # rotates the refresh token on every exchange, so multiple owners race.
 
     # --- headers -----------------------------------------------------------
     def product_headers(self, token):
@@ -166,35 +167,16 @@ class DigiKeyClient:
         return self.find_best_match_relaxed(mpn, manufacturer, required_qty=required_qty)
 
     # --- 3-legged user token (for MyLists) ---------------------------------
-    def get_user_access_token(self):
-        if self.dry_run:
-            return "dry-run-token"
-        if self.user_access_token:
-            return self.user_access_token
-        if not self.refresh_token:
-            raise ValueError(
-                "DigiKey MyLists requires 3-legged OAuth. Set DIGIKEY_REFRESH_TOKEN "
-                "(run backend/scripts/digikey_oauth_setup.py) after authorizing this app."
-            )
-        from services.digikey_auth import _token_url
-        resp = http_request("POST", _token_url(), supplier="digikey-user-auth",
-                            data={
-                                "client_id": self.client_id,
-                                "client_secret": os.getenv("DIGIKEY_CLIENT_SECRET", "").strip(),
-                                "refresh_token": self.refresh_token,
-                                "grant_type": "refresh_token",
-                            },
-                            headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=30)
-        raise_for_status(resp, "DigiKey user token request failed")
-        data = resp.json()
-        token = data.get("access_token")
-        new_refresh = data.get("refresh_token", self.refresh_token)
-        if new_refresh and new_refresh != self.refresh_token:
-            _update_env_value("DIGIKEY_REFRESH_TOKEN", new_refresh)
-            self.refresh_token = new_refresh
-        if not token:
-            raise ValueError("DigiKey did not return a user access token.")
-        return token
+    def get_user_access_token(self, force_refresh: bool = False):
+        """Delegates to the shared manager (services.digikey_user_auth).
+
+        Kept as a method for call-site compatibility, but the caching, rotation
+        persistence and locking now live in ONE place — exchanging per request
+        (the old behavior) raced DigiKey's refresh-token rotation and is what
+        forced the manual re-auths.
+        """
+        from services.digikey_user_auth import get_user_auth
+        return get_user_auth().token(force_refresh=force_refresh)
 
     # --- dry-run mocks (offline dev) ---------------------------------------
     def _mock_result(self, mpn):
@@ -287,16 +269,6 @@ def _digikey_product_to_result(product, notes=None):
     )
 
 
-def _update_env_value(name, value):
-    env_path = REPO_ROOT / ".env"
-    if not env_path.exists():
-        return
-    lines = env_path.read_text().splitlines()
-    for i, line in enumerate(lines):
-        if line.strip().startswith("#") or "=" not in line:
-            continue
-        key, _ = line.split("=", 1)
-        if key.strip() == name:
-            lines[i] = f"{name}={value}"
-            env_path.write_text("\n".join(lines) + "\n")
-            return
+# Refresh-token write-back moved to services.digikey_user_auth.persist_refresh_token
+# (the old helper here silently no-op'd when the key was absent from .env, which
+# would drop a rotation and lock the account out of MyLists).

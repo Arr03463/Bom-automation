@@ -34,9 +34,9 @@ class DigiKeyMyListsClient:
         if not self.client_id:
             raise ValueError("Missing DIGIKEY_CLIENT_ID in .env")
 
-    def headers(self):
+    def headers(self, force_refresh=False):
         headers = {
-            "Authorization": f"Bearer {self.auth_client.get_user_access_token()}",
+            "Authorization": f"Bearer {self.auth_client.get_user_access_token(force_refresh=force_refresh)}",
             "X-DIGIKEY-Client-Id": self.client_id,
             "Content-Type": "application/json",
         }
@@ -44,12 +44,27 @@ class DigiKeyMyListsClient:
             headers["X-DIGIKEY-Account-Id"] = self.account_id
         return headers
 
+    def _request(self, method, url, **kwargs):
+        """Send with the cached user token; on a 401 force ONE refresh and retry.
+
+        Guide §3.3's 401 rule applied to the 3-legged path — without this, a
+        token that ages out mid-flush fails the whole batch even though the
+        refresh token is perfectly good.
+        """
+        resp = http_request(method, url, supplier="digikey-mylists",
+                            headers=self.headers(), timeout=30, **kwargs)
+        if resp.status_code == 401:
+            from services.digikey_user_auth import get_user_auth
+            get_user_auth().invalidate()
+            resp = http_request(method, url, supplier="digikey-mylists",
+                                headers=self.headers(force_refresh=True), timeout=30, **kwargs)
+        return resp
+
     def is_list_name_available(self, list_name):
         self.validate_config()
         if self.dry_run:
             return True
-        resp = http_request("GET", f"{self.base_url}/mylists/v1/lists/validate/{quote(list_name, safe='')}",
-                            supplier="digikey-mylists", headers=self.headers(), timeout=30)
+        resp = self._request("GET", f"{self.base_url}/mylists/v1/lists/validate/{quote(list_name, safe='')}")
         _raise_for_status(resp, "DigiKey MyLists name validation failed")
         result = resp.json()
         return result if isinstance(result, bool) else str(result).strip().lower() == "true"
@@ -58,8 +73,7 @@ class DigiKeyMyListsClient:
         self.validate_config()
         if self.dry_run:
             return list_name
-        resp = http_request("GET", f"{self.base_url}/mylists/v1/lists/validate/name/{quote(list_name, safe='')}",
-                            supplier="digikey-mylists", headers=self.headers(), timeout=30)
+        resp = self._request("GET", f"{self.base_url}/mylists/v1/lists/validate/name/{quote(list_name, safe='')}")
         _raise_for_status(resp, "DigiKey MyLists valid-name request failed")
         result = resp.json()
         return result.strip() if isinstance(result, str) and result.strip() else list_name
@@ -75,8 +89,7 @@ class DigiKeyMyListsClient:
         payload = {"ListName": list_name, "CreatedBy": description, "Source": "external"}
         if self.dry_run:
             return {"dry_run": True, "ListId": "dry-run-list-id", "ListName": list_name, "payload": payload}
-        resp = http_request("POST", f"{self.base_url}/mylists/v1/lists", supplier="digikey-mylists",
-                            json=payload, headers=self.headers(), timeout=30)
+        resp = self._request("POST", f"{self.base_url}/mylists/v1/lists", json=payload)
         _raise_for_status(resp, "DigiKey MyLists create-list request failed")
         return resp.json()
 
@@ -84,8 +97,7 @@ class DigiKeyMyListsClient:
         self.validate_config()
         if self.dry_run:
             return {"dry_run": True, "ListId": list_id, "parts_added": len(parts), "parts": parts}
-        resp = http_request("POST", f"{self.base_url}/mylists/v1/lists/{list_id}/parts", supplier="digikey-mylists",
-                            json=parts, headers=self.headers(), timeout=30)
+        resp = self._request("POST", f"{self.base_url}/mylists/v1/lists/{list_id}/parts", json=parts)
         _raise_for_status(resp, "DigiKey MyLists add-parts request failed")
         return resp.json()
 

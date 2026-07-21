@@ -97,9 +97,30 @@ def system_status(user: User = Depends(require_user)):
             row("app", "Application", True, "All services operational"),
             row("mouser", "Mouser API", s["suppliers"]["mouser_search"], "Connected" if s["suppliers"]["mouser_search"] else "Key missing"),
             row("digikey", "DigiKey API", s["suppliers"]["digikey"], "Connected" if s["suppliers"]["digikey"] else "Credentials missing"),
+            row("digikey_mylists", *_digikey_token_row()),
             row("partsbox", "PartsBox API", s["suppliers"]["partsbox"], "Connected" if s["suppliers"]["partsbox"] else "Key missing"),
             row("graph", "Purchasing sheet (Graph)", s["graph_sheet_writer"] == "live", s["graph_sheet_writer"]),
             row("db", "Database", s["database"] == "postgres", s["database"]),
         ],
         "mode": s["mode"], "auth": s["auth"],
     }
+
+
+def _digikey_token_row():
+    """(label, ok, detail) for the 3-legged MyLists token.
+
+    Surfaced because it is the one credential that can go stale on its own: the
+    refresh token expires after ~90 days and only a human can re-authorize it.
+    Admin should see that coming, not discover it at flush time.
+    """
+    from services.digikey_user_auth import get_user_auth
+    st = get_user_auth().status()
+    label = "DigiKey MyLists token"
+    detail = {
+        "ok": "Auto-refreshing" + (f" (valid {st['expiresInSeconds'] // 60}m)" if st["cached"] else ""),
+        "dry_run": "Dry-run — no live token needed",
+        "not_configured": "Not authorized — run backend/scripts/digikey_oauth_setup.py",
+        "static_token_no_refresh": "Static token, cannot self-refresh — re-authorize to enable auto-refresh",
+        "error": f"Last refresh failed: {st['lastError']}",
+    }.get(st["state"], st["state"])
+    return label, st["state"] in ("ok", "dry_run"), detail
