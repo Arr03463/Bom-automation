@@ -4,6 +4,10 @@
 
 const fmtUSD = (n) => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtInt = (n) => (n || 0).toLocaleString('en-US');
+/* Null-safe relative-time label. Timestamps can legitimately be absent (a row
+   that has never been touched), and interpolating them raw printed literal
+   "null" into the UI — "in queue null", "uploaded null", "Created ·". */
+const fmtWhen = (v) => (v == null || v === '' ? '—' : v);
 const uid = (p) => p + '-' + Math.random().toString(36).slice(2, 7);
 
 /* ---- Component catalog keyed by MPN ---- */
@@ -521,4 +525,4 @@ function projectName(pid) {
   return (pr && pr.name) || 'Other';
 }
 
-Object.assign(window, { fmtUSD, fmtInt, uid, CATALOG, PROJECTS, RECENT_SEARCHES, seedState, line, cpnFor, cpnScope, userByName, userById, projectName });
+Object.assign(window, { fmtUSD, fmtInt, fmtWhen, uid, CATALOG, PROJECTS, RECENT_SEARCHES, seedState, line, cpnFor, cpnScope, userByName, userById, projectName });

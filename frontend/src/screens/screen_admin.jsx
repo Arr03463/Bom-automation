@@ -2,8 +2,13 @@
    useStore, storeActions, ROLE_META, CAPS, fmtUSD, fmtInt */
 const { useState: useStateAdm, useRef: useRefAdm } = React;
 
-const ALL_ROLES_FULL = ['designer', 'production', 'development', 'manager', 'executive', 'readonly', 'admin'];
-/* v1.1: Development deferred — Admin can't assign it until the flag flips back on. */
+/* v4 role model: the ONLY assignable login roles are Designer, Production and
+   Admin (CLAUDE.md — "'purchasing' and 'development' strings should not appear
+   in ALL_ROLES arrays used to render UI"). The permissions grid previously
+   offered manager / executive / readonly / development, none of which are real
+   roles in the platform. Development stays behind DEV_ROLE_ENABLED for the
+   deferred reactivation path. */
+const ALL_ROLES_FULL = ['designer', 'production', 'development', 'admin'];
 const ALL_ROLES = ALL_ROLES_FULL.filter(r => r !== 'development' || window.DEV_ROLE_ENABLED);
 const CAP_GROUPS_FULL = window.CAP_CATALOG;
 /* Hide the Development capability group from the user-permission grid in MVP. */
@@ -16,12 +21,18 @@ function StatusDot({ state }) {
 
 /* ---- Admin Dashboard ---- */
 function AdminDashboard({ go, flashId }) {
-  const users = useStore(s => s.users);
+  const users = useStore(s => s.users) || [];
   const system = useStore(s => s.system);
-  const audit = useStore(s => s.audit);
+  const audit = useStore(s => s.audit) || [];
   const [override, setOverride] = useStateAdm(false);
-  const active = users.filter(u => u.active).length;
-  const warn = system.status.filter(s => s.state !== 'green').length;
+  // Every one of these was an unguarded read. A user with no `roles` array (the
+  // directory serializer omits roles for non-Admin records, and inert seed users
+  // can legitimately have none) threw "Cannot read properties of undefined
+  // (reading 'length')" inside the reduce below and blanked the whole app.
+  const systemStatus = (system && system.status) || [];
+  const active = users.filter(u => u && u.active).length;
+  const warn = systemStatus.filter(s => s.state !== 'green').length;
+  const roleAssignments = users.reduce((a, u) => a + ((u && u.roles) ? u.roles.length : 0), 0);
 
   return (
     <div className="page page-wide">
@@ -35,8 +46,8 @@ function AdminDashboard({ go, flashId }) {
 
       <div className="stat-row" style={{ marginBottom: 18 }}>
         <div className="stat"><div className="st-label"><Icon name="user" size={13} /> Active users</div><div className="st-num">{active}</div><div className="st-sub">of {users.length} total</div></div>
-        <div className="stat"><div className="st-label"><Icon name="lock" size={13} /> Role assignments</div><div className="st-num">{users.reduce((a, u) => a + u.roles.length, 0)}</div><div className="st-sub">across all users</div></div>
-        <div className="stat"><div className="st-label"><StatusDot state={warn ? 'amber' : 'green'} /> System health</div><div className="st-num" style={{ color: warn ? 'var(--warning)' : 'var(--success)' }}>{warn ? `${warn} warning` : 'All green'}</div><div className="st-sub">{system.status.length} services</div></div>
+        <div className="stat"><div className="st-label"><Icon name="lock" size={13} /> Role assignments</div><div className="st-num">{roleAssignments}</div><div className="st-sub">across all users</div></div>
+        <div className="stat"><div className="st-label"><StatusDot state={warn ? 'amber' : 'green'} /> System health</div><div className="st-num" style={{ color: warn ? 'var(--warning)' : 'var(--success)' }}>{warn ? `${warn} warning` : 'All green'}</div><div className="st-sub">{systemStatus.length} services</div></div>
         <div className="stat"><div className="st-label"><Icon name="history" size={13} /> Audit events today</div><div className="st-num">{audit.length}</div><div className="st-sub">logged</div></div>
       </div>
 
@@ -44,7 +55,7 @@ function AdminDashboard({ go, flashId }) {
         <div className="panel">
           <div className="panel-head"><Icon name="chart" size={16} /><span className="ph-title">System status</span>
             <button className="btn-link" style={{ marginLeft: 'auto' }} onClick={() => go({ screen: 'a.configuration', tab: 'system' })}>Configuration</button></div>
-          {system.status.map(s => (
+          {systemStatus.map(s => (
             <div key={s.id} className="attn-item" style={{ padding: '11px 16px' }}>
               <StatusDot state={s.state} />
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -299,7 +310,15 @@ function SupplierConfig() {
             <span className="tag" style={{ background: s.color, color: '#fff', height: 24, fontSize: 12 }}>{s.name.toUpperCase()}</span>
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ fontWeight: 600 }}>{s.name}</span><StatusBadge status={s.api === 'connected' ? 'active-good' : 'inactive'} /></div>
-              <div className="caption" style={{ marginTop: 3 }}>Priority {s.priority} · {s.mode} · key <span className="mono">{s.apiKey}</span> · last sync {s.lastSync}</div>
+              {/* `apiKey` / `lastSync` are not fields the API returns, so these
+                  rendered as dangling "key" / "last sync" labels with nothing
+                  after them. Credentials are never surfaced in the UI at all
+                  (they stay server-side); the rest renders only when present. */}
+              <div className="caption" style={{ marginTop: 3 }}>
+                Priority {s.priority}{s.mode ? ` · ${s.mode}` : ''}
+                {s.api ? ` · ${s.api === 'connected' ? 'credentials configured' : s.api}` : ''}
+                {s.lastSync ? ` · last sync ${s.lastSync}` : ''}
+              </div>
             </div>
             <Toggle on={s.enabled} onChange={() => storeActions.toggleSupplier(s.id)} />
           </div>

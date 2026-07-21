@@ -3,11 +3,15 @@
    Microsoft SSO is a disabled placeholder for the Phase 2 real path. */
 const { useState: useLoginState } = React;
 
+/* The three login roles (CLAUDE.md v4): Designer · Production · Admin.
+   Noah Park was listed here as a "Development" account, but Development is a
+   retired role and Noah is an INERT seed record with no roles — the button
+   could only ever fail authentication. His user row stays in the seed for
+   FK/actor resolution, like the other inert people; it is just not a login. */
 const SEED_HINTS = [
   { email: 'aaron.jones@yanktech.com', label: 'Aaron Jones', role: 'Designer + Production' },
   { email: 'maria.chen@yanktech.com', label: 'Maria Chen', role: 'Production' },
   { email: 'grace.hill@yanktech.com', label: 'Grace Hill', role: 'Admin' },
-  { email: 'noah.park@yanktech.com', label: 'Noah Park', role: 'Development' },
 ];
 
 function LoginScreen() {

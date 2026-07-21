@@ -90,10 +90,23 @@ function SourcingResultsScreen({ id, go }) {
       </div>
 
       <div style={{ marginTop: 16 }}>
-        {score.review > 0 ? (
+        {b.items.length === 0 ? (
+          <Banner kind="danger" icon="x" title="This BOM has no line items">
+            There is nothing to source or package. Upload a BOM file (or add lines) first.
+          </Banner>
+        ) : score.review > 0 ? (
           <Banner kind="danger" icon="alert" title={`${score.review} line${score.review > 1 ? 's' : ''} could not be sourced`}
             actions={<button className="btn sm danger" disabled={sel.size === 0} onClick={() => setComposer(true)}><Icon name="send" size={14} />Send {sel.size || ''} to designer</button>}>
             Select the lines to push back to engineering, then send an exception report. The rest are ready to package.
+          </Banner>
+        ) : score.wall > 0 ? (
+          /* A check-wall line has NO supplier assignment, so the old
+             "All lines sourced — every line has a supplier assignment" banner
+             was simply false here. Wall stock stays informational (it does not
+             gate packaging), but we no longer claim the BOM is fully sourced. */
+          <Banner kind="warn" icon="alert" title={`${score.wall} line${score.wall > 1 ? 's' : ''} to check on the wall`}
+            actions={<button className="btn sm primary" onClick={() => go({ screen: 'p.procurement', id: b.id })}><Icon name="package" size={14} />Create package</button>}>
+            Every other line has a supplier assignment. Wall stock is informational — confirm those lines from Inventory, then create the procurement package.
           </Banner>
         ) : (
           <Banner kind="info" icon="check" title="All lines sourced — ready to package"
@@ -112,7 +125,7 @@ function SourcingResultsScreen({ id, go }) {
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
         <button className="btn" onClick={() => { setMissingMode(true); setComposer(true); }}><Icon name="plus" size={15} />Request missing component</button>
         {score.review > 0 && <button className="btn danger" disabled={sel.size === 0} onClick={() => { setMissingMode(false); setComposer(true); }}><Icon name="send" size={15} />Send Push-Back to designer</button>}
-        <button className="btn primary" disabled={score.review > 0} onClick={() => go({ screen: 'p.procurement', id: b.id })}><Icon name="package" size={15} />Create Procurement Package</button>
+        <button className="btn primary" disabled={score.review > 0 || b.items.length === 0} onClick={() => go({ screen: 'p.procurement', id: b.id })}><Icon name="package" size={15} />Create Procurement Package</button>
       </div>
 
       {composer && <ExceptionComposer bom={b} lineNos={sel} startMissing={missingMode} onClose={() => { setComposer(false); setMissingMode(false); setSel(new Set()); go({ screen: 'p.bomOverview', id: b.id }); }} />}

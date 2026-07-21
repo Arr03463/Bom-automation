@@ -200,12 +200,12 @@ function TraceabilityStrip({ name, status, creator, role, project, updated, upda
       <span className="tr-name">{name}</span>
       {status && <StatusBadge status={status} />}
       <span className="tr-sep" />
-      <span>Created by <strong style={{ fontWeight: 600 }}>{creator}</strong></span>
+      <span>Created by <strong style={{ fontWeight: 600 }}>{creator || '—'}</strong></span>
       <RoleTag role={role} />
       <span className="tr-sep" />
       <span className="chip" onClick={onProject}><Icon name="folder" size={13} /> {project}</span>
       <span className="tr-sep" />
-      <span className="muted">Updated {updated}{updatedBy ? ` by ${updatedBy}` : ''}</span>
+      <span className="muted">Updated {window.fmtWhen(updated)}{updatedBy ? ` by ${updatedBy}` : ''}</span>
       {recordId && <><span className="tr-sep" /><span className="tr-id" onClick={onRecord}>{recordId}</span></>}
     </div>
   );
@@ -249,7 +249,12 @@ function Popover({ anchorRef, open, onClose, children, align = 'left', width }) 
   useLayoutEffect(() => {
     if (open && anchorRef.current) {
       const r = anchorRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 6, left: align === 'right' ? r.right - (width || 240) : r.left });
+      const w = width || 240;
+      // Clamp into the viewport so a popover anchored near an edge can never
+      // render partially offscreen (which read as "menu text is cut off").
+      const raw = align === 'right' ? r.right - w : r.left;
+      const left = Math.max(8, Math.min(raw, window.innerWidth - w - 8));
+      setPos({ top: r.bottom + 6, left });
     }
   }, [open]);
   useEffect(() => {

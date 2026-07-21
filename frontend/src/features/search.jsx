@@ -91,7 +91,7 @@ function search(query, includeSuppliers) {
     const r = rankHit({ kind: 'collection', name: x.name }, q);
     const catMatch = isDev && x.category && has(x.category, q);
     if (r < 99 || has(x.id, q) || catMatch) {
-      const scopeName = (isDev && !x.project) || !PROJECTS[x.project] ? ((s.programs || []).find(pp => pp.id === x.program_id) || {}).name || '—' : projectName(x.project);
+      const scopeName = (isDev && !x.project) || !PROJECTS[x.project] ? ((s.programs || []).find(pp => pp.id === (x.program || x.program_id)) || {}).name || '—' : projectName(x.project);
       const hit = { kind: isDev ? 'devcollection' : 'collection', id: x.id, name: x.name,
         sub: `${scopeName} · ${isDev ? (x.category + ' · ') : ''}${x.items.length} parts`,
         state: isDev ? window.DC_BADGE[x.state] : x.state, rank: r < 99 ? r : 5 };

@@ -54,7 +54,7 @@ function deriveAttention(state, role) {
           id: `att-src-${b.id}`, kind: 'awaiting-sourcing', tone: 'info',
           type: 'BOM AWAITING SOURCING', icon: 'search',
           title: b.name, badge: b.id, project: proj(b.project),
-          meta: `${b.items.length} lines · in queue ${b.updated}`,
+          meta: `${b.items.length} lines · in queue ${window.fmtWhen(b.updated)}`,
           verb: 'Resolve', tag: 'Run sourcing', relatedId: b.id, bom: b,
           titleRoute: { screen: 'p.bomOverview', id: b.id },
         });
@@ -74,7 +74,7 @@ function deriveAttention(state, role) {
           id: `att-val-${b.id}`, kind: 'awaiting-validation', tone: 'warning',
           type: 'BOM AWAITING VALIDATION', icon: 'check',
           title: b.name, badge: b.id, project: proj(b.project),
-          meta: `${warn} warning${warn === 1 ? '' : 's'} · uploaded ${b.updated}`,
+          meta: `${warn} warning${warn === 1 ? '' : 's'} · uploaded ${window.fmtWhen(b.updated)}`,
           verb: 'Resolve', tag: 'Review', relatedId: b.id, bom: b, navigateOnly: true,
           titleRoute: { screen: 'p.validate', id: b.id },
         });
@@ -155,8 +155,12 @@ const TONE = {
    <NeedsAttention role go flashId />
    Renders the interactive Needs Attention panel for a role.
    ============================================================ */
-function NeedsAttention({ role, go, flashId }) {
-  const items = useStore(s => deriveAttention(s, role));
+function NeedsAttention({ role, go, flashId, preview }) {
+  const live = useStore(s => deriveAttention(s, role));
+  // `preview="new"` is the dashboard's "New user" peek. Every other panel on
+  // that dashboard resets to its empty state, but this one kept rendering live
+  // exceptions — a brand-new user would have nothing needing attention.
+  const items = preview === 'new' ? [] : live;
 
   return (
     <div className="panel na-panel" style={{ marginBottom: 18 }}>

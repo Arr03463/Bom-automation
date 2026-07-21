@@ -74,7 +74,9 @@ function EmbeddedPurchasing({ go, focusReq }) {
       </div>
 
       <div className="onedrive-banner">
-        <span className="od-dot" /><Icon name="external" size={15} />
+        {/* Status banner, not a link. It used to render an external-link glyph
+            with no href/onClick, so it read as clickable and did nothing. */}
+        <span className="od-dot" /><Icon name="check" size={15} aria-hidden="true" />
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600 }}>Live integration — Daily Purchasing List (OneDrive)</div>
           <div className="caption">Critical batches every {fmtC(batch.critical.intervalMin)} · Main every {fmtC(batch.main.intervalMin)} · atomic writes · 14-column sheet unchanged, no CPN column.</div>
@@ -204,15 +206,42 @@ function EmbeddedInventory({ go }) {
   const [q, setQ] = useStateEmb('');
   const [kind, setKind] = useStateEmb('all');
   const [cat, setCat] = useStateEmb('all');
-  const stats = window.PARTSBOX_STATS || { totalParts: parts.length, totalUnits: parts.reduce((a, p) => a + (p.onHand || 0), 0), distinctBins: 0 };
+  // Prefer live stats from the store. window.PARTSBOX_STATS starts life as a
+  // bundled demo fixture (160 parts / 22 bins), so reading it first showed
+  // fabricated counts until PartsBox finished loading.
+  const liveStats = useStore(s => s.inventoryStats);
+  const stats = liveStats || (parts.length
+    ? { totalParts: parts.length, totalUnits: parts.reduce((a, p) => a + (p.onHand || 0), 0),
+        distinctBins: new Set(parts.flatMap(p => (p.locations || []).map(l => l.name))).size }
+    : { totalParts: 0, totalUnits: 0, distinctBins: 0 });
   const cats = ['all', ...[...new Set(parts.map(p => p.cat).filter(Boolean))].sort()];
-  const rows = parts.filter(p => {
-    if (kind === 'project' && !p.locations.some(l => l.kind === 'project')) return false;
-    if (kind === 'wall' && !p.locations.some(l => l.kind === 'wall')) return false;
+
+  /* "Project boxes" / "Development wall" list the STORAGE LOCATIONS themselves,
+     not the parts inside them. They used to filter the flat parts table down to
+     any part that happened to sit in a matching location, which produced a long
+     list of components rather than a list of boxes/bins. "All" remains the
+     parts library. Location rows are aggregated out of the parts payload (each
+     part carries its locations) and link into the existing storage detail page,
+     which is keyed by location name. */
+  const isLocView = kind === 'project' || kind === 'wall';
+
+  const rows = isLocView ? [] : parts.filter(p => {
     if (cat !== 'all' && p.cat !== cat) return false;
     if (q && !(`${p.mpn} ${p.mfr} ${p.desc}`.toLowerCase().includes(q.toLowerCase()))) return false;
     return true;
   });
+
+  const locMap = {};
+  if (isLocView) {
+    parts.forEach(p => (p.locations || []).forEach(l => {
+      if (l.kind !== kind || !l.name) return;
+      const e = locMap[l.name] || (locMap[l.name] = { name: l.name, kind: l.kind, parts: 0, units: 0 });
+      e.parts += 1;
+      e.units += (l.qty || 0);
+    }));
+  }
+  const allLocs = Object.values(locMap).sort((a, b) => b.units - a.units || a.name.localeCompare(b.name));
+  const locRows = q ? allLocs.filter(l => l.name.toLowerCase().includes(q.toLowerCase())) : allLocs;
   return (
     <div className="page">
       <div className="page-head">
@@ -233,11 +262,42 @@ function EmbeddedInventory({ go }) {
             <button key={k} className={kind === k ? 'on' : ''} onClick={() => setKind(k)}>{l}</button>
           ))}
         </div>
-        <select className="select" value={cat} onChange={e => setCat(e.target.value)}>{cats.map(c => <option key={c} value={c}>{c === 'all' ? 'All categories' : c}</option>)}</select>
-        <div className="searchfield" style={{ minWidth: 220 }}><Icon name="search" size={14} style={{ color: 'var(--text-muted)' }} /><input value={q} placeholder="Search MPN, description…" onChange={e => setQ(e.target.value)} /></div>
-        <span className="caption" style={{ marginLeft: 'auto', alignSelf: 'center' }}>{rows.length} of {parts.length} parts</span>
+        {/* PartsBox parts carry no category today, so `cats` collapses to just
+            ['all'] and the dropdown offered a single meaningless option. Render
+            it only when there is something to actually choose between. */}
+        {!isLocView && cats.length > 1 && (
+          <select className="select" value={cat} onChange={e => setCat(e.target.value)}>{cats.map(c => <option key={c} value={c}>{c === 'all' ? 'All categories' : c}</option>)}</select>
+        )}
+        <div className="searchfield" style={{ minWidth: 220 }}><Icon name="search" size={14} style={{ color: 'var(--text-muted)' }} />
+          <input value={q} placeholder={isLocView ? 'Search location name…' : 'Search MPN, description…'} onChange={e => setQ(e.target.value)} /></div>
+        <span className="caption" style={{ marginLeft: 'auto', alignSelf: 'center' }}>
+          {isLocView
+            ? `${locRows.length} of ${allLocs.length} ${kind === 'project' ? 'project boxes' : 'wall bins'}`
+            : `${rows.length} of ${parts.length} parts`}
+        </span>
       </div>
-      {rows.length === 0 ? <div className="card"><EmptyState icon="box" title="No parts match." /></div> : (
+      {isLocView ? (
+        locRows.length === 0 ? (
+          <div className="card"><EmptyState icon="folder"
+            title={q ? 'No storage locations match.' : `No ${kind === 'project' ? 'project boxes' : 'wall bins'} found.`}
+            sub={q ? null : 'Locations appear here once PartsBox reports stock in them.'} /></div>
+        ) : (
+          <div className="tbl-wrap flow"><table className="bom">
+            <thead><tr><th>Location</th><th className="num">Distinct parts</th><th className="num">Units on hand</th><th>Kind</th><th></th></tr></thead>
+            <tbody>{locRows.map(l => (
+              <tr key={l.name} style={{ cursor: 'pointer' }} onClick={() => go({ screen: 'storageDetail', id: l.name })}
+                title="Open storage location">
+                <td><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Icon name="folder" size={14} style={{ color: 'var(--text-muted)' }} />
+                  <span className="mono" style={{ fontWeight: 600 }}>{l.name}</span></div></td>
+                <td className="num" style={{ fontWeight: 600 }}>{l.parts}</td>
+                <td className="num">{l.units.toLocaleString()}</td>
+                <td><span className={`loc-chip ${l.kind}`}>{l.kind === 'project' ? 'production' : 'development'}</span></td>
+                <td style={{ textAlign: 'right' }}><Icon name="chevright" size={16} style={{ color: 'var(--text-muted)' }} /></td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        )
+      ) : rows.length === 0 ? <div className="card"><EmptyState icon="box" title="No parts match." /></div> : (
         <div className="tbl-wrap flow"><table className="bom">
           <thead><tr><th>Part</th><th className="num">On hand</th><th>Storage</th><th>Tags</th><th></th></tr></thead>
           <tbody>{rows.map(p => (
@@ -246,7 +306,11 @@ function EmbeddedInventory({ go }) {
               <td className="num" style={{ fontWeight: 600 }}>{p.onHand}</td>
               <td><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{p.locations.map((l, i) => <button key={i} className={`loc-chip ${l.kind}`} style={{ cursor: 'pointer', border: 0 }} onClick={() => go({ screen: 'storageDetail', id: l.name })} title="Open storage location">{l.name} · {l.qty}</button>)}</div></td>
               <td><div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>{(p.tags || []).map(t => <span key={t} className="tag-chip">{t}</span>)}</div></td>
-              <td style={{ textAlign: 'right' }}><a className="btn sm ghost" href="#" onClick={e => e.preventDefault()}>Open in PartsBox ↗</a></td>
+              <td style={{ textAlign: 'right' }}>
+                {p.url
+                  ? <a className="btn sm ghost" href={p.url} target="_blank" rel="noopener noreferrer">Open in PartsBox ↗</a>
+                  : <span className="caption">—</span>}
+              </td>
             </tr>
           ))}</tbody>
         </table></div>
@@ -316,8 +380,15 @@ function ProgramDetailScreen({ id, go }) {
   const boms = useStore(s => s.boms);
   const [newColl, setNewColl] = useStateEmb(false);
   if (!program) return <div className="page"><EmptyState icon="folder" title="Program not found." actions={<button className="btn primary" onClick={() => go({ screen: 'programs' })}>All programs</button>} /></div>;
-  const projRows = program.projects.map(pid => projects[pid]).filter(Boolean);
-  const progCollections = collections.filter(c => (c.program_id === program.id || program.projects.includes(c.project)) && c.role === 'designer');
+  // Guard every read: `projects`/`collections` can be empty mid-hydration and a
+  // program with no linked projects has no `projects` array at all — an
+  // unguarded .map/.includes there rendered the stat as blank (or threw).
+  const programProjects = program.projects || [];
+  const projRows = programProjects.map(pid => (projects || {})[pid]).filter(Boolean);
+  // The API serializes this as `program`, not `program_id` — matching on the
+  // latter never hit, so program-level Collections silently showed none.
+  const progCollections = (collections || []).filter(c =>
+    ((c.program || c.program_id) === program.id || programProjects.includes(c.project)) && c.role === 'designer');
 
   return (
     <div className="page">
@@ -388,7 +459,7 @@ function StorageDetailScreen({ id, go }) {
   const rows = [];
   let kind = 'wall';
   inventory.forEach(p => (p.locations || []).forEach(l => {
-    if (l.name === name) { rows.push({ mpn: p.mpn, desc: p.desc, qty: l.qty, onHand: p.onHand, cat: p.cat, low: p.low }); if (l.kind === 'project') kind = 'project'; }
+    if (l.name === name) { rows.push({ mpn: p.mpn, desc: p.desc, qty: l.qty, onHand: p.onHand, cat: p.cat, low: p.low, url: p.url }); if (l.kind === 'project') kind = 'project'; }
   }));
   const units = rows.reduce((a, r) => a + (r.qty || 0), 0);
   const tag = kind === 'project' ? 'production' : 'development';
@@ -421,7 +492,11 @@ function StorageDetailScreen({ id, go }) {
             <td className="num" style={{ fontWeight: 600 }}>{r.qty}</td>
             <td className="num">{r.onHand}</td>
             <td className="caption">{r.cat || '—'}</td>
-            <td style={{ textAlign: 'right' }}><a className="btn sm ghost" href="#" onClick={e => e.preventDefault()}>Open in PartsBox ↗</a></td>
+            <td style={{ textAlign: 'right' }}>
+              {r.url
+                ? <a className="btn sm ghost" href={r.url} target="_blank" rel="noopener noreferrer">Open in PartsBox ↗</a>
+                : <span className="caption">—</span>}
+            </td>
           </tr>
         ))}</tbody>
       </table></div>

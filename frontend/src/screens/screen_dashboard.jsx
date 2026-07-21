@@ -42,7 +42,7 @@ function DashboardScreen({ go, flashId }) {
       </div>
 
       {/* v1.3-rev: Dashboard IS the operational inbox. Every card acts inline. */}
-      <NeedsAttention role="designer" go={go} flashId={flashId} />
+      <NeedsAttention role="designer" go={go} flashId={flashId} preview={state} />
 
       <div className="stat-row" style={{ marginBottom: 18 }}>
         <div className="stat"><div className="st-label"><Icon name="layers" size={13} /> Active collections</div><div className="st-num">{isNew ? 0 : activeCount}</div><div className="st-sub">in research</div></div>
@@ -61,7 +61,7 @@ function DashboardScreen({ go, flashId }) {
           ) : myCollections.slice(0, 5).map(c => (
             <div key={c.id} className="attn-item" style={{ cursor: 'pointer' }} onClick={() => go({ screen: 'd.collectionDetail', id: c.id })}>
               <div className="attn-main"><div style={{ display: 'flex', alignItems: 'center', gap: 9 }}><span style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</span><StatusBadge status={c.state} /></div>
-                <div className="am-meta">{(c.project && PROJECTS[c.project]) ? PROJECTS[c.project].name : ((programs.find(p => p.id === c.program_id) || {}).name || '—')} · {c.items.length} part{c.items.length !== 1 ? 's' : ''} · updated {c.updated}</div></div>
+                <div className="am-meta">{(c.project && PROJECTS[c.project]) ? PROJECTS[c.project].name : ((programs.find(p => p.id === (c.program || c.program_id)) || {}).name || '—')} · {c.items.length} part{c.items.length !== 1 ? 's' : ''} · updated {window.fmtWhen(c.updated)}</div></div>
               <Icon name="chevright" size={16} style={{ color: 'var(--text-muted)' }} />
             </div>
           ))}

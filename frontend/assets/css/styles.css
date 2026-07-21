@@ -395,6 +395,12 @@ table.bom thead th { position: sticky; top: calc(var(--rail-h) + var(--bch) + va
 .tbl-wrap.flow table.bom thead th { box-shadow: 0 1px 0 var(--border); }
 .tbl-wrap.flow table.bom thead th:first-child { border-top-left-radius: var(--radius-lg); }
 .tbl-wrap.flow table.bom thead th:last-child { border-top-right-radius: var(--radius-lg); }
+/* Short reference tables embedded in a .panel (Program → PCB Projects, etc.) are
+   never tall enough to need a sticky header. With only a row or two, the sticky
+   header — opaque background, z-index 15 — painted straight OVER the rows, so the
+   table looked like "headers only, zero data rows" even though the rows were in
+   the DOM. Full-page BOM tables keep their sticky headers. */
+.panel table.bom thead th { position: static; }
 /* Sticky action bar: any page header carrying actions pins below the top rail + breadcrumbs. */
 .page:has(.page-head .ph-actions) { --abh: 86px; }
 .page-head:has(.ph-actions) { position: sticky; top: calc(var(--rail-h) + var(--bch)); z-index: 30; background: var(--bg-surface); margin: 0 -30px 14px; padding: 13px 30px; border-bottom: 1px solid var(--border-soft); }

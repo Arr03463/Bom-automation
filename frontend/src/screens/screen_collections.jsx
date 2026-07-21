@@ -26,7 +26,8 @@ function CollectionListScreen({ go, demoEmpty }) {
   const setQ = (v) => setLs({ q: v });
   const all = useStore(s => s.collections.filter(c => c.role === 'designer'));
   const programs = useStore(s => s.programs || []);
-  const scopeName = (c) => (c.project && PROJECTS[c.project]) ? PROJECTS[c.project].name : ((programs.find(p => p.id === c.program_id) || {}).name || '—');
+  /* Collections serialize their program as `program` (not `program_id`). */
+  const scopeName = (c) => (c.project && PROJECTS[c.project]) ? PROJECTS[c.project].name : ((programs.find(p => p.id === (c.program || c.program_id)) || {}).name || '—');
   const source = demoEmpty ? [] : all;
 
   let rows = source.filter(c => filter === 'all' ? true : c.state === filter);

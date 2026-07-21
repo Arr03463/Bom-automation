@@ -116,10 +116,15 @@ function AuthedApp() {
     switch (screenName) {
       case 'd.dashboard': return S('DashboardScreen');
       case 'd.collections': return S('CollectionListScreen');
+      // CollectionDetailScreen looks the collection up from the store by id.
+      // It previously took a `collection` object prop that nothing ever passed,
+      // so every collection rendered "Collection not found".
       case 'd.collectionDetail': return S('CollectionDetailScreen', { id: route.id });
       case 'p.dashboard': return S('ProductionDashboard', { pushback: route.pushback });
       case 'p.boms': return S('BomListScreen');
-      case 'p.upload': return S('BomUploadScreen');
+      // Carry the originating PCB Project through so the upload form can
+      // pre-select it instead of defaulting to an unrelated project.
+      case 'p.upload': return S('BomUploadScreen', { preProject: route.project || route.id });
       case 'p.validate': return S('BomValidationScreen', { id: route.id });
       case 'p.sourcing': return S('SourcingProgressScreen', { id: route.id });
       case 'p.results': return S('SourcingResultsScreen', { id: route.id });
@@ -133,11 +138,15 @@ function AuthedApp() {
       case 'purchasingEmbed': return S('EmbeddedPurchasing', { req: route.req, tab: route.tab });
       case 'inventoryEmbed': return S('EmbeddedInventory');
       case 'receiving': return S('ReceivingScreen');
-      case 'storageDetail': return S('StorageDetailScreen', { loc: route.id });
+      // StorageDetailScreen's prop is `id`; passing `loc` made every
+      // "Open storage location" click land on a not-found page.
+      case 'storageDetail': return S('StorageDetailScreen', { id: route.id });
       case 'programs': return S('ProgramsScreen');
       case 'programDetail': return S('ProgramDetailScreen', { id: route.id });
       case 'projects': return S('ProjectsScreen');
-      case 'projectDetail': return S('ProjectDetailScreen', { id: route.id });
+      // `tab` must be forwarded or the Activity tab is inert: the URL updates
+      // but curTab falls back to 'boms' on every render.
+      case 'projectDetail': return S('ProjectDetailScreen', { id: route.id, tab: route.tab });
       case 'notifications': return S('NotificationsPage');
       case 'settings': return S('AccountSettings');
       case 'v.dashboard': return S('DevelopmentDashboard');
@@ -176,7 +185,9 @@ function AuthedApp() {
           </div>
         )}
         {G('Breadcrumbs', { crumbs })}
-        <div className="content">{screen}</div>
+        <div className="content">
+          <ErrorBoundary resetKey={`${screenName}:${route.id || ''}`}>{screen}</ErrorBoundary>
+        </div>
       </div>
       {G('NotificationPanel', { open: notifOpen, onClose: () => setNotifOpen(false), onNavigate })}
       {G('SearchOverlay', { open: search.open, mode: search.mode, anchorRect: search.anchorRect, initialQuery: search.initialQuery, onClose: () => setSearch(s => ({ ...s, open: false })), go })}
@@ -184,12 +195,47 @@ function AuthedApp() {
   );
 }
 
-function SafeApp() {
-  try {
-    return React.createElement(App);
-  } catch (e) {
-    return <div style={{ font: '13px/1.6 ui-monospace, monospace', color: '#b91c1c', padding: 24, whiteSpace: 'pre-wrap' }}>⚠ App render error\n{(e && (e.stack || e.message)) || String(e)}</div>;
+/* A real error boundary. The previous SafeApp wrapped React.createElement(App)
+   in try/catch, which never fires for errors thrown during a CHILD's render —
+   so one bad screen (e.g. a null field in a stat card) unmounted the entire
+   tree to a white page with no way back except a hard reload. A class boundary
+   is the only thing React honors here.
+
+   `resetKey` clears the error when the user navigates elsewhere, so a single
+   broken screen never strands the session. */
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error('AutoBOM render error:', error, info); }
+  componentDidUpdate(prev) {
+    if (this.state.error && prev.resetKey !== this.props.resetKey) this.setState({ error: null });
   }
+  render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+    return (
+      <div className="page">
+        <div className="panel" style={{ padding: 20, borderTop: '3px solid var(--danger, #b91c1c)' }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>This screen hit an error</div>
+          <div className="caption" style={{ marginBottom: 12 }}>
+            The rest of the app is still running — use the sidebar to go elsewhere, or retry.
+          </div>
+          <pre style={{ font: '12px/1.6 ui-monospace, monospace', color: '#b91c1c', whiteSpace: 'pre-wrap', margin: '0 0 12px' }}>
+            {(error && (error.stack || error.message)) || String(error)}
+          </pre>
+          <button className="btn" onClick={() => this.setState({ error: null })}>Retry</button>
+        </div>
+      </div>
+    );
+  }
+}
+
+function SafeApp() {
+  return (
+    <ErrorBoundary resetKey="root">
+      <App />
+    </ErrorBoundary>
+  );
 }
 
 if (typeof window !== 'undefined') { window.App = App; window.SafeApp = SafeApp; }

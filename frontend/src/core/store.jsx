@@ -11,7 +11,7 @@ function emptyState() {
   return {
     authed: false, currentUserId: null, activeRole: 'designer', booting: true,
     users: [], projects: {}, collections: [], boms: [], requests: [], programs: [],
-    inventory: [], notifications: [], audit: [], suppliers: [],
+    inventory: [], inventoryStats: null, notifications: [], audit: [], suppliers: [],
     system: { status: [], workflow: {}, settings: {}, batch: { main: {}, critical: {} }, jobs: [], stuck: [] },
     investigations: [], recommendations: [], reworks: [], firmwares: [],
     comments: {}, datasheets: {}, seq: { req: 100, po: 3000, bom: 100, col: 100, inv: 100, rec: 100 },
@@ -57,14 +57,21 @@ async function loadInventory() {
     const res = await window.api.get('/inventory');
     const inv = res.inventory || [];
     STATE.inventory = inv;
+    const st = res.stats || {};
     const bins = new Set();
     inv.forEach(p => (p.locations || []).forEach(l => bins.add(l.name)));
-    // Shape must match what the Inventory screen reads (totalParts/totalUnits/distinctBins).
-    window.PARTSBOX_STATS = {
-      totalParts: (res.stats && res.stats.parts) || inv.length,
-      totalUnits: inv.reduce((a, p) => a + (p.onHand || 0), 0),
-      distinctBins: bins.size,
+    // Prefer the server's counts (single source of truth, derived from the full
+    // PartsBox payload); fall back to deriving them locally.
+    const stats = {
+      totalParts: st.parts != null ? st.parts : inv.length,
+      totalUnits: st.onHand != null ? st.onHand : inv.reduce((a, p) => a + (p.onHand || 0), 0),
+      distinctBins: st.distinctBins != null ? st.distinctBins : bins.size,
+      projectBoxes: st.projectBoxes, wallBins: st.wallBins,
     };
+    // Kept on window for the existing screen contract, and mirrored into STATE
+    // so the tiles re-render reactively instead of reading a bundled fixture.
+    window.PARTSBOX_STATS = stats;
+    STATE.inventoryStats = stats;
     window.__pbSource = res.source;   // 'live' | 'cache' | 'empty'
     emit();
   } catch (e) { /* leave inventory empty (calm state) */ }
@@ -618,7 +625,18 @@ const actions = {
     emit(); return linkedId;
   },
 
-  async markAllRead() { STATE.notifications = STATE.notifications.map(n => ({ ...n, unread: false })); emit(); try { await window.api.post('/notifications/read-all', {}); } catch (e) {} },
+  /* Scope the optimistic update to the roles the CURRENT user holds — that is
+     exactly what POST /notifications/read-all persists. Clearing every
+     notification locally made other roles' items flip back to unread on the
+     next bootstrap, which read as "mark all read didn't stick". */
+  async markAllRead() {
+    const me = STATE.users.find(u => u.id === STATE.currentUserId);
+    const roles = new Set((me && me.roles) || (STATE.activeRole ? [STATE.activeRole] : []));
+    STATE.notifications = STATE.notifications.map(n =>
+      ((n.forRoles || []).some(r => roles.has(r)) ? { ...n, unread: false } : n));
+    emit();
+    try { await window.api.post('/notifications/read-all', {}); } catch (e) {}
+  },
   async markRead(id) { const n = STATE.notifications.find(x => x.id === id); if (n) { n.unread = false; emit(); } try { await window.api.post('/notifications/' + id + '/read', {}); } catch (e) {} },
 
   /* COMMENTS — every commentable object */

@@ -171,7 +171,7 @@ function Totals({ items }) {
 }
 
 function RequestToOrder({ collection, onClose, onConfirm }) {
-  const programName = (() => { const st = window.getState && window.getState(); const pr = st && (st.programs || []).find(p => p.id === collection.program_id); return pr ? pr.name : (PROJECTS[collection.project] ? PROJECTS[collection.project].name : '—'); })();
+  const programName = (() => { const st = window.getState && window.getState(); const pr = st && (st.programs || []).find(p => p.id === (collection.program || collection.program_id)); return pr ? pr.name : (PROJECTS[collection.project] ? PROJECTS[collection.project].name : '—'); })();
   const total = collection.items.reduce((a, i) => a + (i.ext || 0), 0);
   return <SendToBucketPanel title="Send to purchasing bucket" sourceId={collection.id} items={collection.items}
     summaryRows={[['Collection', collection.name], ['Program', programName], ['Parts', collection.items.length], ['Estimated total', <span className="mono" style={{ fontWeight: 600 }}>{fmtUSD(total)}</span>]]}
@@ -286,18 +286,26 @@ function InlineDescription({ value, onChange, disabled, placeholder }) {
   );
 }
 
-function CollectionDetailScreen({ collection, go, onSubmitOrder }) {
+function CollectionDetailScreen({ id, collection, go, onSubmitOrder }) {
   const [panel, setPanel] = useStateCD(false);
   const [addOpen, setAddOpen] = useStateCD(false);
   const [projectDraft, setProjectDraft] = useStateCD(null);
-  const c = collection;
-  const projects = useStore(s => Object.values(s.projects));
+  // Resolve the record from the store by id. This screen used to require a
+  // `collection` OBJECT prop that the router never passed (it passes `id`), so
+  // every collection — seed or freshly created — rendered "Collection not
+  // found". The `collection` prop is still honored for any direct callers.
+  const fromStore = useStore(s => (s.collections || []).find(x => x.id === id));
+  const c = collection || fromStore;
+  const projectsById = useStore(s => s.projects || {});
   const programs = useStore(s => s.programs || []);
   if (!c) return <div className="page"><EmptyState icon="layers" title="Collection not found." /></div>;
 
   const editable = c.state === 'active' || c.state === 'draft';
-  const proj = PROJECTS[c.project];
-  const program = programs.find(p => p.id === c.program_id);
+  // The API serializes these as `project` / `program`; `program_id` was never a
+  // field on the record, so the program lookup silently returned undefined.
+  const programId = c.program || c.program_id || '';
+  const proj = projectsById[c.project] || PROJECTS[c.project];
+  const program = programs.find(p => p.id === programId);
   const scopeLabel = proj ? proj.name : (program ? program.name : '—');
   const stale = c.items.some(i => i.stale);
 
@@ -327,9 +335,9 @@ function CollectionDetailScreen({ collection, go, onSubmitOrder }) {
       {editable && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 4, marginBottom: 8 }}>
           <span className="caption">Program:</span>
-          <select className="select" style={{ width: 'auto', padding: '4px 8px', fontSize: 12.5 }} value={c.program_id || ''}
+          <select className="select" style={{ width: 'auto', padding: '4px 8px', fontSize: 12.5 }} value={programId}
             onChange={(e) => storeActions.setCollectionProgram(c.id, e.target.value)}>
-            {!c.program_id && <option value="">Select a program…</option>}
+            {!programId && <option value="">Select a program…</option>}
             {programs.map(p => <option key={p.id} value={p.id}>{(p.identifier || p.code)} · {p.name}</option>)}
           </select>
           <span className="caption">· Changes save automatically</span>

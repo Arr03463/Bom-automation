@@ -51,7 +51,7 @@ function ProjectDetailScreen({ id, go, tab }) {
     <div className="page page-wide">
       <div className="page-head" style={{ marginBottom: 6 }}><div className="ph-titles">
         <button className="btn-link" style={{ marginBottom: 8 }} onClick={() => go({ screen: 'projects' })}>← PCB Projects</button>
-        <div className="h1">{p.name}</div><div className="ph-sub">{p.desc} · Lead: {p.lead} · Created {p.created}</div></div></div>
+        <div className="h1">{p.name}</div><div className="ph-sub">{p.desc} · Lead: {p.lead} · Created {window.fmtWhen(p.created)}</div></div></div>
       {p.partsbox && !p.partsbox.created && (
         <div className="card" style={{ padding: '11px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-raised)', border: '1px solid var(--border-soft)' }}>
           <Icon name="box" size={16} style={{ color: p.partsbox.pending ? 'var(--danger)' : 'var(--text-muted)' }} />
@@ -77,7 +77,7 @@ function ProjectDetailScreen({ id, go, tab }) {
           <div className="lr-right"><div className="lr-stats"><span>updated {b.updated}</span>{m.total > 0 && <span>est. <b className="mono">{window.fmtUSD(m.total)}</b></span>}</div><Icon name="chevright" size={16} style={{ color: 'var(--text-muted)' }} /></div>
         </div>); })}</div>
       : <EmptyState icon="boms" title="No BOM for this PCB yet." sub="Each PCB Project holds exactly one BOM. Upload it to start validation and sourcing."
-          actions={isProd ? <button className="btn primary" onClick={() => go({ screen: 'p.upload', tab: id })}><Icon name="upload" size={15} />Upload BOM</button> : null} />)}
+          actions={isProd ? <button className="btn primary" onClick={() => go({ screen: 'p.upload', project: id })}><Icon name="upload" size={15} />Upload BOM</button> : null} />)}
       {curTab === 'activity' && <div className="tbl-wrap flow"><table className="bom"><thead><tr><th>When</th><th>User</th><th>Action</th><th>Entity</th></tr></thead>
         <tbody>{audit.slice(0, 10).map((a, i) => <tr key={a.id} className={i % 2 ? 'alt' : ''}><td className="caption">{a.ts}</td><td>{a.user}</td><td>{a.action}</td><td className="mono caption">{a.entity}</td></tr>)}</tbody></table></div>}
     </div>

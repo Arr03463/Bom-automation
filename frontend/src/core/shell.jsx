@@ -59,7 +59,9 @@ function UserMenu({ go }) {
       <button ref={ref} className="user-menu-btn icon-btn" onClick={() => setOpen(o => !o)} title={user.name}>
         <Avatar name={user.name} role={activeRole} size={28} />
       </button>
-      <Popover anchorRef={ref} open={open} onClose={() => setOpen(false)} width={236}>
+      {/* The avatar sits at the far right of the top rail — a left-aligned
+          popover ran 236px off the edge of the viewport and got clipped. */}
+      <Popover anchorRef={ref} open={open} onClose={() => setOpen(false)} width={236} align="right">
         <div className="um-head" style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '4px 8px 10px' }}>
           <Avatar name={user.name} role={activeRole} size={36} />
           <div style={{ minWidth: 0 }}>

@@ -1,5 +1,7 @@
 # AutoBOM
 
+> New here? See the [startup and environment cheat sheet](STARTUP-CHEAT-SHEET.md).
+
 Internal engineering → production → purchasing → inventory workflow platform.
 Local-first (runs entirely on a laptop, no Azure) and Azure-ready via graceful
 fallback on environment variables.

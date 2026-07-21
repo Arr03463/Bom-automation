@@ -268,9 +268,24 @@ class PartsBoxClient:
         ).strip()
         return template.replace("{id}", str(build_id))
 
+    @staticmethod
+    def _web_base():
+        return os.getenv("PARTSBOX_WEB_URL", "https://partsbox.com").strip().rstrip("/")
+
     def build_web_url(self, build_id):
         """Human fallback: open the build in the PartsBox web app."""
         if not build_id:
             return None
-        base = os.getenv("PARTSBOX_WEB_URL", "https://partsbox.com").strip().rstrip("/")
-        return f"{base}/builds/{build_id}"
+        return f"{self._web_base()}/builds/{build_id}"
+
+    def part_web_url(self, part_id):
+        """Open a part in the PartsBox web app.
+
+        Used by the Inventory table's "Open in PartsBox" affordance, which
+        previously rendered as href="#" with preventDefault — a link that looked
+        live but did nothing. Returns None when there is no id, and the caller
+        omits the link entirely rather than rendering a dead one.
+        """
+        if not part_id:
+            return None
+        return f"{self._web_base()}/parts/{part_id}"

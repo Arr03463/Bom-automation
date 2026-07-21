@@ -44,6 +44,14 @@ def iterate_sourcing(db: Session, bom_id: str):
         return
 
     lines = sorted(bom.lines, key=lambda x: x.line_no)
+    # A BOM with no lines must never advance to `results`. Sourcing zero lines is
+    # not a successful run: previously the loop body simply never executed, the
+    # state was set to `results` anyway, and the UI reported an empty BOM as
+    # SOURCED at "0 of 0 lines · 0%".
+    if not lines:
+        yield {"type": "error", "message": "This BOM has no line items — nothing to source."}
+        return
+
     mouser = MouserClient()
     digikey = DigiKeyClient()
     persistent_cache = SupplierLookupCache()

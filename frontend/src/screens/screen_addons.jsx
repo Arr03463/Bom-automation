@@ -114,17 +114,28 @@ function NewCollectionModal({ kind = 'designer', defaultProgram, onClose, onCrea
     document.addEventListener('keydown', k); return () => document.removeEventListener('keydown', k);
   }, [onClose]);
 
+  const [busy, setBusy] = useStateAddons(false);
   const valid = name.trim().length > 1 && program && (!isDev || category);
 
-  const submit = () => {
-    if (!valid) return;
-    const id = storeActions.createCollection({
-      kind, name, program_id: program, category: isDev ? category : null, desc, notes,
-      tags: tags.split(',').map(s => s.trim()).filter(Boolean),
-      priority: priority || null,
-      relatedBom: relatedBom || null,
-    });
-    onCreated && onCreated(id);
+  // createCollection is async — it was previously called without `await`, so the
+  // raw Promise was handed to onCreated and stringified into the redirect URL as
+  // "#/designer/collections/[object Promise]". Await the real id, and don't
+  // navigate at all if the create failed.
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    try {
+      const id = await storeActions.createCollection({
+        kind, name, program_id: program, category: isDev ? category : null, desc, notes,
+        tags: tags.split(',').map(s => s.trim()).filter(Boolean),
+        priority: priority || null,
+        relatedBom: relatedBom || null,
+      });
+      if (!id) { window.__toast?.('Could not create the collection — please try again.', 'alert'); return; }
+      onCreated && onCreated(id);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const accent = isDev ? 'var(--role-development, #059669)' : 'var(--role-designer, #7C3AED)';
@@ -222,8 +233,8 @@ function NewCollectionModal({ kind = 'designer', defaultProgram, onClose, onCrea
 
           <div className="modal-foot">
             <button className="btn ghost" onClick={onClose}>Cancel</button>
-            <button className="btn primary" disabled={!valid} onClick={submit}>
-              <Icon name="check" size={14} />Create collection
+            <button className="btn primary" disabled={!valid || busy} onClick={submit}>
+              <Icon name="check" size={14} />{busy ? 'Creating…' : 'Create collection'}
             </button>
           </div>
         </div>

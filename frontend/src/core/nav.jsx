@@ -50,14 +50,22 @@ function encodeRoute(route) {
   const e = BY_SCREEN[route.screen] || BY_SCREEN['d.dashboard'];
   let path = e.path.replace(':id', route.id != null ? encodeURIComponent(route.id) : '');
   path = path.replace(/\/$/, '');
-  const q = route.tab ? `?tab=${encodeURIComponent(route.tab)}` : '';
-  return '#/' + path + q;
+  // `tab` and `project` ride in the query string. `project` carries the
+  // originating PCB Project into the shared Upload BOM screen (which has no
+  // :id segment of its own) so the form can pre-select it.
+  const qs = new URLSearchParams();
+  if (route.tab) qs.set('tab', route.tab);
+  if (route.project) qs.set('project', route.project);
+  const q = qs.toString();
+  return '#/' + path + (q ? '?' + q : '');
 }
 
 function decodeRoute(hash) {
   let h = (hash || '').replace(/^#\/?/, '');
   const [path, query] = h.split('?');
-  const tab = query ? new URLSearchParams(query).get('tab') : null;
+  const params = query ? new URLSearchParams(query) : null;
+  const tab = params ? params.get('tab') : null;
+  const project = params ? params.get('project') : null;
   const segs = path.split('/').filter(Boolean);
   if (segs.length === 0) return { screen: 'd.dashboard' };
   // candidates with matching segment count
@@ -70,7 +78,7 @@ function decodeRoute(hash) {
       if (parts[i][0] === ':') id = decodeURIComponent(segs[i]);
       else if (parts[i] !== segs[i]) { ok = false; break; }
     }
-    if (ok) return { screen: r.screen, id, tab };
+    if (ok) return { screen: r.screen, id, tab, project };
   }
   return { screen: 'd.dashboard' };
 }

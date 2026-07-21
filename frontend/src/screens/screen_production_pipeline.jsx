@@ -35,12 +35,20 @@ function BomValidationScreen({ id, go }) {
   const b = bomById(id);
   if (!b) return <div className="page"><EmptyState icon="boms" title="BOM not found." /></div>;
   const v = b.validation || { errors: 0, warnings: 0, notes: [] };
-  const blocked = v.errors > 0;
+  // A BOM with no line items is not "clean and ready to source" — it has
+  // nothing to source. Without this guard an empty BOM passed validation,
+  // sourced instantly, and reported "0 of 0 lines · 0%" as SOURCED.
+  const empty = !b.items || b.items.length === 0;
+  const blocked = v.errors > 0 || empty;
   return (
     <div className="page page-wide">
       <PipelineHeader b={b} go={go} stage="validate" />
       <div style={{ marginTop: 16 }}>
-        {blocked ? (
+        {empty ? (
+          <Banner kind="danger" icon="x" title="This BOM has no line items — sourcing blocked">
+            Nothing has been uploaded to this BOM yet. Upload a BOM file (or add lines) before validating or sourcing.
+          </Banner>
+        ) : blocked ? (
           <Banner kind="danger" icon="x" title={`${v.errors} validation error${v.errors > 1 ? 's' : ''} — sourcing blocked`}>
             Fix the highlighted lines (missing MPN or manufacturer) before this BOM can be sourced. You can edit inline or push the BOM back to the designer.
           </Banner>

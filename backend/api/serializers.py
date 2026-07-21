@@ -8,6 +8,7 @@ inverse of db/seed.py so screens render unchanged against real data.
 from __future__ import annotations
 
 import enum
+from datetime import datetime, timezone
 from typing import Optional
 
 from db.models import (
@@ -19,6 +20,30 @@ from db.models import (
 def ev(x):
     """Enum columns return Enum members; emit their string .value."""
     return x.value if isinstance(x, enum.Enum) else x
+
+
+def rel(dt: Optional[datetime]) -> Optional[str]:
+    """A datetime as the prototype's relative label ("just now", "3h ago").
+
+    These fields used to be hardcoded to None, which the UI interpolated raw —
+    producing literal "in queue null" / "uploaded null" text and bare
+    "Created ·" / "Updated ·" headers with no value. Returning None here still
+    means "unknown", but real rows now carry a real label.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    secs = (datetime.now(timezone.utc) - dt).total_seconds()
+    if secs < 60:
+        return "just now"
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    if secs < 2592000:
+        return f"{int(secs // 86400)}d ago"
+    return dt.strftime("%b %d, %Y")
 
 
 def _name(users_by_id: dict, uid: Optional[str]) -> str:
@@ -61,7 +86,7 @@ def user_full(u: User) -> dict:
         "id": u.id, "name": u.name, "email": u.email, "roles": u.roles or [],
         "primaryRole": u.primary_role, "overrides": u.overrides or [], "active": u.active,
         "intern": u.intern, "title": u.title, "invitedBy": u.invited_by,
-        "lastActive": u.last_active, "created": None, "roleSource": ev(u.role_source),
+        "lastActive": u.last_active, "created": rel(u.created_at), "roleSource": ev(u.role_source),
     }
 
 
@@ -83,7 +108,8 @@ def project(pr: Project, users_by_id: dict) -> dict:
     return {
         "id": pr.id, "name": pr.name, "identifier": pr.identifier,
         "lead": _name(users_by_id, pr.lead_id), "program_id": pr.program_id,
-        "desc": pr.description, "status": ev(pr.status), "created": None,
+        "desc": pr.description, "status": ev(pr.status), "created": rel(pr.created_at),
+        "updated": rel(pr.updated_at),
         "partsbox": None,
     }
 
@@ -93,7 +119,7 @@ def collection(c: Collection, items: list[CollectionItem]) -> dict:
         "id": c.id, "name": c.name, "project": c.project_id, "program": c.program_id,
         "state": ev(c.state), "ownerId": c.owner_id, "role": c.role, "category": c.category,
         "desc": c.description, "notes": c.notes, "reqId": c.req_id, "updatedBy": c.updated_by,
-        "updated": None, "created": None,
+        "updated": rel(c.updated_at), "created": rel(c.created_at),
         "creator": None,   # filled by caller via owner name
         "items": [collection_item(i) for i in sorted(items, key=lambda x: x.line_no)],
     }
@@ -115,7 +141,7 @@ def bom(b: Bom, lines: list[BomLine], pb: Optional[Pushback], users_by_id: dict)
         "version": b.version, "ownerId": b.owner_id, "creator": _name(users_by_id, b.owner_id),
         "role": b.role, "buildQty": b.build_qty, "overage": b.overage,
         "sourceCollection": b.source_collection_id, "partsbox": b.partsbox_ref,
-        "validation": b.validation, "updated": None, "created": None,
+        "validation": b.validation, "updated": rel(b.updated_at), "created": rel(b.created_at),
         "pushback": pushback(pb, users_by_id) if pb else None,
         "items": [bom_line(li) for li in sorted(lines, key=lambda x: x.line_no)],
     }
