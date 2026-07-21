@@ -19,12 +19,33 @@ from api import serializers as SR
 from auth.deps import require_user
 from db.models import (
     Audit, Bom, BomLine, BomVersion, Collection, CollectionItem, Comment,
-    Configuration, Notification, Program, Project, Pushback, Request, Supplier, User,
+    Configuration, Notification, Program, Project, Pushback, PushbackReason,
+    PushbackUrgency, Request, Supplier, User,
 )
 from db.session import get_db
 
 router = APIRouter(tags=["entities"])
 NOW = lambda: datetime.now(timezone.utc)
+
+
+def _enum_val(raw, enum_cls, default: str) -> str:
+    """Validate a client-supplied enum string at the API boundary.
+
+    Enum columns reject unknown values at write time, which surfaces as a 500.
+    Turn that into an honest 400 naming the allowed values — and accept a
+    case-insensitive match, since the UI labels are Title Case ("Standard")
+    while the stored values are lower ("standard").
+    """
+    allowed = {m.value for m in enum_cls}
+    if raw is None or str(raw).strip() == "":
+        return default
+    val = str(raw).strip()
+    if val in allowed:
+        return val
+    lowered = val.lower()
+    if lowered in allowed:
+        return lowered
+    raise HTTPException(400, f"Invalid value {val!r}; expected one of {sorted(allowed)}")
 
 
 def _users(db: Session) -> dict:
@@ -196,8 +217,10 @@ def send_pushback(bom_id: str, body: dict = Body(...), user: User = Depends(requ
     if pr and pr.program_id:
         prog = db.get(Program, pr.program_id)
         to_user = prog.owner_id if prog else None
-    db.add(Pushback(id=pb_id, bom_id=bom_id, reason=body.get("reason", "other"),
-                    urgency=body.get("urgency", "standard"), from_user_id=user.id, to_user_id=to_user,
+    db.add(Pushback(id=pb_id, bom_id=bom_id,
+                    reason=_enum_val(body.get("reason"), PushbackReason, "other"),
+                    urgency=_enum_val(body.get("urgency"), PushbackUrgency, "standard"),
+                    from_user_id=user.id, to_user_id=to_user,
                     state="open", note=body.get("note"), loop=1,
                     flagged_lines=body.get("flaggedLines") or [],
                     added_component_request=body.get("addedComponentRequest")))
@@ -218,9 +241,29 @@ def send_pushback(bom_id: str, body: dict = Body(...), user: User = Depends(requ
     return get_bom_full(db, bom_id)
 
 
+def _open_pushback(db: Session, bom_id: str, *, pushback_id: str | None = None,
+                   with_recommendation: bool = False) -> Pushback | None:
+    """Pick the open push-back deterministically.
+
+    Both halves of the handshake used `.first()` with NO ORDER BY. With more
+    than one open push-back on a BOM, Postgres returns an arbitrary row, so
+    Designer's recommendation could attach to one push-back while Production's
+    Apply read a different one — the handshake failed at random with a
+    misleading "No recommendation to apply." Order by id (zero-padded, so
+    lexicographic == chronological) and let Apply target the push-back that
+    actually carries a recommendation.
+    """
+    q = db.query(Pushback).filter(Pushback.bom_id == bom_id, Pushback.state == "open")
+    if pushback_id:
+        return q.filter(Pushback.id == pushback_id).first()
+    if with_recommendation:
+        q = q.filter(Pushback.recommendation.isnot(None))
+    return q.order_by(Pushback.id).first()
+
+
 @router.post("/boms/{bom_id}/resolve-pushback")
 def resolve_pushback(bom_id: str, body: dict = Body(...), user: User = Depends(require_user), db: Session = Depends(get_db)):
-    pb = db.query(Pushback).filter(Pushback.bom_id == bom_id, Pushback.state == "open").first()
+    pb = _open_pushback(db, bom_id, pushback_id=body.get("pushbackId"))
     if not pb:
         raise HTTPException(404, "No open push-back on this BOM")
     pb.recommendation = {"picks": body.get("recommendations") or [], "note": body.get("note"),
@@ -239,11 +282,12 @@ def resolve_pushback(bom_id: str, body: dict = Body(...), user: User = Depends(r
 
 
 @router.post("/boms/{bom_id}/apply-recommendation")
-def apply_recommendation(bom_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+def apply_recommendation(bom_id: str, body: dict = Body(default=None), user: User = Depends(require_user), db: Session = Depends(get_db)):
     bom = db.get(Bom, bom_id)
     if not bom:
         raise HTTPException(404, "BOM not found")
-    pb = db.query(Pushback).filter(Pushback.bom_id == bom_id, Pushback.state == "open").first()
+    pb = _open_pushback(db, bom_id, pushback_id=(body or {}).get("pushbackId"),
+                        with_recommendation=True)
     if not pb or not pb.recommendation:
         raise HTTPException(400, "No recommendation to apply.")
     picks = (pb.recommendation or {}).get("picks") or []

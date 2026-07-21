@@ -36,7 +36,19 @@ JSONType = JSON().with_variant(JSONB(), "postgresql")
 # Enums (stored as their string .value)
 # --------------------------------------------------------------------------- #
 def _enum(e):
-    return Enum(e, native_enum=False, values_callable=lambda x: [m.value for m in x])
+    """Enum column stored as its string .value.
+
+    `validate_strings=True` is load-bearing, not decoration. SQLAlchemy defaults
+    it to False, which means a raw string is written to the column WITHOUT being
+    checked against the enum — but it is checked on the way back out. A single
+    bad value (e.g. urgency="Standard" instead of "standard") therefore inserts
+    happily and then raises LookupError on every subsequent SELECT. Because
+    /api/bootstrap reads these tables on login, one bad row bricks the entire
+    app for every user with no way back in short of DB surgery.
+    Fail loudly at write time instead, where it is recoverable.
+    """
+    return Enum(e, native_enum=False, validate_strings=True,
+                values_callable=lambda x: [m.value for m in x])
 
 
 class RoleSource(str, enum.Enum):
