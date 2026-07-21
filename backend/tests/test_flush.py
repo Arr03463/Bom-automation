@@ -1,5 +1,6 @@
-"""Phase 4: the sourceability gate (root-cause fix) + flush mapping."""
+"""Phase 4: the sourceability gate (root-cause fix) + flush mapping + sheet links."""
 
+from services.bucket_flush import DIGIKEY_LIST_URL, MOUSER_CART_URL
 from services.flush_mapping import from_snapshot_line, requests_to_dataframe
 from services.sourcing_engine import decide_no_split_supplier, sourceable
 from services.supplier_base import SupplierResult
@@ -91,3 +92,25 @@ def test_requests_to_dataframe_groups_by_supplier():
     df = requests_to_dataframe([R()])
     assert len(df) == 2                                   # the needs-review line is dropped
     assert set(df.selected_supplier) == {"mouser", "digikey"}
+
+
+# --- sheet links: per-batch deep link, never the API-URL form ----------------
+# Verified live: ?cartKey= opens THAT cart; /mylists/list/<id> opens THAT list.
+def test_links_are_account_deep_links_for_the_specific_batch():
+    cart = MOUSER_CART_URL.format(cart_key="0c4b048b-8f43-4d0a-aefb-da74ef73ad6b")
+    lst = DIGIKEY_LIST_URL.format(list_id="N0FTSYUTRG")
+    assert cart == "https://www.mouser.com/cart?cartKey=0c4b048b-8f43-4d0a-aefb-da74ef73ad6b"
+    assert lst == "https://www.digikey.com/en/mylists/list/N0FTSYUTRG"
+    assert cart.startswith("https://www.mouser.com/")     # account domain, not api.mouser.com
+    assert lst.startswith("https://www.digikey.com/")
+
+
+def test_sheet_links_never_carry_an_api_key():
+    """HARD SECURITY LINE: the API-URL form (api.mouser.com/api/v1/cart?apiKey=…)
+    must never be constructible from these templates — it would put the secret on
+    Josh's sheet, which is shared."""
+    for tmpl in (MOUSER_CART_URL, DIGIKEY_LIST_URL):
+        low = tmpl.lower()
+        assert "apikey" not in low
+        assert "api." not in low
+        assert "/api/" not in low

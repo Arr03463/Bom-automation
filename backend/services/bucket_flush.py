@@ -8,9 +8,10 @@ append one row per supplier per batch to Josh's sheet -> mark WRITTEN.
 Locked design decisions:
 - ONE cart/list per batch. Mouser cart_key="" yields a FRESH CartKey per call
   (verified live), so Main and Critical never co-mingle.
-- The sheet's URL column gets the ACCOUNT DEEP LINK only; the CartKey/listId is
-  stored on the Batch for traceability. The API-URL form (…?apiKey=…) is NEVER
-  written anywhere — it would leak the API key.
+- The sheet's URL column gets the ACCOUNT DEEP LINK carrying the batch's own
+  CartKey / listId (both verified live to open that specific cart/list); the raw
+  identifier is also stored on the Batch for traceability. The API-URL form
+  (…?apiKey=…) is NEVER written anywhere — it would leak the API key.
 - ONE switch: settings.flush_live. The orchestrator decides dry_run and passes
   it DOWN into the clients (they no longer decide for themselves).
 - Atomic (Pattern A): sheet write must succeed for every row or the batch stays
@@ -36,8 +37,13 @@ from services.purchasing_sheet_writer import write_batch
 
 log = logging.getLogger("autobom.flush")
 
-# Account deep links (buyer logs into the account and completes the purchase there).
-MOUSER_ACCOUNT_CART_URL = "https://www.mouser.com/cart"
+# Account deep links (buyer signs into the account and completes the purchase there).
+# VERIFIED live 2026-07-20: ?cartKey=<key> opens THAT specific cart, and the
+# MyLists URL opens that specific list — so each sheet row links to its own
+# batch's cart/list, not a generic landing page. The API-URL form (…?apiKey=…)
+# is never used here: it would leak the API key onto Josh's sheet.
+MOUSER_CART_URL = "https://www.mouser.com/cart?cartKey={cart_key}"
+MOUSER_ACCOUNT_CART_URL = "https://www.mouser.com/cart"   # dry-run fallback (no key yet)
 DIGIKEY_LIST_URL = "https://www.digikey.com/en/mylists/list/{list_id}"
 
 STREAM_STATE = {"critical": "QUEUED_CRITICAL", "main": "QUEUED_MAIN"}
@@ -75,9 +81,11 @@ def _mouser_batch(df, requests, dry_run: bool) -> dict | None:
     errors = resp.get("Errors") or []
     if errors:
         raise RuntimeError(f"Mouser cart errors: {errors}")
-    return {"supplier": "Mouser", "ref": resp.get("CartKey"),
+    cart_key = resp.get("CartKey")
+    return {"supplier": "Mouser", "ref": cart_key,
             "total": resp.get("MerchandiseTotal"), "items_count": resp.get("TotalItemCount") or len(items),
-            "link": MOUSER_ACCOUNT_CART_URL, "raw": resp}
+            "link": MOUSER_CART_URL.format(cart_key=cart_key) if cart_key else MOUSER_ACCOUNT_CART_URL,
+            "raw": resp}
 
 
 def _digikey_batch(df, requests, dry_run: bool, list_name: str) -> dict | None:
