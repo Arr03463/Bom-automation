@@ -125,9 +125,15 @@ Rate limit: PartsBox's rate limit is respected. Cache queue backs off with expon
 | `POST /api/v1/cart/add_items_to_cart` | Add multiple items to a cart | Batch flush pipeline (Step 2 for Mouser group) |
 | `POST /api/v1/cart/create` (if needed) | Create new cart | Same |
 
-**Cart line customer reference:** Cart line items support a customer reference field (typically labeled `CustomerPartNumber` or `Reference` in Mouser's API). This is where CPN gets written at cart-build.
+**Cart line customer reference:** Cart line items support a customer reference field (`CustomerPartNumber` in Mouser's API; it comes back as `CartItemCustPartNumber`). This is where CPN gets written at cart-build. **Verified live 2026-07-20.**
 
-**Cart URL:** Returned by cart creation/modification response — real Mouser cart URL Josh clicks in the sheet.
+**Cart URL — CORRECTED (verified live 2026-07-20).** The earlier claim that a cart URL is "returned by the cart creation/modification response" is **false**. The live `POST /api/v1/cart/items/insert` response contains exactly: `Errors`, `CartKey`, `CurrencyCode`, `CartItems[]`, `TotalItemCount`, `additionalFeesTotal`, `MerchandiseTotal`. **There is no URL field**, and the Mouser V1 Swagger (23 paths) exposes **no share/quote/link endpoint** — carts, orders, order-history and search only.
+
+What AutoBOM therefore does:
+- The cart is created in the **account tied to the Cart/Order API key**, so the sheet's `Link to Product` column gets the **account deep link** `https://www.mouser.com/cart` — the buyer signs into that account and completes the purchase there (this *is* the human-approval gate).
+- The **`CartKey`** is stored on the AutoBOM `batches.supplier_ref` row for traceability (every sheet row traces to its exact cart).
+- **Never** write the API-URL form (`/api/v1/cart?apiKey=…`) anywhere — it would leak the API key onto Josh's sheet.
+- Each flush passes `CartKey=""`, which returns a **fresh CartKey per call** (verified), so every batch is its own cart and Main/Critical never co-mingle.
 
 ### 3.2 Mouser parametric filtering caveat
 
@@ -205,7 +211,9 @@ Each filter dimension has enumerable value ranges — AutoBOM constructs the req
 | `POST /mylists/v1/lists/{listId}/parts` (`add_parts_to_list`) | Add parts to list | Same |
 | `GET /mylists/v1/lists/{listId}` | Retrieve list | Cart URL reconstruction if needed |
 
-**List URL:** Returned by list creation response — real DigiKey list URL Josh clicks in the sheet. List URL is stable while the list exists.
+**List URL — UNVERIFIED (blocked 2026-07-20).** The claim that a list URL is returned by the create-list response is **not confirmed**: the live probe could not reach MyLists at all (`401 Invalid RefreshToken` — the 3-legged token needs re-authorizing via `backend/scripts/digikey_oauth_setup.py`). Treat it as unproven until re-tested.
+
+Interim design (mirrors Mouser): the sheet's link is the **account deep link** `https://www.digikey.com/en/mylists/list/{listId}` and the **`listId`** is stored on `batches.supplier_ref`. MyLists are naturally discrete (each `create_list` yields a new `listId`), so one list per batch is automatic. Confirm the exact URL form once the refresh token is restored.
 
 **List line reference:** DigiKey supports a per-line reference / CustomerPartNumber field. This is where CPN gets written.
 
@@ -264,7 +272,7 @@ ParametricFilters response cached with same TTL — response structure changes r
 
 Each row-write operation:
 - Target workbook + worksheet identified by config (Admin can update the target)
-- Row data as an ordered array of 12 values matching the 12-column commitment
+- Row data as an ordered array of 14 values matching the 14-column commitment (Purchasing v4.2)
 - Column ordering per PRD v1.5 Section 11.4 and Purchasing v4.1 Section 4.2
 
 ### 5.3 Sheet-write failure handling
@@ -277,7 +285,7 @@ Each row-write operation:
 ### 5.4 Graph anti-patterns
 
 - ❌ Reading Josh's sheet to reconcile state — sheet-write is one-way; internal state is truth.
-- ❌ Adding columns to Josh's sheet — 12-column commitment absolute.
+- ❌ Adding columns to Josh's sheet — 14-column commitment absolute (Purchasing v4.2).
 - ❌ Writing to any workbook other than the configured target — one workbook, one target.
 - ❌ Writing CPN to any column — CPN lives elsewhere.
 
@@ -327,7 +335,7 @@ Consolidated list of every anti-pattern from Sections 2-5:
 - Store supplier catalog in AutoBOM DB as source of truth. Fetch on demand with cache.
 - Store PartsBox part records in AutoBOM DB as source of truth. Fetch on demand.
 - Read Josh's sheet. Sheet-write is one-way.
-- Add columns to Josh's sheet. 12-column commitment absolute.
+- Add columns to Josh's sheet. 14-column commitment absolute (Purchasing v4.2).
 - Write CPN to Josh's sheet. CPN lives in cart line customer reference field + internal state.
 - Duplicate datasheets in AutoBOM. Attach to PartsBox.
 - Duplicate PartsBox tags with different semantics. Read PartsBox tags as truth.
