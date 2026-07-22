@@ -99,17 +99,76 @@ def create_project(body: dict = Body(...), user: User = Depends(require_user), d
     return SR.project(pr, _users(db))
 
 
-@router.post("/projects/{project_id}/partsbox")
-def create_project_partsbox(project_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+@router.get("/projects/{project_id}/partsbox/plan")
+def project_partsbox_plan(project_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Pre-flight: exactly what would be sent to PartsBox, without sending it."""
     pr = db.get(Project, project_id)
     if not pr:
         raise HTTPException(404, "Project not found")
-    # PartsBox project-box creation is wired with inventory (item 6); record the ref.
-    ref = f"PB-{project_id.upper()[:12]}"
-    _audit(db, user, "PartsBox project box created", project_id, after=ref, etype="project")
+    from services.partsbox_provisioning import plan
+    from services.partsbox_client import PartsBoxClient
+    return {"projectId": pr.id, "name": pr.name,
+            "dryRun": PartsBoxClient().dry_run, "plan": plan(pr.name)}
+
+
+@router.post("/projects/{project_id}/partsbox")
+def create_project_partsbox(project_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Provision this Project's PartsBox artifacts.
+
+    Creates the PartsBox project and a Production-tagged storage box, both named
+    with the Project's HUMAN name (`aedvdv`), never its reference (`TV-df`).
+    The third artifact — the per-project build filter — has no API and is
+    completed by a human; see services/partsbox_provisioning.
+
+    This endpoint used to be a stub: it invented a `PB-<id>` string, audited
+    "PartsBox project box created", and never called PartsBox at all. Whatever
+    actually succeeds is now persisted per artifact, so a partial provision
+    stays visibly partial instead of reporting success.
+    """
+    pr = db.get(Project, project_id)
+    if not pr:
+        raise HTTPException(404, "Project not found")
+
+    from services.partsbox_provisioning import provision, is_complete
+    result = provision(pr.name)
+
+    # Persist only ids that really came back (dry-run echoes carry none).
+    if result["project"].get("id"):
+        pr.partsbox_project_id = result["project"]["id"]
+    if result["storage"].get("id"):
+        pr.partsbox_storage_id = result["storage"]["id"]
+    pr.partsbox_error = result.get("error")
+
+    complete = is_complete(result)
+    _audit(db, user,
+           "PartsBox provisioning: " + ("project + storage ready" if complete
+                                        else f"incomplete ({result['project']['status']}/{result['storage']['status']})"),
+           project_id, after=(pr.partsbox_storage_id or result["project"]["status"]), etype="project")
     db.commit()
-    out = SR.project(pr, _users(db)); out["partsbox"] = ref
+    db.refresh(pr)
+
+    out = SR.project(pr, _users(db))
+    out["partsboxResult"] = result          # per-artifact detail for this attempt
     return out
+
+
+@router.post("/projects/{project_id}/partsbox/filter-done")
+def mark_partsbox_filter_done(project_id: str, body: dict = Body(default={}),
+                              user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Human acknowledgement that the per-project build filter was created.
+
+    PartsBox has no filter/preset API, so this is the honest alternative to
+    pretending we made one.
+    """
+    pr = db.get(Project, project_id)
+    if not pr:
+        raise HTTPException(404, "Project not found")
+    done = bool(body.get("done", True))
+    pr.partsbox_filter_done = done
+    _audit(db, user, f"PartsBox build filter marked {'done' if done else 'not done'}",
+           project_id, after="FILTER_DONE" if done else "FILTER_PENDING", etype="project")
+    db.commit(); db.refresh(pr)
+    return SR.project(pr, _users(db))
 
 
 @router.post("/collections")

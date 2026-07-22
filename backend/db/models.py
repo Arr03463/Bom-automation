@@ -180,6 +180,18 @@ class Project(Base, TimestampMixin):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(_enum(ProjectStatus), default=ProjectStatus.active.value)
 
+    # ---- PartsBox provisioning state -------------------------------------- #
+    # Persisted per artifact so a partially-provisioned Project can never look
+    # complete. Previously nothing was stored at all: the endpoint invented a
+    # "PB-..." string, returned it once, and it vanished on the next reload.
+    partsbox_project_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    partsbox_storage_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # The PartsBox API has NO filter/preset operation (UI-only feature), so the
+    # per-project build filter is completed by a human and acknowledged here.
+    partsbox_filter_done: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Last provisioning failure, surfaced in the UI so nothing fails silently.
+    partsbox_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
 
 class Bom(Base, TimestampMixin):
     __tablename__ = "boms"

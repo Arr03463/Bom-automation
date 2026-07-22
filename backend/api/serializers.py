@@ -104,13 +104,42 @@ def program(p: Program, users_by_id: dict, project_ids: list[str]) -> dict:
     }
 
 
+def project_partsbox(pr: Project) -> dict:
+    """PartsBox provisioning state for a Project, per artifact.
+
+    `created` is true only when BOTH automatable artifacts exist. The build
+    filter is tracked separately because PartsBox has no filter/preset API — it
+    is a manual step a human confirms, so `complete` (all three) is distinct
+    from `created` (the two we can automate).
+    """
+    has_project = bool(pr.partsbox_project_id)
+    has_storage = bool(pr.partsbox_storage_id)
+    created = has_project and has_storage
+    return {
+        "name": pr.name,
+        "projectId": pr.partsbox_project_id,
+        "storageId": pr.partsbox_storage_id,
+        "project": has_project, "storage": has_storage,
+        "filterDone": bool(pr.partsbox_filter_done),
+        "filterAutomatable": False,
+        "created": created,
+        "complete": created and bool(pr.partsbox_filter_done),
+        # `pending` = something was attempted and did not finish cleanly.
+        "pending": bool(pr.partsbox_error) or (has_project != has_storage),
+        "error": pr.partsbox_error,
+    }
+
+
 def project(pr: Project, users_by_id: dict) -> dict:
     return {
         "id": pr.id, "name": pr.name, "identifier": pr.identifier,
         "lead": _name(users_by_id, pr.lead_id), "program_id": pr.program_id,
         "desc": pr.description, "status": ev(pr.status), "created": rel(pr.created_at),
         "updated": rel(pr.updated_at),
-        "partsbox": None,
+        # Real, persisted PartsBox state. This was hardcoded None, so the UI
+        # could never tell a provisioned Project from an unprovisioned one and
+        # the "not tracked in PartsBox yet" banner never rendered at all.
+        "partsbox": project_partsbox(pr),
     }
 
 

@@ -52,14 +52,46 @@ function ProjectDetailScreen({ id, go, tab }) {
       <div className="page-head" style={{ marginBottom: 6 }}><div className="ph-titles">
         <button className="btn-link" style={{ marginBottom: 8 }} onClick={() => go({ screen: 'projects' })}>← PCB Projects</button>
         <div className="h1">{p.name}</div><div className="ph-sub">{p.desc} · Lead: {p.lead} · Created {window.fmtWhen(p.created)}</div></div></div>
-      {p.partsbox && !p.partsbox.created && (
-        <div className="card" style={{ padding: '11px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-raised)', border: '1px solid var(--border-soft)' }}>
-          <Icon name="box" size={16} style={{ color: p.partsbox.pending ? 'var(--danger)' : 'var(--text-muted)' }} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, fontSize: 13.5 }}>{p.partsbox.pending ? 'PartsBox creation is pending' : "This Project isn't tracked in PartsBox yet."}</div>
-            <div className="caption">{p.partsbox.pending ? 'The last attempt failed — retry to create the PartsBox project + storage location.' : 'Create a PartsBox project + storage location to track inventory for this Project.'}</div>
+      {/* PartsBox provisioning status — three artifacts, tracked separately so a
+          partial provision can never read as done. The build filter has no
+          PartsBox API (UI-only feature), so it is a manual step a human
+          confirms rather than something we pretend to automate. */}
+      {p.partsbox && !p.partsbox.complete && (
+        <div className="card" style={{ padding: '11px 14px', marginBottom: 12, background: 'var(--bg-raised)', border: `1px solid ${p.partsbox.error ? 'var(--danger)' : 'var(--border-soft)'}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Icon name="box" size={16} style={{ color: p.partsbox.error ? 'var(--danger)' : 'var(--text-muted)' }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5 }}>
+                {p.partsbox.error ? 'PartsBox provisioning is incomplete'
+                  : p.partsbox.created ? 'PartsBox project + storage ready — build filter still needed'
+                  : "This Project isn't tracked in PartsBox yet."}
+              </div>
+              <div className="caption" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 3 }}>
+                <span>{p.partsbox.project ? '✓' : '○'} Project</span>
+                <span>{p.partsbox.storage ? '✓' : '○'} Storage box (Production)</span>
+                <span>{p.partsbox.filterDone ? '✓' : '○'} Build filter</span>
+                <span className="mono">{p.partsbox.name}</span>
+              </div>
+              {p.partsbox.error && <div className="caption" style={{ color: 'var(--danger)', marginTop: 4 }}>{p.partsbox.error}</div>}
+            </div>
+            {!p.partsbox.created && (
+              <button className="btn sm primary" onClick={() => storeActions.createProjectPartsBox(id)}>
+                <Icon name={p.partsbox.pending ? 'refresh' : 'plus'} size={13} />{p.partsbox.pending ? 'Retry' : 'Create in PartsBox'}
+              </button>
+            )}
           </div>
-          <button className="btn sm primary" onClick={() => storeActions.createProjectPartsBox(id)}><Icon name={p.partsbox.pending ? 'refresh' : 'plus'} size={13} />{p.partsbox.pending ? 'Retry' : 'Create PartsBox project'}</button>
+          {p.partsbox.created && !p.partsbox.filterDone && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-soft)' }}>
+              <div className="caption" style={{ marginBottom: 6 }}>
+                PartsBox has no API for filters, so this last step is manual. In PartsBox, create a build
+                filter with <strong>location name = <span className="mono">{p.partsbox.name}</span></strong> AND
+                <strong> tags contains <span className="mono">Production</span></strong>, then confirm below.
+              </div>
+              <button className="btn sm" onClick={() => storeActions.markPartsBoxFilterDone(id, true)}>
+                <Icon name="check" size={13} />I've created the filter
+              </button>
+            </div>
+          )}
         </div>
       )}
       <div className="tabs">

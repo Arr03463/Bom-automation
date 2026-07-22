@@ -735,7 +735,19 @@ const actions = {
     try {
       let proj = await window.api.post('/projects', { name: (name || '').trim(), identifier: (identifier || '').trim(),
         program_id, desc: (description || '').trim() });
-      if (createPartsBoxNow) { try { proj = await window.api.post('/projects/' + proj.id + '/partsbox', {}); } catch (e) {} }
+      // Checkbox OFF => zero PartsBox calls. ON => provision, and surface the
+      // outcome. A swallowed error here was how a half-provisioned Project
+      // could look like a clean success.
+      if (createPartsBoxNow) {
+        try {
+          proj = await window.api.post('/projects/' + proj.id + '/partsbox', {});
+          const r = proj.partsboxResult;
+          if (r && r.dryRun) window.__toast?.('PartsBox is in DRY RUN — nothing was created. Payload logged for approval.', 'box');
+          else if (r && r.error) window.__toast?.(r.error, 'alert');
+        } catch (e) {
+          window.__toast?.('PCB Project created, but PartsBox provisioning failed — see the Project page.', 'alert');
+        }
+      }
       STATE.projects = { ...STATE.projects, [proj.id]: proj };
       const prog = (STATE.programs || []).find(p => p.id === program_id);
       if (prog) prog.projects = [...(prog.projects || []), proj.id];
@@ -746,7 +758,23 @@ const actions = {
     try {
       const proj = await window.api.post('/projects/' + projectId + '/partsbox', {});
       STATE.projects = { ...STATE.projects, [proj.id]: proj }; emit();
-    } catch (e) {}
+      const r = proj.partsboxResult;
+      if (r && r.dryRun) window.__toast?.('PartsBox is in DRY RUN — nothing was created. Payload logged for approval.', 'box');
+      else if (r && r.error) window.__toast?.(r.error, 'alert');
+      else if (proj.partsbox && proj.partsbox.created) window.__toast?.('PartsBox project + storage box ready.', 'check');
+      return proj;
+    } catch (e) {
+      window.__toast?.((e && e.message) || 'PartsBox provisioning failed.', 'alert');
+      return null;
+    }
+  },
+  /* The per-project build filter has no PartsBox API — a human creates it in
+     the PartsBox UI and confirms here. */
+  async markPartsBoxFilterDone(projectId, done = true) {
+    try {
+      const proj = await window.api.post('/projects/' + projectId + '/partsbox/filter-done', { done });
+      STATE.projects = { ...STATE.projects, [proj.id]: proj }; emit();
+    } catch (e) { window.__toast?.('Could not update the filter status.', 'alert'); }
   },
 
   /* COLLECTIONS — real create + edit (Designer; Development deferred). */

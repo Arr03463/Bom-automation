@@ -36,10 +36,21 @@ function CreateProgramModal({ onClose, go }) {
   const nameError = !nameTrim ? null : nameDup ? 'A Program with this name already exists.' : null;
   const valid = idfTrim && nameTrim && !idfDup && !nameDup && owner;
 
-  const submit = () => {
-    if (!valid) return;
-    const id = storeActions.createProgram({ identifier: idfTrim, name: nameTrim, owner, customer, description, tags: [] });
-    onClose(); go({ screen: 'programDetail', id });
+  const [busy, setBusy] = useCF(false);
+
+  /* Same unawaited-async bug as Create Project: createProgram returns a Promise,
+     which stringified into the redirect as #/programs/[object Promise]. */
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    try {
+      const id = await storeActions.createProgram({ identifier: idfTrim, name: nameTrim, owner, customer, description, tags: [] });
+      if (!id) { window.__toast?.('Could not create the Program — please try again.', 'alert'); return; }
+      onClose();
+      go({ screen: 'programDetail', id });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -71,7 +82,7 @@ function CreateProgramModal({ onClose, go }) {
         </div>
         <div className="modal-foot">
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={!valid} onClick={submit}><Icon name="plus" size={15} />Create Program</button>
+          <button className="btn primary" disabled={!valid || busy} onClick={submit}><Icon name="plus" size={15} />{busy ? 'Creating…' : 'Create Program'}</button>
         </div>
       </div>
     </div>
@@ -100,10 +111,26 @@ function CreateProjectModal({ onClose, go, onNeedProgram }) {
   const nameError = !nameTrim ? null : nameDup ? 'A Project with this name already exists.' : null;
   const valid = idfTrim && nameTrim && !nameDup && programId && lead;
 
-  const submit = () => {
-    if (!valid) return;
-    const id = storeActions.createProject({ identifier: idfTrim, name: nameTrim, lead, program_id: programId, description, createPartsBoxNow: partsBoxNow });
-    onClose(); go({ screen: 'projectDetail', id });
+  const [busy, setBusy] = useCF(false);
+
+  /* createProject is async. It was called WITHOUT await, so `id` was a Promise
+     and the redirect became #/projects/[object Promise] -> "PCB Project not
+     found". The project itself had been created correctly all along; only the
+     redirect key was wrong. Await the real id, and don't navigate on failure. */
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    try {
+      const id = await storeActions.createProject({
+        identifier: idfTrim, name: nameTrim, lead, program_id: programId,
+        description, createPartsBoxNow: partsBoxNow,
+      });
+      if (!id) { window.__toast?.('Could not create the PCB Project — please try again.', 'alert'); return; }
+      onClose();
+      go({ screen: 'projectDetail', id });
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (programs.length === 0) {
@@ -164,7 +191,7 @@ function CreateProjectModal({ onClose, go, onNeedProgram }) {
         </div>
         <div className="modal-foot">
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={!valid} onClick={submit}><Icon name="plus" size={15} />Create Project</button>
+          <button className="btn primary" disabled={!valid || busy} onClick={submit}><Icon name="plus" size={15} />{busy ? 'Creating…' : 'Create Project'}</button>
         </div>
       </div>
     </div>
