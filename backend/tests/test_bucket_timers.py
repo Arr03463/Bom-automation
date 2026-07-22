@@ -46,11 +46,45 @@ def test_countdown_actually_decreases_as_time_passes(db):
     assert second < first, "countdown is frozen — not connected to a clock"
 
 
-def test_elapsed_timer_reports_due_and_never_goes_negative(db):
+def test_an_elapsed_timer_rolls_forward_instead_of_parking_at_zero(db):
+    """The reported bug: with no scheduler consuming the boundary, an elapsed
+    anchor sat at 0s / "batch due" forever, which looks exactly like a timer
+    that was never connected to a clock."""
     _set(db, "critical", intervalMin=180,
          nextRunAt=(datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat())
     t = bt.get_timers(db)["critical"]
-    assert t["due"] is True and t["secondsRemaining"] == 0 and t["nextRunMin"] == 0
+    assert t["secondsRemaining"] > 0, "timer is stuck at zero"
+    assert t["due"] is False
+    assert t["missedRuns"] == 1
+    assert t["secondsRemaining"] <= 180 * 60
+
+
+def test_roll_forward_stays_on_the_original_cadence(db):
+    """Advance by WHOLE intervals, so a long gap doesn't drift the schedule."""
+    interval = 60
+    anchor = datetime.now(timezone.utc) - timedelta(minutes=200)   # 3 windows + 20m ago
+    _set(db, "main", intervalMin=interval, nextRunAt=anchor.isoformat())
+    t = bt.get_timers(db)["main"]
+    assert t["missedRuns"] == 4
+    delta = (datetime.fromisoformat(t["nextRunAt"]) - anchor).total_seconds() / 60
+    assert delta % interval == 0, "next run drifted off the original cadence"
+    assert 0 < t["secondsRemaining"] <= interval * 60
+
+
+def test_a_very_old_anchor_still_lands_in_the_future(db):
+    """Overnight/weekend gap must not need N iterations or produce a past time."""
+    _set(db, "main", intervalMin=360,
+         nextRunAt=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat())
+    t = bt.get_timers(db)["main"]
+    assert t["secondsRemaining"] > 0 and t["missedRuns"] > 100
+
+
+def test_roll_forward_is_persisted(db):
+    _set(db, "critical", intervalMin=30,
+         nextRunAt=(datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat())
+    first = bt.get_timers(db)["critical"]["nextRunAt"]
+    assert bt.get_timers(db)["critical"]["nextRunAt"] == first, "roll-forward not saved"
+    assert bt.get_timers(db)["critical"]["missedRuns"] == 0, "already rolled; nothing missed now"
 
 
 def test_missing_anchor_is_self_healed(db):
@@ -106,14 +140,16 @@ def test_float_minutes_are_truncated_to_a_whole_number(db):
 
 # --- flush restarts the countdown -------------------------------------------
 def test_mark_flushed_records_the_run_and_restarts_the_clock(db):
+    """A flush re-anchors from NOW (not from the rolled cadence boundary), and
+    stamps lastRunAt so the UI can show when the batch actually went out."""
     _set(db, "critical", intervalMin=30,
-         nextRunAt=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat())
-    assert bt.get_timers(db)["critical"]["due"] is True
+         nextRunAt=(datetime.now(timezone.utc) + timedelta(minutes=4)).isoformat())
+    assert bt.get_timers(db)["critical"]["lastRunAt"] is None
     bt.mark_flushed(db, "critical")
     t = bt.get_timers(db)["critical"]
-    assert t["due"] is False
     assert t["lastRunAt"] is not None
-    assert 29 * 60 <= t["secondsRemaining"] <= 30 * 60
+    assert t["due"] is False
+    assert 29 * 60 <= t["secondsRemaining"] <= 30 * 60, "did not restart a full interval"
 
 
 def test_corrupt_stored_interval_falls_back_to_the_default(db):

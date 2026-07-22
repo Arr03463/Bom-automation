@@ -113,6 +113,26 @@ def get_timers(db: Session) -> dict:
             changed = True
         last_at = _parse(s.get("lastRunAt"))
 
+        # ROLL FORWARD past any elapsed boundaries.
+        #
+        # A cadence timer must always be counting toward its NEXT run. Without
+        # this, an anchor that goes by while nothing consumes it (there is no
+        # scheduler yet — an Admin clicks Flush now) parks at zero and reads
+        # "batch due" forever, which is indistinguishable from a timer that was
+        # never wired to a clock at all.
+        #
+        # Advance by WHOLE intervals rather than resetting to now+interval, so
+        # the cadence stays aligned to its original schedule instead of drifting
+        # by however long the app happened to be closed. missedRuns keeps that
+        # honest: it says how many windows elapsed without a flush.
+        missed = 0
+        if next_at <= now:
+            step = timedelta(minutes=interval)
+            elapsed = (now - next_at).total_seconds()
+            missed = int(elapsed // step.total_seconds()) + 1
+            next_at = next_at + step * missed
+            changed = True
+
         remaining = (next_at - now).total_seconds()
         s.update({"intervalMin": interval, "nextRunAt": _iso(next_at), "lastRunAt": _iso(last_at)})
         value[stream] = s
@@ -124,7 +144,10 @@ def get_timers(db: Session) -> dict:
             # UI contract (it renders `next batch in {fmtC(nextRunMin)}`).
             "secondsRemaining": max(0, int(remaining)),
             "nextRunMin": max(0, int(remaining // 60)),
+            # `due` is now the boundary instant itself, not a stuck state. A
+            # scheduler would act on it; today it is informational.
             "due": remaining <= 0,
+            "missedRuns": missed,
             "writing": False,
         }
 
