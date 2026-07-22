@@ -385,6 +385,48 @@ def edit_bom_line(bom_id: str, no: int, body: dict = Body(...), user: User = Dep
     return get_bom_full(db, bom_id)
 
 
+@router.post("/boms/{bom_id}/partsbox")
+def create_bom_partsbox(bom_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Create the Project's PartsBox box and import this BOM's lines into it.
+
+    Backs "Create PartsBox project & import" on the procurement package. That
+    button previously ran a 1100ms setTimeout in the browser and set a fake
+    `PB-<id>` string in memory — no request ever left the app, which is why
+    nothing appeared in PartsBox.
+    """
+    bom = db.get(Bom, bom_id)
+    if not bom:
+        raise HTTPException(404, "BOM not found")
+    project = db.get(Project, bom.project_id) if bom.project_id else None
+    if not project:
+        raise HTTPException(400, "This BOM has no PCB Project, so there is no PartsBox box to create.")
+    lines = sorted(bom.lines, key=lambda x: x.line_no)
+    if not lines:
+        raise HTTPException(400, "This BOM has no line items to import.")
+
+    from services.partsbox_provisioning import provision_bom, is_complete
+    result = provision_bom(project.name, lines)
+
+    # Persist what actually exists, on both the Project and the BOM.
+    if result["project"].get("id"):
+        project.partsbox_project_id = result["project"]["id"]
+        bom.partsbox_ref = result["project"]["id"]
+    if result["storage"].get("id"):
+        project.partsbox_storage_id = result["storage"]["id"]
+    project.partsbox_error = result.get("error")
+
+    ok = is_complete(result) and result["entries"]["status"] == "added"
+    _audit(db, user,
+           f"PartsBox import: {result['entriesAdded']} entries" if ok
+           else f"PartsBox import incomplete ({result['entries']['status']})",
+           bom_id, before="—", after=(result["project"].get("id") or result["entries"]["status"]),
+           etype="bom")
+    db.commit()
+
+    return {"bom": get_bom_full(db, bom_id), "project": SR.project(project, _users(db)),
+            "partsboxResult": result}
+
+
 @router.post("/boms/{bom_id}/submit")
 def submit_bom(bom_id: str, body: dict = Body(...), user: User = Depends(require_user), db: Session = Depends(get_db)):
     bom = db.get(Bom, bom_id)

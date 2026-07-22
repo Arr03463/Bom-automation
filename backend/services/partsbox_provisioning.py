@@ -145,3 +145,70 @@ def is_complete(result: dict) -> bool:
     ok = ("created", "exists")
     return (result.get("project", {}).get("status") in ok
             and result.get("storage", {}).get("status") in ok)
+
+
+# --------------------------------------------------------------------------- #
+# BOM -> PartsBox project entries (the "Create PartsBox project & import" step)
+# --------------------------------------------------------------------------- #
+def provision_bom(project_name: str, lines, client: PartsBoxClient | None = None) -> dict:
+    """Provision the Project's PartsBox box, then import the BOM lines into it.
+
+    The whole matching/entry-building pipeline is the POC's, already ported to
+    services/partsbox_project_builder (build_project_entries ->
+    find_part_by_mpn_and_manufacturer -> project/add-entries). This wires it to
+    a real Project + storage box and reports what actually happened.
+
+    Replaces a pure client-side illusion: the UI ran a 1100ms setTimeout, set
+    `bom.partsbox = "PB-052"` in browser memory, and displayed the BOM's own
+    line count as "N lines imported". Nothing was ever sent to PartsBox.
+
+    One box per PCB Project (CLAUDE.md), so the PartsBox project is named after
+    the Project, not the BOM — re-importing a revised BOM reuses the same box.
+    """
+    from services.partsbox_project_builder import build_project_entries
+
+    client = client or PartsBoxClient()
+    result = provision(project_name, client=client)
+    result["entriesAdded"] = 0
+    result["unmatched"] = 0
+    result["entries"] = {"status": "pending"}
+    result["url"] = client.project_web_url(result["project"].get("id"))
+
+    project_id = result["project"].get("id")
+    if not project_id:
+        # Dry run, or the project step failed — never claim an import.
+        result["entries"]["status"] = "dry_run" if result.get("dryRun") else "skipped"
+        return result
+
+    try:
+        import pandas as pd
+        df = pd.DataFrame([{
+            "mpn": (l.mpn or ""),
+            "manufacturer": (l.mfr or ""),
+            "description": (l.description or ""),
+            # The POC's quantity rule reads qty_per_board; a BOM line's qty IS
+            # the per-board quantity.
+            "qty_per_board": l.qty,
+            "designators": getattr(l, "designators", "") or "",
+        } for l in lines])
+
+        entries, unmatched_rows = build_project_entries(df, client)
+        entries = [e for e in entries if e]
+        result["unmatched"] = len(unmatched_rows)
+
+        if not entries:
+            result["entries"]["status"] = "empty"
+            return result
+
+        resp = client.add_project_entries(project_id, entries)
+        if _is_dry(resp):
+            result["entries"]["status"] = "dry_run"
+        else:
+            result["entries"]["status"] = "added"
+            result["entriesAdded"] = len(entries)
+    except Exception as exc:
+        log.warning("PartsBox entry import failed for %r: %s", project_name, exc)
+        result["entries"]["status"] = "failed"
+        result["error"] = f"PartsBox line import failed: {exc}"
+
+    return result

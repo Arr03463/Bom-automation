@@ -141,10 +141,26 @@ function ProcurementPackageScreen({ id, go }) {
   const [sendOpen, setSendOpen] = useStateRes(false);
   const [cart, setCart] = useStateRes(null);
   const [cartLoading, setCartLoading] = useStateRes(false);
+  const [pbRes, setPbRes] = useStateRes(null);   // real provisioning result
+  const [pbErr, setPbErr] = useStateRes('');
   if (!b) return <div className="page"><EmptyState icon="boms" title="BOM not found." /></div>;
   const m = bomMeta(b);
   const projName = (PROJECTS[b.project] || ((window.getState && window.getState().projects) || {})[b.project] || {}).name || 'Other';
-  const createPB = () => { setPb('creating'); setTimeout(() => { storeActions.createPackage(b.id); setPb('created'); }, 1100); };
+  /* Real provisioning. This was a 1100ms setTimeout that flipped to "created"
+     and wrote a fake PB-<id> into browser memory — it never called PartsBox,
+     which is why nothing ever appeared there. */
+  const createPB = async () => {
+    setPb('creating'); setPbErr(''); setPbRes(null);
+    const res = await storeActions.createPackage(b.id);
+    setPbRes(res);
+    const entries = res && res.entries && res.entries.status;
+    if (!res || res.error || entries === 'failed') {
+      setPbErr((res && res.error) || 'PartsBox did not confirm the import.');
+      setPb('failed');
+    } else {
+      setPb('created');
+    }
+  };
   const submit = async (n) => { await storeActions.submitBomToPurchasing(b.id, n != null ? n : note); go({ screen: 'p.bomOverview', id: b.id }); };
   const buildCart = async () => { setCartLoading(true); const p = await storeActions.buildCartPreview(b.id); setCart(p); setCartLoading(false); };
 
@@ -161,14 +177,40 @@ function ProcurementPackageScreen({ id, go }) {
                 <button className="btn primary" onClick={createPB}><Icon name="plus" size={15} />Create PartsBox project & import</button>
               </>}
               {pb === 'creating' && <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="spinner" /><span>Creating PartsBox project and importing {m.lines} lines…</span></div>}
-              {pb === 'created' && <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-                <div className="attn-icon" style={{ background: 'var(--success-soft)', color: 'var(--success)' }}><Icon name="check" size={18} /></div>
-                <div style={{ flex: 1 }}><div style={{ fontWeight: 600 }}>PartsBox project created</div><div className="caption mono">{b.partsbox || 'PB-' + b.id.replace('BOM-', '')} · {m.lines} lines imported</div></div>
-                <a className="btn ghost sm" href="#" onClick={e => e.preventDefault()}><Icon name="external" size={14} />Open</a>
-              </div>}
+              {pb === 'created' && (() => {
+                const st = (pbRes && pbRes.entries && pbRes.entries.status) || 'added';
+                const dry = st === 'dry_run' || (pbRes && pbRes.dryRun);
+                const added = (pbRes && pbRes.entriesAdded) || 0;
+                const unmatched = (pbRes && pbRes.unmatched) || 0;
+                const url = pbRes && pbRes.url;
+                return (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                      <div className="attn-icon" style={{ background: dry ? 'var(--warning-soft)' : 'var(--success-soft)', color: dry ? 'var(--warning)' : 'var(--success)' }}>
+                        <Icon name={dry ? 'alert' : 'check'} size={18} /></div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600 }}>{dry ? 'Dry run — nothing was written to PartsBox' : 'PartsBox project created'}</div>
+                        {/* Real ids and real counts from the API response. The
+                            old card showed the BOM's own line count as "imported". */}
+                        <div className="caption mono">{(b.partsbox || (pbRes && pbRes.project && pbRes.project.id)) || '—'}
+                          {dry ? ' · import previewed' : ` · ${added} ${added === 1 ? 'entry' : 'entries'} imported`}</div>
+                      </div>
+                      {url && !dry
+                        ? <a className="btn ghost sm" href={url} target="_blank" rel="noopener noreferrer"><Icon name="external" size={14} />Open</a>
+                        : null}
+                    </div>
+                    {unmatched > 0 && !dry && (
+                      <div className="caption" style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                        <Icon name="alert" size={13} style={{ color: 'var(--warning)', marginTop: 1 }} />
+                        {unmatched} line{unmatched === 1 ? '' : 's'} had no matching PartsBox part and were imported as unmatched entries — match them in PartsBox.
+                      </div>
+                    )}
+                    {dry && <div className="caption" style={{ marginTop: 8 }}>Set <span className="mono">PARTSBOX_DRY_RUN=false</span> to write for real.</div>}
+                  </>
+                );
+              })()}
               {pb === 'failed' && <Banner kind="danger" icon="x" title="PartsBox import failed"
-                actions={<button className="btn sm" onClick={createPB}>Retry</button>}>The PartsBox API returned an error (503). You can retry, or download the BOM as CSV and import manually.</Banner>}
-              {pb !== 'failed' && pb !== 'idle' && <button className="btn-link" style={{ marginTop: 10 }} onClick={() => setPb('failed')}>Simulate failure</button>}
+                actions={<button className="btn sm" onClick={createPB}>Retry</button>}>{pbErr || 'The PartsBox API returned an error.'} You can retry, or download the BOM as CSV and import manually.</Banner>}
             </div>
           </div>
           <BomTable items={b.items} editable={false} showSource defaultSort={{ col: 'ext', dir: -1 }} maxHeight={360} />

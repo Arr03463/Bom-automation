@@ -397,9 +397,18 @@ const actions = {
       STATE.boms = STATE.boms.map(b => b.id === updated.id ? updated : b); emit();
     } catch (e) {}
   },
+  /* Create the Project's PartsBox box and import this BOM's lines.
+     This used to fabricate `PB-<id>` in memory and call nothing. */
   async createPackage(bomId) {
-    // PartsBox project box is created with inventory wiring; record the ref for now.
-    const bom = STATE.boms.find(b => b.id === bomId); if (bom) { bom.partsbox = 'PB-' + bom.id.replace('BOM-', ''); emit(); }
+    try {
+      const res = await window.api.post('/boms/' + bomId + '/partsbox', {});
+      STATE.boms = STATE.boms.map(b => b.id === res.bom.id ? res.bom : b);
+      if (res.project) STATE.projects = { ...STATE.projects, [res.project.id]: res.project };
+      emit();
+      return res.partsboxResult || null;
+    } catch (e) {
+      return { error: (e && e.message) || 'PartsBox import failed.', entries: { status: 'failed' } };
+    }
   },
   async submitBomToPurchasing(bomId, note, critical) {
     try {

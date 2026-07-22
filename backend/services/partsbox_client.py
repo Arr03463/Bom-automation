@@ -290,6 +290,16 @@ class PartsBoxClient:
             return None
         return f"{self._web_base()}/builds/{build_id}"
 
+    def project_web_url(self, project_id):
+        """Open a project in the PartsBox web app.
+
+        Backs the "Open" affordance on the procurement package, which rendered
+        as href="#" with preventDefault — it looked like a link and did nothing.
+        """
+        if not project_id:
+            return None
+        return f"{self._web_base()}/projects/{project_id}"
+
     def part_web_url(self, part_id):
         """Open a part in the PartsBox web app.
 
