@@ -329,6 +329,54 @@ function SupplierConfig() {
 }
 
 /* ---- System Settings ---- */
+/* One bucket stream's cadence + manual flush.
+   Commits on blur/Enter rather than on every keystroke: the interval now
+   PERSISTS to the backend, and firing a PATCH per character would write "3",
+   "36", "360" in sequence and re-anchor the countdown three times. The server
+   is authoritative — an out-of-range value is rejected (Bounded Admin) and the
+   input snaps back to the accepted value instead of showing a number that was
+   never saved. */
+function BatchTimerRow({ stream, cfg }) {
+  const label = stream === 'critical' ? 'Critical' : 'Main';
+  const [draft, setDraft] = useStateAdm(String(cfg.intervalMin));
+  const [err, setErr] = useStateAdm(null);
+  const [busy, setBusy] = useStateAdm(false);
+
+  // Follow the store when the server value changes (another admin, or a reload).
+  React.useEffect(() => { setDraft(String(cfg.intervalMin)); }, [cfg.intervalMin]);
+
+  const commit = async () => {
+    const n = parseInt(draft, 10);
+    if (!Number.isFinite(n) || n === cfg.intervalMin) { setDraft(String(cfg.intervalMin)); setErr(null); return; }
+    setBusy(true);
+    const res = await storeActions.setBatchInterval(stream, n);
+    setBusy(false);
+    if (!res || !res.ok) { setErr((res && res.error) || 'Not saved.'); setDraft(String(cfg.intervalMin)); }
+    else setErr(null);
+  };
+
+  const nextAt = cfg.nextRunAt ? new Date(cfg.nextRunAt).toLocaleString() : null;
+  return (
+    <ConfigRow label={`${label} bucket interval`}
+      sub={`How often ${label} requests batch to the Daily Purchasing List · every ${Math.round(cfg.intervalMin / 60 * 10) / 10}h`
+           + (nextAt ? ` · next run ${nextAt}` : '')}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input className="input" style={{ width: 90 }} type="number" min="5" max="1440" step="5"
+          value={draft} disabled={busy}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+        <span className="caption">min</span>
+        <button className="btn sm ghost" disabled={busy || cfg.writing}
+          onClick={() => storeActions.flushBucket(stream)}
+          title="Manual escape hatch — run the batch now (audit-logged)">
+          <Icon name="refresh" size={13} />{cfg.writing ? 'Flushing…' : 'Flush now'}</button>
+        {err && <span className="caption" style={{ color: 'var(--danger)' }}>{err}</span>}
+      </div>
+    </ConfigRow>
+  );
+}
+
 function SystemSettings() {
   const st = useStore(s => s.system.settings);
   const batch = useStore(s => s.system.batch);
@@ -339,20 +387,8 @@ function SystemSettings() {
       {/* Purchasing bucket batch cadences — both Admin-configurable, never hard-coded (v2). */}
       <div className="h2" style={{ margin: '4px 0 8px' }}>Purchasing batch timers</div>
       <div className="card" style={{ marginBottom: 20 }}>
-        <ConfigRow label="Critical bucket interval" sub={`How often Critical requests batch to the Daily Purchasing List · currently every ${Math.round(batch.critical.intervalMin / 60 * 10) / 10}h`}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input className="input" style={{ width: 90 }} type="number" min="5" step="5" value={batch.critical.intervalMin} onChange={e => storeActions.setBatchInterval('critical', +e.target.value)} />
-            <span className="caption">min</span>
-            <button className="btn sm ghost" onClick={() => storeActions.flushBucket('critical')} title="Manual escape hatch — run the batch now"><Icon name="refresh" size={13} />Flush now</button>
-          </div>
-        </ConfigRow>
-        <ConfigRow label="Main bucket interval" sub={`How often Main requests batch to the Daily Purchasing List · currently every ${Math.round(batch.main.intervalMin / 60 * 10) / 10}h`}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input className="input" style={{ width: 90 }} type="number" min="5" step="5" value={batch.main.intervalMin} onChange={e => storeActions.setBatchInterval('main', +e.target.value)} />
-            <span className="caption">min</span>
-            <button className="btn sm ghost" onClick={() => storeActions.flushBucket('main')} title="Manual escape hatch — run the batch now"><Icon name="refresh" size={13} />Flush now</button>
-          </div>
-        </ConfigRow>
+        <BatchTimerRow stream="critical" cfg={batch.critical} />
+        <BatchTimerRow stream="main" cfg={batch.main} />
         <div className="cfg-row" style={{ color: 'var(--text-muted)' }}><Icon name="info" size={14} /><span className="caption">Writes are atomic — a batch completes fully or rolls back, never interleaves, and never leaves a half-written row on the sheet. A failed batch surfaces to the Admin Dashboard and retries on the next run.</span></div>
       </div>
 

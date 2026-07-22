@@ -22,6 +22,33 @@ function partRows(requests) {
 
 const fmtC = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 
+/* Live countdown off the server's ABSOLUTE nextRunAt anchor.
+   The old display read a stored `nextRunMin` number that nothing ever
+   decremented, so "next batch in 2h 22m" sat frozen forever. Deriving from an
+   absolute instant means every tab agrees, and it stays correct across reloads
+   and sleeps instead of drifting. */
+function useCountdown(nextRunAt) {
+  const [, tick] = useStateEmb(0);
+  useEffEmb(() => {
+    if (!nextRunAt) return undefined;
+    const id = setInterval(() => tick(n => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [nextRunAt]);
+  if (!nextRunAt) return null;
+  return Math.max(0, Math.round((new Date(nextRunAt).getTime() - Date.now()) / 1000));
+}
+
+/* Seconds -> a countdown that visibly moves: mm:ss under an hour, Hh Mm above. */
+function fmtCountdown(sec) {
+  if (sec == null) return '—';
+  if (sec <= 0) return 'due now';
+  if (sec >= 3600) {
+    const h = Math.floor(sec / 3600);
+    return `${h}h ${Math.floor((sec % 3600) / 60)}m`;
+  }
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+}
+
 /* Safe project-name lookup: static catalog, then the live store, then 'Other'
    (a Collection/Request may be Program-bound with no Project). */
 function projName(pid) {
@@ -103,15 +130,22 @@ function EmbeddedPurchasing({ go, focusReq }) {
 
 function BucketSection({ critical, parts, cfg, mode, flashReq }) {
   const HEADERS = <tr><th>Part</th><th>CPN</th><th>Project</th>{mode === 'full' && <th>Requester</th>}<th>Supplier</th><th className="num">Qty</th><th className="num">Est. cost</th><th>Submitted</th></tr>;
+  const secs = useCountdown(cfg.nextRunAt);
+  // Fall back to the server's minute figure only when no anchor is present.
+  const label = cfg.nextRunAt ? fmtCountdown(secs) : fmtC(cfg.nextRunMin || 0);
+  const due = cfg.nextRunAt ? secs <= 0 : false;
   return (
     <div className="obs-section">
       <div className={`bucket-head${critical ? ' critical' : ''}`}>
         <span className="bucket-flag"><Icon name={critical ? 'alert' : 'layers'} size={14} />{critical ? 'CRITICAL' : 'MAIN BUCKET'}</span>
         <span className="bucket-count">{parts.length} part{parts.length === 1 ? '' : 's'}</span>
-        <span className="batch-timer"><Icon name="clock" size={13} />next batch in {fmtC(cfg.nextRunMin)}</span>
+        <span className="batch-timer" title={cfg.nextRunAt ? `Next batch at ${new Date(cfg.nextRunAt).toLocaleString()}` : undefined}>
+          {cfg.writing ? <span className="spinner" style={{ width: 13, height: 13 }} /> : <Icon name="clock" size={13} />}
+          {cfg.writing ? 'flushing…' : due ? 'batch due' : `next batch in ${label}`}
+        </span>
       </div>
       {parts.length === 0 ? (
-        <div className={`bucket-empty${critical ? ' critical' : ''}`}>No parts in {critical ? 'Critical' : 'Main'} bucket. Next batch in {fmtC(cfg.nextRunMin)}.</div>
+        <div className={`bucket-empty${critical ? ' critical' : ''}`}>No parts in {critical ? 'Critical' : 'Main'} bucket. {due ? 'Batch is due.' : `Next batch in ${label}.`}</div>
       ) : (
         <div className="tbl-wrap flow"><table className="bom"><thead>{HEADERS}</thead><tbody>
           {parts.map(p => (

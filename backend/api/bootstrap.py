@@ -21,6 +21,7 @@ from db.models import (
     Notification, Program, Project, Pushback, Request, Supplier, User,
 )
 from db.session import get_db
+from services.bucket_timers import get_timers
 
 router = APIRouter(tags=["bootstrap"])
 
@@ -29,10 +30,9 @@ def _config_map(db: Session) -> dict:
     return {c.key: (c.value or {}) for c in db.query(Configuration).all()}
 
 
-def _system(cfg: dict) -> dict:
+def _system(cfg: dict, timers: dict) -> dict:
     workflow = cfg.get("workflow", {})
     settings_cfg = cfg.get("system", {})
-    batch = cfg.get("batch", {"main": {"intervalMin": 360}, "critical": {"intervalMin": 180}})
     return {
         "status": [
             {"id": "app", "label": "Application", "state": "green", "detail": "All services operational"},
@@ -55,12 +55,9 @@ def _system(cfg: dict) -> dict:
             "defaultRole": None,
             "mfa": settings_cfg.get("mfa", False),
         },
-        "batch": {
-            "main": {"intervalMin": batch.get("main", {}).get("intervalMin", 360),
-                     "nextRunMin": 142, "lastRun": "2h ago", "writing": False},
-            "critical": {"intervalMin": batch.get("critical", {}).get("intervalMin", 180),
-                         "nextRunMin": 47, "lastRun": "2h ago", "writing": False},
-        },
+        # Real timers, computed against the clock in services.bucket_timers.
+        # This used to be `nextRunMin: 142` / `47` — literals that never moved.
+        "batch": timers,
         "jobs": [],
         "stuck": [],
     }
@@ -135,7 +132,7 @@ def bootstrap(user: User = Depends(require_user), db: Session = Depends(get_db))
         "notifications": notifications_out,
         "suppliers": suppliers_out,
         "audit": audit_out,
-        "system": _system(cfg),
+        "system": _system(cfg, get_timers(db)),
         "inventory": [],          # PartsBox hydration wired in a later step
         "investigations": [], "recommendations": [], "reworks": [], "firmwares": [],
         "comments": {}, "datasheets": {},

@@ -75,15 +75,44 @@ def flush_bucket(body: dict = Body(...), user: User = Depends(require_user), db:
     return result
 
 
+@router.patch("/purchasing/timers/{stream}")
+def set_timer(stream: str, body: dict = Body(...), user: User = Depends(require_user),
+              db: Session = Depends(get_db)):
+    """Admin sets a stream's batch cadence (Bounded Admin: validated integer
+    minutes within range, never silently coerced). Persists and RE-ANCHORS the
+    countdown, so the change is visible immediately and survives a reload."""
+    if "admin" not in (user.roles or []):
+        raise HTTPException(403, "Admin only")
+    from services.bucket_timers import set_interval
+    try:
+        updated = set_interval(db, stream, body.get("intervalMin"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    from datetime import datetime, timezone
+    import uuid
+    from db.models import Audit
+    db.add(Audit(id=f"au-timer-{uuid.uuid4().hex[:10]}",
+                 ts="Today " + datetime.now(timezone.utc).strftime("%H:%M"), actor_id=user.id,
+                 role="admin", action=f"{stream.capitalize()} batch interval set to "
+                                      f"{updated['intervalMin']}m",
+                 entity_id="purchasing-bucket", entity_type="config",
+                 before="—", after=f"{updated['intervalMin']}m"))
+    db.commit()
+    return {"stream": stream, **updated}
+
+
 @router.get("/purchasing/flush/status")
 def flush_status(user: User = Depends(require_user), db: Session = Depends(get_db)):
     """Flush-mode visibility: the one switch + queued counts + legacy flags."""
     from db.models import Request
     counts = {s: db.query(Request).filter(Request.bucket_state == st).count()
               for s, st in (("critical", "QUEUED_CRITICAL"), ("main", "QUEUED_MAIN"))}
+    from services.bucket_timers import get_timers
     return {"flushMode": settings.flush_mode, "live": settings.flush_live,
             "queued": counts, "legacyFlags": settings.legacy_flush_flags,
-            "sheet": "live" if settings.graph_enabled else "console-fallback"}
+            "sheet": "live" if settings.graph_enabled else "console-fallback",
+            "timers": get_timers(db)}
 
 
 @router.get("/system/status")

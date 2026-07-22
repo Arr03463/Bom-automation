@@ -507,21 +507,44 @@ const actions = {
     if (STATE.system[grp]) { STATE.system[grp][key] = value; emit(); }   // optimistic UI mirror
     try { await window.api.patch('/config', { section: grp, key: grp, value: { [key]: value } }); } catch (e) {}
   },
-  /* v2 bucket batching — Admin sets each stream's cadence; both are configurable, never hard-coded. */
-  setBatchInterval(stream, min) {
-    const b = STATE.system.batch[stream]; if (!b) return;
-    const before = b.intervalMin;
-    b.intervalMin = Math.max(5, min | 0);
-    b.nextRunMin = Math.min(b.nextRunMin, b.intervalMin);
-    pushAudit({ action: `${stream === 'critical' ? 'Critical' : 'Main'} batch interval changed`, entity: 'system-batch', before: `${before}m`, after: `${b.intervalMin}m` });
-    emit();
+  /* v2 bucket batching — Admin sets each stream's cadence; both are configurable,
+     never hard-coded. This PERSISTS: it used to mutate client memory only, so the
+     new interval vanished on reload and never reached the backend at all. */
+  async setBatchInterval(stream, min) {
+    const b = STATE.system.batch[stream]; if (!b) return { ok: false };
+    try {
+      const t = await window.api.patch('/purchasing/timers/' + stream, { intervalMin: min | 0 });
+      STATE.system.batch[stream] = { ...b, ...t };   // authoritative server state
+      emit();
+      return { ok: true };
+    } catch (e) {
+      // Bounded Admin: the server rejects an out-of-range value; surface it
+      // instead of leaving the input showing a number that was never accepted.
+      return { ok: false, error: (e && e.message) || 'Could not update the interval.' };
+    }
   },
-  flushBucket(stream) {
-    const b = STATE.system.batch[stream]; if (!b) return;
-    b.nextRunMin = 0; b.lastRun = 'just now';
-    pushAudit({ action: `${stream === 'critical' ? 'Critical' : 'Main'} bucket flushed manually`, entity: 'system-batch', before: '—', after: 'FLUSHED' });
+  /* Manual flush escape hatch. Previously this only moved a fake counter and
+     never called the backend — the button looked live and did nothing. */
+  async flushBucket(stream) {
+    STATE.system.batch[stream] = { ...(STATE.system.batch[stream] || {}), writing: true };
     emit();
-    setTimeout(() => { b.nextRunMin = b.intervalMin; emit(); }, 50);
+    try {
+      const res = await window.api.post('/purchasing/flush', { stream });
+      await actions.refreshTimers();
+      return { ok: true, result: res };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || 'Flush failed.' };
+    } finally {
+      const b = STATE.system.batch[stream];
+      if (b) { STATE.system.batch[stream] = { ...b, writing: false }; emit(); }
+    }
+  },
+  /* Re-read the clock-anchored timers from the server. */
+  async refreshTimers() {
+    try {
+      const s = await window.api.get('/purchasing/flush/status');
+      if (s && s.timers) { STATE.system.batch = { ...STATE.system.batch, ...s.timers }; emit(); }
+    } catch (e) { /* keep the last known anchors */ }
   },
   adminOverride(entity, after, reason) {
     pushAudit({ action: 'ADMIN OVERRIDE — ' + reason, entity, before: 'LOCKED', after });

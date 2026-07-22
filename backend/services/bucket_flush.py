@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from config import settings
 from db.models import Batch, Request
 from services import flush_mapping
+from services.bucket_timers import mark_flushed
 from services.digikey_mylists_client import DigiKeyMyListsClient, build_digikey_mylists_parts
 from services.mouser_cart_client import MouserCartClient, build_mouser_cart_items
 from services.purchasing_sheet_writer import write_batch
@@ -173,6 +174,10 @@ def flush_stream(db: Session, stream: str, dry_run: bool | None = None, actor_id
     for r in requests:
         r.bucket_state = "WRITTEN"
     db.commit()
+    # Restart this stream's countdown from now — a flush IS the timer's event,
+    # so the clock has to reset here or the UI keeps counting toward a run that
+    # already happened.
+    mark_flushed(db, stream)
 
     log.info("flush %s: %d row(s) written (dry_run=%s), batches=%s", stream, sheet["written"], dry_run, batch_ids)
     return {"stream": stream, "dryRun": dry_run, "status": "written", "written": sheet["written"],
