@@ -71,6 +71,13 @@ function EmbeddedPurchasing({ go, focusReq }) {
   const focusReqObj = focusReq ? requests.find(r => r.id === focusReq) : null;
   const focusInArchive = !!focusReqObj && (focusReqObj.bucketState === 'WRITTEN' || focusReqObj.bucketState === 'PURCHASED');
   const [tab, setTab] = useStateEmb(() => focusInArchive ? 'archive' : 'buckets');
+  /* Re-aim the tab when the deep-linked request changes. The initializer above
+     is lazy — it runs once on mount — so following a second "View in Purchasing"
+     link without leaving the page left you on the previous request's tab (e.g.
+     stuck on "Sent to sheet" for a request still sitting in a live bucket). */
+  useEffEmb(() => {
+    if (focusReq) setTab(focusInArchive ? 'archive' : 'buckets');
+  }, [focusReq, focusInArchive]);
   const setModeP = (m) => { setMode(m); sessionStorage.setItem('autobom.purchasing.mode', m); };
 
   const mine = (r) => r.from === (me && me.name);

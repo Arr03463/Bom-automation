@@ -388,7 +388,15 @@ function CollectionDetailScreen({ id, collection, go, onSubmitOrder }) {
         <CommentThread entityId={c.id} />
       </div>
 
-      {panel && <RequestToOrder collection={c} onClose={() => setPanel(false)} onConfirm={(note, critical) => { setPanel(false); onSubmitOrder(c.id, note, critical); }} />}
+      {/* onSubmitOrder was a prop no caller ever passed (app.jsx renders this
+          with { id } only), so confirming the modal threw
+          "onSubmitOrder is not a function" and the request was never submitted.
+          Call the real store action; keep the prop as an optional override. */}
+      {panel && <RequestToOrder collection={c} onClose={() => setPanel(false)}
+        onConfirm={(note, critical) => {
+          setPanel(false);
+          (onSubmitOrder || storeActions.requestToOrder)(c.id, note, critical);
+        }} />}
       <AddPartDrawer open={addOpen} onClose={() => setAddOpen(false)} collectionId={c.id} kind={c.kind || c.role} />
     </div>
   );

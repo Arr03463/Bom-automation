@@ -66,7 +66,10 @@ function search(query, includeSuppliers) {
   for (const p of inv) {
     const exact = eq(p.mpn, q);
     if (exact || has(`${p.mpn} ${p.mfr || ''} ${p.desc || ''} ${p.cat || ''}`, q))
-      invHits.push({ kind: 'invpart', id: p.mpn, mpn: p.mpn, mfr: p.mfr, desc: p.desc, onHand: p.onHand, low: p.low, locations: p.locations || [], tags: p.tags || [], rank: exact ? 1 : has(p.mpn, q) ? 4 : 5 });
+      // id feeds the React key (`invpart:<id>`). PartsBox legitimately holds
+      // several part records per MPN, so keying on mpn produced duplicate keys
+      // and risked rows being dropped or reused. p.id is unique per record.
+      invHits.push({ kind: 'invpart', id: p.id || p.mpn, mpn: p.mpn, mfr: p.mfr, desc: p.desc, onHand: p.onHand, low: p.low, locations: p.locations || [], tags: p.tags || [], rank: exact ? 1 : has(p.mpn, q) ? 4 : 5 });
   }
   invHits.sort((a, b) => a.rank - b.rank);
 

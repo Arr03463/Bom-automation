@@ -60,15 +60,24 @@ function AuthedApp() {
 
      Comparing identity against a ref cannot fix this: logOut() flips authed to
      false, which UNMOUNTS AuthedApp and destroys the ref, so the new identity
-     looks unchanged on remount. Enforce the actual invariant instead — never
-     render a screen belonging to a role this user does not hold — which is
-     correct on remount, on identity change, and on a hand-edited URL.
-     Prefix-less shared screens (Purchasing, Inventory, Projects, Programs)
-     return null and are left alone, as is the multi-role view-as switching. */
+     looks unchanged on remount.
+
+     Scope matters. An earlier version of this guard redirected away from ANY
+     screen whose role the user did not hold — which broke cross-role
+     navigation the prototype depends on: a Designer opening a BOM
+     (p.bomOverview) got bounced straight back to #/designer, so BOM links from
+     Projects and from search appeared to lead to the Dashboard. Designers must
+     be able to open a BOM; that is how a Push-Back gets resolved.
+
+     So only role HOME screens are guarded. Landing on another role's dashboard
+     is the stale-hash symptom; landing on another role's detail screen is
+     deliberate. Prefix-less shared screens (Purchasing, Inventory, Projects,
+     Programs) are untouched either way. */
   useEffect(() => {
     const need = screenRole(route.screen);
+    const isRoleHome = need && ROLE_META[need] && ROLE_META[need].home === route.screen;
     const roles = (user && user.roles) || [];
-    if (need && roles.length && !roles.includes(need)) {
+    if (isRoleHome && roles.length && !roles.includes(need)) {
       navigate({ screen: roleHome }, true);   // replace: no bogus history entry
     }
   }, [route.screen, user, roleHome]);
@@ -157,7 +166,12 @@ function AuthedApp() {
       case 'a.configuration': return S('AdminConfiguration', { tab: route.tab });
       case 'a.forceWaivers': return S('ForceWaiversLog');
       case 'a.audit': return S('AuditLog');
-      case 'purchasingEmbed': return S('EmbeddedPurchasing', { req: route.req, tab: route.tab });
+      // EmbeddedPurchasing's prop is `focusReq`; passing `req`/`tab` left it
+      // undefined, so "View in Purchasing" deep links (#/purchasing-view?tab=REQ-009)
+      // were silently ignored and landed on the generic buckets view.
+      // Request ids ride in `tab` per routeForHit() in search.jsx; a real tab
+      // name ('buckets'/'archive') simply won't match a request and is ignored.
+      case 'purchasingEmbed': return S('EmbeddedPurchasing', { focusReq: route.req || route.tab });
       case 'inventoryEmbed': return S('EmbeddedInventory');
       case 'receiving': return S('ReceivingScreen');
       // StorageDetailScreen's prop is `id`; passing `loc` made every
