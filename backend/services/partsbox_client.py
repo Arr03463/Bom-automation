@@ -270,7 +270,19 @@ class PartsBoxClient:
 
     @staticmethod
     def _web_base():
-        return os.getenv("PARTSBOX_WEB_URL", "https://partsbox.com").strip().rstrip("/")
+        """Host + WORKSPACE SLUG for deep links into the PartsBox web app.
+
+        The slug is load-bearing, not decoration. Without it, /parts/<id>
+        resolves against whatever workspace the VIEWER's PartsBox session
+        happens to have selected; if that is not ours, PartsBox cannot find the
+        part and drops the user on that other workspace's generic parts list.
+        Every user's session can default somewhere different, so an unslugged
+        link is only correct by luck. Pinning the workspace makes the link
+        resolve to the same part for everyone.
+        """
+        host = os.getenv("PARTSBOX_WEB_URL", "https://partsbox.com").strip().rstrip("/")
+        workspace = os.getenv("PARTSBOX_WORKSPACE", "yanktechinventory").strip().strip("/")
+        return f"{host}/{workspace}" if workspace else host
 
     def build_web_url(self, build_id):
         """Human fallback: open the build in the PartsBox web app."""

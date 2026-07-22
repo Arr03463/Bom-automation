@@ -17,6 +17,12 @@ function StatePeek({ value, onChange, options }) {
   );
 }
 
+/* Time-of-day greeting — the header previously said "Good afternoon" at 2am. */
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+
 function DashboardScreen({ go, flashId }) {
   const [state, setState] = useStateDash('default');
   const collections = useStore(s => s.collections.filter(c => c.role === 'designer'));
@@ -34,7 +40,9 @@ function DashboardScreen({ go, flashId }) {
   return (
     <div className="page">
       <div className="page-head">
-        <div className="ph-titles"><div className="display">Good afternoon, Aaron</div>
+        {/* Was the hardcoded literal "Good afternoon, Aaron" — it greeted every
+            user by the seed Designer's name and never changed on sign-in. */}
+        <div className="ph-titles"><div className="display">{greeting()}, {(me && me.name || 'there').split(' ')[0]}</div>
           <div className="ph-sub">Your dashboard is your inbox — act on what needs you, right here.</div></div>
         <div className="ph-actions">
           <StatePeek value={state} onChange={setState} options={[{ v: 'default', label: 'Default' }, { v: 'new', label: 'New user', last: true }]} />

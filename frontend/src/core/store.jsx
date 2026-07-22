@@ -11,7 +11,9 @@ function emptyState() {
   return {
     authed: false, currentUserId: null, activeRole: 'designer', booting: true,
     users: [], projects: {}, collections: [], boms: [], requests: [], programs: [],
-    inventory: [], inventoryStats: null, notifications: [], audit: [], suppliers: [],
+    inventory: [], inventoryStats: null, inventoryLoading: false,
+    inventoryLoadedAt: null, inventoryError: null,
+    notifications: [], audit: [], suppliers: [],
     system: { status: [], workflow: {}, settings: {}, batch: { main: {}, critical: {} }, jobs: [], stuck: [] },
     investigations: [], recommendations: [], reworks: [], firmwares: [],
     comments: {}, datasheets: {}, seq: { req: 100, po: 3000, bom: 100, col: 100, inv: 100, rec: 100 },
@@ -47,42 +49,90 @@ async function hydrateSession(user) {
   STATE.currentUserId = user.id;
   STATE.activeRole = user.activeRole || landingRoleFor(user);
   emit();
-  loadInventory();   // fire-and-forget — a slow/flaky PartsBox never blocks the app
+  // Eager: the small aggregate only. The full part list is fetched lazily by
+  // the Inventory screen (see ensureInventory) — it measured ~1MB / ~10s and
+  // most tab-opens never look at it, so paying that on every hydration made
+  // every new tab wait on data it did not need.
+  loadInventoryStats();
 }
 
-/* Live PartsBox inventory (cache-if-flaky on the server). Loaded after the app
-   is already interactive; sets the inventory slice + PartsBox stats. */
+/* ONE mapper for the tile shape, so the eager (stats-only) and lazy (full)
+   paths can never drift into reporting different numbers. `inv` is optional and
+   only used to derive counts the server did not send. */
+function applyStats(st, source, inv) {
+  st = st || {};
+  const list = inv || [];
+  const bins = new Set();
+  list.forEach(p => (p.locations || []).forEach(l => bins.add(l.name)));
+  const stats = {
+    totalParts: st.parts != null ? st.parts : list.length,
+    totalUnits: st.onHand != null ? st.onHand : list.reduce((a, p) => a + (p.onHand || 0), 0),
+    distinctBins: st.distinctBins != null ? st.distinctBins : bins.size,
+    projectBoxes: st.projectBoxes, wallBins: st.wallBins,
+  };
+  // Kept on window for the existing screen contract, and mirrored into STATE
+  // so the tiles re-render reactively instead of reading a bundled fixture.
+  window.PARTSBOX_STATS = stats;
+  STATE.inventoryStats = stats;
+  if (source) window.__pbSource = source;   // 'live' | 'cache' | 'empty'
+  return stats;
+}
+
+/* Aggregate counts for the header tiles. Cheap: the part records stay server-side. */
+async function loadInventoryStats() {
+  try {
+    const res = await window.api.get('/inventory/stats');
+    applyStats(res.stats, res.source);
+    emit();
+  } catch (e) { /* tiles fall back to derived/empty values */ }
+}
+
+/* Full PartsBox inventory (cache-if-flaky on the server). LAZY — reached through
+   ensureInventory() when the Inventory screen mounts, never on hydration. */
 async function loadInventory() {
+  STATE.inventoryLoading = true; emit();
   try {
     const res = await window.api.get('/inventory');
     const inv = res.inventory || [];
     STATE.inventory = inv;
-    const st = res.stats || {};
-    const bins = new Set();
-    inv.forEach(p => (p.locations || []).forEach(l => bins.add(l.name)));
-    // Prefer the server's counts (single source of truth, derived from the full
-    // PartsBox payload); fall back to deriving them locally.
-    const stats = {
-      totalParts: st.parts != null ? st.parts : inv.length,
-      totalUnits: st.onHand != null ? st.onHand : inv.reduce((a, p) => a + (p.onHand || 0), 0),
-      distinctBins: st.distinctBins != null ? st.distinctBins : bins.size,
-      projectBoxes: st.projectBoxes, wallBins: st.wallBins,
-    };
-    // Kept on window for the existing screen contract, and mirrored into STATE
-    // so the tiles re-render reactively instead of reading a bundled fixture.
-    window.PARTSBOX_STATS = stats;
-    STATE.inventoryStats = stats;
-    window.__pbSource = res.source;   // 'live' | 'cache' | 'empty'
-    emit();
-  } catch (e) { /* leave inventory empty (calm state) */ }
+    STATE.inventoryLoadedAt = Date.now();
+    applyStats(res.stats, res.source, inv);
+  } catch (e) {
+    STATE.inventoryError = (e && e.message) || 'Inventory unavailable';
+  }
+  STATE.inventoryLoading = false;
+  emit();
+}
+
+/* Client-side TTL so navigating away from Inventory and back does not refetch.
+   Returns the in-flight promise when a load is already running, so several
+   mounts in one tick share one request instead of stampeding. */
+const INVENTORY_TTL_MS = 3 * 60 * 1000;
+let inventoryInFlight = null;
+function ensureInventory(force) {
+  const fresh = STATE.inventoryLoadedAt && (Date.now() - STATE.inventoryLoadedAt) < INVENTORY_TTL_MS;
+  if (!force && fresh && STATE.inventory.length) return Promise.resolve();
+  if (inventoryInFlight) return inventoryInFlight;
+  inventoryInFlight = loadInventory().finally(() => { inventoryInFlight = null; });
+  return inventoryInFlight;
 }
 
 /* On load, restore an existing session (valid cookie) if any. */
 async function boot() {
   try {
+    if (!window.api) {
+      // Guard, because this failed silently for a long time: main.jsx installs
+      // window.api via an imported module so it exists before this runs. If it
+      // is missing, module order regressed - say so instead of showing the
+      // login screen to an already-signed-in user.
+      throw new Error('window.api is not installed yet — check main.jsx import order');
+    }
     const me = await window.api.get('/auth/me');   // { user, auth_mode }
     if (me && me.user) { await hydrateSession(me.user); return; }
-  } catch (e) { /* backend unreachable -> show login */ }
+  } catch (e) {
+    // 401 = genuinely signed out; anything else is a real fault worth surfacing.
+    if (!e || e.status !== 401) console.warn('[autobom] session restore failed:', e);
+  }
   STATE.booting = false; emit();
 }
 
@@ -724,7 +774,8 @@ function useStore(selector) {
   return selector ? selector(state) : state;
 }
 
-Object.assign(window, { useStore, storeActions: actions, getState, resolveNotificationRoute });
+Object.assign(window, { useStore, storeActions: actions, getState, resolveNotificationRoute,
+                        ensureInventory });
 
 /* Restore an existing backend session (valid cookie) on load. Runs after
    window.api is installed by main.jsx. Safe if the backend is unreachable. */

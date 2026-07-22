@@ -16,8 +16,10 @@ import './globals.js'; // MUST be first — sets up React/ReactDOM globals
 
 // Install the backend API helper as a global BEFORE the store loads (store.jsx
 // calls window.api during boot to restore a session and hydrate from /bootstrap).
-import api from './lib/api.js';
-window.api = api;
+// This MUST be an import, not `import api ...; window.api = api;` — imports are
+// hoisted above top-level statements, so the assignment used to run AFTER
+// store.jsx had already evaluated and called boot() with window.api undefined.
+import './lib/install-api.js';
 
 // Styles (was a <link> in the old HTML; Vite bundles it here).
 import '../assets/css/styles.css';

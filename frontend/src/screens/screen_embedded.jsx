@@ -203,6 +203,12 @@ function ArchiveBatch({ batch, mode, flashReq }) {
    ============================================================ */
 function EmbeddedInventory({ go }) {
   const parts = useStore(s => s.inventory || []);
+  const loading = useStore(s => s.inventoryLoading);
+  /* The full part list is fetched HERE, on mount — not on session hydration.
+     It measured ~1MB / ~10s, and every tab-open used to pay for it whether or
+     not anyone opened Inventory. ensureInventory() is TTL'd and de-duped, so
+     navigating away and back is free and two mounts share one request. */
+  useEffEmb(() => { if (window.ensureInventory) window.ensureInventory(); }, []);
   const [q, setQ] = useStateEmb('');
   const [kind, setKind] = useStateEmb('all');
   const [cat, setCat] = useStateEmb('all');
@@ -276,7 +282,13 @@ function EmbeddedInventory({ go }) {
             : `${rows.length} of ${parts.length} parts`}
         </span>
       </div>
-      {isLocView ? (
+      {/* Loading is checked BEFORE the view branches: otherwise the locations
+          view showed "No project boxes found" for the whole fetch, which reads
+          as an empty account rather than work in progress. */}
+      {(loading && parts.length === 0) ? (
+        <div className="card"><EmptyState icon="box" title="Loading inventory from PartsBox…"
+          sub="Fetching the full part list. This runs once, then is cached for a few minutes." /></div>
+      ) : isLocView ? (
         locRows.length === 0 ? (
           <div className="card"><EmptyState icon="folder"
             title={q ? 'No storage locations match.' : `No ${kind === 'project' ? 'project boxes' : 'wall bins'} found.`}
@@ -300,8 +312,13 @@ function EmbeddedInventory({ go }) {
       ) : rows.length === 0 ? <div className="card"><EmptyState icon="box" title="No parts match." /></div> : (
         <div className="tbl-wrap flow"><table className="bom">
           <thead><tr><th>Part</th><th className="num">On hand</th><th>Storage</th><th>Tags</th><th></th></tr></thead>
+          {/* Row key is p.id, not p.mpn: PartsBox legitimately holds several
+              part records per MPN (9 dupes across 3121 parts). Duplicate keys
+              make React tear down and rebuild rows instead of diffing them —
+              a console warning on every Inventory visit, on an already-heavy
+              3121-row table. p.id is unique for all 3121. */}
           <tbody>{rows.map(p => (
-            <tr key={p.mpn}>
+            <tr key={p.id || p.mpn}>
               <td><div className="mono" style={{ fontWeight: 600 }}>{p.mpn}{p.low && <span className="badge filled" style={{ background: 'var(--danger)', marginLeft: 8 }}><Icon name="alert" size={10} />LOW</span>}</div><div className="caption">{p.desc}{p.fp ? ` · ${p.fp}` : ''}</div></td>
               <td className="num" style={{ fontWeight: 600 }}>{p.onHand}</td>
               <td><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{p.locations.map((l, i) => <button key={i} className={`loc-chip ${l.kind}`} style={{ cursor: 'pointer', border: 0 }} onClick={() => go({ screen: 'storageDetail', id: l.name })} title="Open storage location">{l.name} · {l.qty}</button>)}</div></td>

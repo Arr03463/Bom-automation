@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -146,23 +147,60 @@ def _save_cache(inv: list) -> None:
         log.warning("inventory cache write failed: %s", exc)
 
 
-def _load_cache():
+def _load_cache(max_age: float | None = None):
+    """Cached inventory, or None. With max_age, an older snapshot is a miss.
+
+    Two distinct uses:
+      - max_age set  -> TTL cache: is the snapshot fresh enough to serve?
+      - max_age None -> last-good fallback: serve it at any age rather than
+                        showing an empty screen when PartsBox is down.
+    """
     try:
-        return json.loads(CACHE_PATH.read_text()).get("inventory")
+        blob = json.loads(CACHE_PATH.read_text())
     except (OSError, ValueError):
         return None
+    if max_age is not None and (time.time() - float(blob.get("cached_at") or 0)) > max_age:
+        return None
+    return blob.get("inventory")
+
+
+def cache_ttl_seconds() -> int:
+    """CLAUDE.md: 60s default, Admin-configurable."""
+    try:
+        return int(os.getenv("INVENTORY_CACHE_TTL_SECONDS", "60"))
+    except ValueError:
+        return 60
 
 
 def get_inventory() -> dict:
-    """Live PartsBox where it works; last-good cache when flaky; empty as a last
-    resort (screens render a calm empty state, never crash)."""
+    """Fresh cache -> live -> last-good cache -> empty.
+
+    The TTL short-circuit (audit item C1) matters a lot here: `part/all` returns
+    the WHOLE account and measured ~10s / ~1MB, and this endpoint was refetching
+    all of it on every single call. Serving a fresh snapshot turns repeat loads
+    (second tab, navigating back to Inventory) into an instant local read.
+    """
+    fresh = _load_cache(max_age=cache_ttl_seconds())
+    if fresh is not None:
+        return {"inventory": fresh, "source": "cache", "stats": _stats(fresh)}
     try:
         inv = fetch_live()
         _save_cache(inv)
         return {"inventory": inv, "source": "live", "stats": _stats(inv)}
     except Exception as exc:
         log.warning("PartsBox live inventory failed (%s); serving cache.", exc)
-        cached = _load_cache()
+        cached = _load_cache()          # any age beats an empty screen
         if cached is not None:
             return {"inventory": cached, "source": "cache", "stats": _stats(cached)}
         return {"inventory": [], "source": "empty", "error": str(exc)[:200], "stats": _stats([])}
+
+
+def get_inventory_stats() -> dict:
+    """Just the aggregate numbers the header tiles render.
+
+    Same data source as get_inventory(), but the ~1MB of part records never
+    leaves the server. This is what loads eagerly on session hydration; the full
+    payload is now fetched only when the Inventory screen actually mounts.
+    """
+    data = get_inventory()
+    return {"stats": data.get("stats") or _stats([]), "source": data.get("source")}

@@ -51,6 +51,28 @@ function AuthedApp() {
   const searchAnchorRef = useRef(null);
   const lastRoute = useRef(route);
 
+  /* The route must follow the SESSION IDENTITY, not outlive it.
+     The shell (sidebar, avatar) reads the store and updates the instant a
+     different user signs in — but the URL hash does not, and useHashRoute's
+     role-home fallback only applies when there is NO hash. Signing in as
+     another user therefore left the PREVIOUS user's screen mounted under the
+     new user's shell (Admin nav + avatar, still rendering d.dashboard).
+
+     Comparing identity against a ref cannot fix this: logOut() flips authed to
+     false, which UNMOUNTS AuthedApp and destroys the ref, so the new identity
+     looks unchanged on remount. Enforce the actual invariant instead — never
+     render a screen belonging to a role this user does not hold — which is
+     correct on remount, on identity change, and on a hand-edited URL.
+     Prefix-less shared screens (Purchasing, Inventory, Projects, Programs)
+     return null and are left alone, as is the multi-role view-as switching. */
+  useEffect(() => {
+    const need = screenRole(route.screen);
+    const roles = (user && user.roles) || [];
+    if (need && roles.length && !roles.includes(need)) {
+      navigate({ screen: roleHome }, true);   // replace: no bogus history entry
+    }
+  }, [route.screen, user, roleHome]);
+
   // Scroll memory across navigations.
   useEffect(() => {
     rememberScroll(lastRoute.current);
