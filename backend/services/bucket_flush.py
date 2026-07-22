@@ -156,10 +156,32 @@ def flush_stream(db: Session, stream: str, dry_run: bool | None = None, actor_id
     sheet = write_batch(carts)
     expected = sum(1 for c in carts if c["cart_total"] and float(c["cart_total"]) > 0)
     if sheet["written"] < expected:
-        # Partial/failed write -> nothing is marked; batch stays queued (Pattern A).
+        # Partial/failed sheet write. Requests stay QUEUED so the row can still
+        # be written (Pattern A) — but the carts/lists ALREADY EXIST at the
+        # supplier and cannot be rolled back. Persisting them as `pending` keeps
+        # them traceable instead of orphaning a real cart with no record, and
+        # makes the duplicate-on-retry risk visible rather than silent.
+        now = datetime.now(timezone.utc)
+        orphan_ids = []
+        for b in built:
+            bid = _next_batch_id(db)
+            db.add(Batch(id=bid, stream=stream, state="pending", supplier=b["supplier"],
+                         cart_url=b["link"], supplier_ref=str(b["ref"]),
+                         item_count=b["items_count"], written_at=None))
+            db.flush()
+            orphan_ids.append(bid)
+        db.commit()
+        log.warning("flush %s: sheet write incomplete (%d/%d) — %s already created at the "
+                    "supplier and recorded as pending: %s", stream, sheet["written"], expected,
+                    "carts/lists", [(b["supplier"], b["ref"]) for b in built])
         return {"stream": stream, "dryRun": dry_run, "status": "partial",
                 "written": sheet["written"], "skipped": sheet["skipped"],
-                "message": "Sheet write incomplete — requests remain QUEUED for the next flush."}
+                "batches": orphan_ids,
+                "suppliers": [{"supplier": b["supplier"], "ref": b["ref"], "total": b["total"],
+                               "items": b["items_count"], "link": b["link"]} for b in built],
+                "message": ("Sheet write incomplete — requests remain QUEUED. The supplier "
+                            "cart/list was already created and is recorded as pending; "
+                            "re-flushing will create another one.")}
 
     # Success: persist batches, mark requests WRITTEN (write-once).
     now = datetime.now(timezone.utc)
