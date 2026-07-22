@@ -256,6 +256,31 @@ function searchCatalog(q) {
   );
 }
 
+/* Live /api/suppliers/search -> the drawer's result shape.
+   The endpoint returns one best match per supplier ({query, mouser, digikey,
+   errors}); both describe the same MPN, so they fold into a single row with a
+   chip each. Stock/price come straight from the supplier payload — no fixtures. */
+function mapSupplierHit(res) {
+  const m = res && res.mouser, d = res && res.digikey;
+  if (!m && !d) return null;
+  const primary = m || d;
+  const side = (r) => (r ? {
+    pn: r.supplier_part_number || '',
+    stock: r.stock || 0,
+    price: window.parsePrice ? window.parsePrice(r.unit_price) : parseFloat(r.unit_price),
+    url: r.product_url || '',
+  } : null);
+  return {
+    mpn: primary.mpn,
+    mfr: primary.manufacturer || '',
+    desc: primary.description || '',
+    lifecycle: String(primary.lifecycle_status || '').toLowerCase().includes('obsolete') ? 'obsolete' : 'active',
+    mouser: side(m),
+    digikey: side(d),
+    live: true,
+  };
+}
+
 function AddPartDrawer({ open, onClose, collectionId, kind = 'designer' }) {
   const collection = useStore(s => s.collections.find(c => c.id === collectionId));
   const [q, setQ] = useStateAddons('');
@@ -288,12 +313,30 @@ function AddPartDrawer({ open, onClose, collectionId, kind = 'designer' }) {
     setPhase('idle'); setResults([]); setSelected(null); setQty(1); setNote('');
   };
 
-  const run = () => {
-    if (!q.trim()) return;
+  /* Ask the real suppliers.
+     This used to be pure theatre: two setTimeouts (440ms "searching Mouser",
+     880ms "searching DigiKey") and then searchCatalog(q) — the bundled seed
+     fixtures. So the drawer reported ERJ-3EKF1002V as 940,000 @ Mouser and
+     1,200,000 @ DigiKey when the live figures were 966,425 and 5,320,216, and
+     the seeded 0.004/0.003 prices rendered as "$0.00". No request was ever made.
+     CLAUDE.md: "Add part NEVER navigates. Inline drawer using
+     search_available_stock mode" — that means the live two-mode search. */
+  const run = async () => {
+    const query = q.trim();
+    if (!query) return;
     timers.current.forEach(clearTimeout); timers.current = [];
     setSelected(null); setResults([]); setPhase('mouser');
-    timers.current.push(setTimeout(() => setPhase('digikey'), 440));
-    timers.current.push(setTimeout(() => { setResults(searchCatalog(q)); setPhase('done'); }, 880));
+    try {
+      const res = await window.api.post('/suppliers/search', { query });
+      setPhase('digikey');
+      const hit = mapSupplierHit(res);
+      // Keep the seed catalog only as an offline fallback so the drawer still
+      // demonstrates something if the suppliers are unreachable.
+      setResults(hit ? [hit] : searchCatalog(query));
+    } catch (e) {
+      setResults(searchCatalog(query));
+    }
+    setPhase('done');
   };
 
   const confirm = () => {
@@ -384,8 +427,8 @@ function AddPartDrawer({ open, onClose, collectionId, kind = 'designer' }) {
                       <div className="mono" style={{ fontWeight: 600 }}>{c.mpn}{c.lifecycle === 'obsolete' && <span className="badge filled" style={{ background: 'var(--darkred)', marginLeft: 6 }}><Icon name="ban" size={11} />EOL</span>}</div>
                       <div className="caption" style={{ marginTop: 1 }}>{c.mfr} · {c.desc}</div>
                       <div style={{ display: 'flex', gap: 10, marginTop: 5, fontSize: 12 }}>
-                        {c.mouser && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><SupplierTag supplier="mouser" /><span style={{ color: c.mouser.stock > 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>{fmtInt(c.mouser.stock)}</span> · {c.mouser.price ? fmtUSD(c.mouser.price) : '—'}</span>}
-                        {c.digikey && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><SupplierTag supplier="digikey" /><span style={{ color: c.digikey.stock > 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>{fmtInt(c.digikey.stock)}</span> · {c.digikey.price ? fmtUSD(c.digikey.price) : '—'}</span>}
+                        {c.mouser && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><SupplierTag supplier="mouser" /><span style={{ color: c.mouser.stock > 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>{fmtInt(c.mouser.stock)}</span> · {window.fmtUnitPrice(c.mouser.price)}</span>}
+                        {c.digikey && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><SupplierTag supplier="digikey" /><span style={{ color: c.digikey.stock > 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>{fmtInt(c.digikey.stock)}</span> · {window.fmtUnitPrice(c.digikey.price)}</span>}
                       </div>
                     </div>
                     <button className="btn sm primary" onClick={(e) => { e.stopPropagation(); setSelected(c); }}><Icon name="plus" size={13} />Add</button>

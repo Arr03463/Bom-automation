@@ -3,6 +3,24 @@
    plus users, notifications, audit, suppliers, system config. */
 
 const fmtUSD = (n) => '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/* Unit prices, not totals. Component unit costs are routinely sub-cent — a 0603
+   resistor is ~$0.0081 at DigiKey and less at volume — and fmtUSD's fixed 2
+   decimals rendered every one of them as "$0.00", which reads as "no price
+   data". Totals keep fmtUSD; only per-part unit prices use this. */
+function fmtUnitPrice(n) {
+  const v = typeof n === 'number' ? n : parseFloat(String(n == null ? '' : n).replace(/[$,\s]/g, ''));
+  if (!Number.isFinite(v)) return '—';
+  if (v === 0) return '$0.00';
+  const dp = v < 0.01 ? 4 : 2;      // enough to distinguish 0.0081 from 0.0024
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+
+/* Supplier unit_price arrives as "$0.10" (Mouser) or "0.0081" (DigiKey). */
+function parsePrice(v) {
+  const n = parseFloat(String(v == null ? '' : v).replace(/[$,\s]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
 const fmtInt = (n) => (n || 0).toLocaleString('en-US');
 /* Null-safe relative-time label. Timestamps can legitimately be absent (a row
    that has never been touched), and interpolating them raw printed literal
@@ -525,4 +543,4 @@ function projectName(pid) {
   return (pr && pr.name) || 'Other';
 }
 
-Object.assign(window, { fmtUSD, fmtInt, fmtWhen, uid, CATALOG, PROJECTS, RECENT_SEARCHES, seedState, line, cpnFor, cpnScope, userByName, userById, projectName });
+Object.assign(window, { fmtUSD, fmtUnitPrice, parsePrice, fmtInt, fmtWhen, uid, CATALOG, PROJECTS, RECENT_SEARCHES, seedState, line, cpnFor, cpnScope, userByName, userById, projectName });
