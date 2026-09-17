@@ -8,11 +8,20 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import requests
 from dotenv import load_dotenv
 
+from token_store import EnvFileTokenStore
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
 
 load_dotenv(ENV_PATH, override=True)
+
+# This script is a one-time local developer bootstrap flow (interactive
+# browser + pasted URL), so rewriting the local .env directly is
+# appropriate here -- unlike the running app, which uses token_store.py's
+# pluggable backends. Delegates to the same EnvFileTokenStore so there is
+# one .env-mutation implementation, not two.
+_env_store = EnvFileTokenStore(ENV_PATH)
 
 
 def main():
@@ -88,9 +97,9 @@ def main():
     if not refresh_token:
         raise ValueError("DigiKey did not return a refresh token.")
 
-    _set_env_value("DIGIKEY_REDIRECT_URI", redirect_uri)
-    _set_env_value("DIGIKEY_REFRESH_TOKEN", refresh_token)
-    _set_env_value("DIGIKEY_MYLISTS_ENABLED", "true")
+    _env_store.set("DIGIKEY_REDIRECT_URI", redirect_uri)
+    _env_store.set("DIGIKEY_REFRESH_TOKEN", refresh_token)
+    _env_store.set("DIGIKEY_MYLISTS_ENABLED", "true")
 
     print()
     print("DigiKey OAuth setup complete.")
@@ -102,24 +111,6 @@ def main():
 def _first(query, name):
     values = query.get(name) or []
     return values[0] if values else ""
-
-
-def _set_env_value(name, value):
-    env_path = ENV_PATH
-    lines = env_path.read_text().splitlines() if env_path.exists() else []
-
-    for index, line in enumerate(lines):
-        if line.strip().startswith("#") or "=" not in line:
-            continue
-
-        key, _ = line.split("=", 1)
-        if key.strip() == name:
-            lines[index] = f"{name}={value}"
-            env_path.write_text("\n".join(lines) + "\n")
-            return
-
-    lines.append(f"{name}={value}")
-    env_path.write_text("\n".join(lines) + "\n")
 
 
 def check_existing_refresh_token():
@@ -155,7 +146,7 @@ def check_existing_refresh_token():
     access_token = token_data.get("access_token", "").strip()
 
     if new_refresh_token and new_refresh_token != refresh_token:
-        _set_env_value("DIGIKEY_REFRESH_TOKEN", new_refresh_token)
+        _env_store.set("DIGIKEY_REFRESH_TOKEN", new_refresh_token)
         print("DigiKey refresh token is valid. Saved rotated refresh token in .env.")
     else:
         print("DigiKey refresh token is valid.")

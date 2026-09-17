@@ -10,13 +10,16 @@ from manufacturer_aliases import (
     part_numbers_equivalent,
 )
 from sourcing_engine import SupplierResult, manufacturer_matches, mpn_matches
+from token_store import build_token_store
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
+REFRESH_TOKEN_STORE_KEY = "DIGIKEY_REFRESH_TOKEN"
+
 
 class DigiKeyClient:
-    def __init__(self):
+    def __init__(self, token_store=None):
         load_dotenv(PROJECT_ROOT / ".env", override=True)
 
         self.client_id = os.getenv("DIGIKEY_CLIENT_ID", "").strip()
@@ -25,9 +28,21 @@ class DigiKeyClient:
         self.token_url = os.getenv("DIGIKEY_TOKEN_URL", "https://api.digikey.com/v1/oauth2/token").strip()
         self.dry_run = os.getenv("SUPPLIER_DRY_RUN", "true").lower() == "true"
         self.access_token = None
-        self.refresh_token = os.getenv("DIGIKEY_REFRESH_TOKEN", "").strip()
         self.user_access_token = os.getenv("DIGIKEY_ACCESS_TOKEN", "").strip()
         self.account_id = os.getenv("DIGIKEY_ACCOUNT_ID", "").strip()
+
+        self.token_store = token_store or build_token_store()
+        self.refresh_token = self._load_refresh_token()
+
+    def _load_refresh_token(self):
+        # A previously rotated token in the store takes precedence over the
+        # static .env/secrets value, so continuity survives across
+        # DigiKeyClient() instances within the same process even when the
+        # backend can't rewrite .env (see token_store.py for the
+        # per-backend persistence guarantees, or lack thereof).
+        stored_value = self.token_store.get(REFRESH_TOKEN_STORE_KEY)
+        env_value = os.getenv("DIGIKEY_REFRESH_TOKEN", "").strip()
+        return (stored_value or env_value or "").strip()
 
     def get_access_token(self):
         if self.dry_run:
@@ -86,7 +101,7 @@ class DigiKeyClient:
         self.access_token = token_data.get("access_token")
         new_refresh_token = token_data.get("refresh_token", self.refresh_token)
         if new_refresh_token != self.refresh_token:
-            _update_env_value("DIGIKEY_REFRESH_TOKEN", new_refresh_token)
+            self.token_store.set(REFRESH_TOKEN_STORE_KEY, new_refresh_token)
             self.refresh_token = new_refresh_token
 
         if not self.access_token:
@@ -430,23 +445,6 @@ def _append_note(existing, note):
     if note not in notes:
         notes.append(note)
     return "; ".join(notes)
-
-
-def _update_env_value(name, value):
-    env_path = PROJECT_ROOT / ".env"
-    if not env_path.exists():
-        return
-
-    lines = env_path.read_text().splitlines()
-    for index, line in enumerate(lines):
-        if line.strip().startswith("#") or "=" not in line:
-            continue
-
-        key, _ = line.split("=", 1)
-        if key.strip() == name:
-            lines[index] = f"{name}={value}"
-            env_path.write_text("\n".join(lines) + "\n")
-            return
 
 
 def _raise_for_status(response, context):
