@@ -13,6 +13,7 @@ Documentation/env
 # Generated files
 output/
 .cache/
+runs/
 
 # Local BOM inputs; keep test BOMs versioned
 input/*

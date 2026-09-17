@@ -1,5 +1,3 @@
-import os
-import re
 import sys
 from pathlib import Path
 
@@ -9,31 +7,14 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SRC_FOLDER = PROJECT_ROOT / "src"
-INPUT_FOLDER = PROJECT_ROOT / "input"
 
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 if str(SRC_FOLDER) not in sys.path:
     sys.path.insert(0, str(SRC_FOLDER))
 
+from run_workspace import build_run_workspace, save_uploaded_file  # noqa: E402
 from workflow_runner import run_bom_workflow  # noqa: E402
-
-
-def safe_upload_name(file_name):
-    name = Path(file_name).name
-    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).stem).strip("_") or "uploaded_bom"
-    suffix = Path(name).suffix.lower()
-    return f"{stem}{suffix}"
-
-
-def save_uploaded_file(uploaded_file):
-    INPUT_FOLDER.mkdir(parents=True, exist_ok=True)
-    output_path = INPUT_FOLDER / safe_upload_name(uploaded_file.name)
-
-    with output_path.open("wb") as file_handle:
-        file_handle.write(uploaded_file.getbuffer())
-
-    return output_path
 
 
 def show_download(label, file_path):
@@ -84,7 +65,10 @@ if st.button("Run BOM Automation", type="primary"):
     if uploaded_file is None:
         st.error("Upload a CSV or XLSX BOM before running.")
     else:
-        source_path = save_uploaded_file(uploaded_file)
+        workspace = build_run_workspace()
+        source_path = save_uploaded_file(
+            workspace["input_dir"], uploaded_file.name, uploaded_file.getbuffer()
+        )
 
         with st.spinner("Running BOM automation..."):
             result = run_bom_workflow(
@@ -98,6 +82,8 @@ if st.button("Run BOM Automation", type="primary"):
                 run_digikey_mylist=run_digikey_mylist,
                 use_mouser_sourcing=run_sourcing and use_mouser_sourcing,
                 use_digikey_sourcing=run_sourcing and use_digikey_sourcing,
+                run_id=workspace["run_id"],
+                output_folder=str(workspace["output_dir"]),
             )
 
         if result.get("success"):

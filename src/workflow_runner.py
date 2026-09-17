@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 
+import pandas as pd
 from dotenv import load_dotenv
 
 from bom_cleaner import (
@@ -28,6 +29,7 @@ from partsbox_project_builder import (
     export_partsbox_import_csv,
     export_partsbox_unmatched_csv,
 )
+from run_workspace import new_run_id
 from sourcing_engine import apply_sourcing_decisions
 from sourcing_report import export_sourcing_report
 
@@ -61,7 +63,36 @@ def _empty_result():
             "run_summary": "",
         },
         "messages": [],
+        "run": {},
+        "bom_rows": [],
+        "review_items": [],
+        "partsbox": None,
+        "purchasing": {
+            "mouser": None,
+            "digikey": None,
+        },
     }
+
+
+def _dataframe_to_row_records(df, run_id):
+    """
+    Convert a cleaned/review BOM DataFrame into JSON-safe row dicts with a
+    stable row_id. review_items is always a filtered copy of clean_bom, so
+    matching pandas index labels are reused as the row_id suffix -- a
+    replacement decision made against a review row can be matched back to
+    the same row in bom_rows.
+    """
+    if df is None or df.empty:
+        return []
+
+    safe_df = df.where(pd.notnull(df), "")
+    rows = []
+    for index, record in safe_df.to_dict("index").items():
+        record = dict(record)
+        record["row_id"] = f"{run_id}:{index}"
+        rows.append(record)
+
+    return rows
 
 
 def _append_warning_rows(response, warnings_df):
@@ -90,10 +121,102 @@ def _count_sourcing(clean_bom):
     return mouser_sourced, digikey_sourced, manual_review
 
 
-def _write_run_summary(response, source_file_path):
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+def _extract_mouser_cart_key(raw_result):
+    """
+    Best-effort CartKey extraction. The Cart API response shape returned by
+    add_items_to_cart() is not yet confirmed against a live Mouser response;
+    this checks the shapes referenced in Mouser's published Cart API docs
+    and falls back to None rather than guessing further.
+    """
+    if not isinstance(raw_result, dict):
+        return None
+
+    if raw_result.get("CartKey"):
+        return raw_result["CartKey"]
+
+    cart = raw_result.get("Cart")
+    if isinstance(cart, dict) and cart.get("CartKey"):
+        return cart["CartKey"]
+
+    return None
+
+
+def _build_mouser_purchasing(attempted, mouser_cart_result):
+    if not attempted or mouser_cart_result is None:
+        return {
+            "attempted": bool(attempted),
+            "created": False,
+            "items_count": 0,
+            "cart_key": None,
+            "message": None,
+            "raw_result": None,
+        }
+
+    raw_result = mouser_cart_result.get("result")
+
+    return {
+        "attempted": True,
+        "created": bool(mouser_cart_result.get("created")),
+        "items_count": int(mouser_cart_result.get("items_count", 0)),
+        "cart_key": _extract_mouser_cart_key(raw_result),
+        "message": mouser_cart_result.get("message"),
+        "raw_result": raw_result,
+    }
+
+
+def _build_digikey_purchasing(attempted, digikey_mylist_result):
+    if not attempted or digikey_mylist_result is None:
+        return {
+            "attempted": bool(attempted),
+            "created": False,
+            "list_id": None,
+            "list_name": None,
+            "share_id": None,
+            "parts_count": 0,
+            "message": None,
+            "raw_create_result": None,
+            "raw_add_result": None,
+        }
+
+    return {
+        "attempted": True,
+        "created": bool(digikey_mylist_result.get("created")),
+        "list_id": digikey_mylist_result.get("list_id"),
+        "list_name": digikey_mylist_result.get("list_name"),
+        # DigiKey's confirmed MyLists response only returns ListId/ListName.
+        # A distinct share ID/key field is not present in this repository's
+        # client and must be verified against the live MyLists API before
+        # a value can be surfaced here.
+        "share_id": None,
+        "parts_count": digikey_mylist_result.get("parts_count", 0),
+        "message": digikey_mylist_result.get("message"),
+        "raw_create_result": digikey_mylist_result.get("create_result"),
+        "raw_add_result": digikey_mylist_result.get("add_result"),
+    }
+
+
+def _build_partsbox_response(partsbox_result, partsbox_entries_result):
+    return {
+        "project_name": partsbox_result.get("project_name"),
+        "storage_name": partsbox_result.get("storage_name"),
+        "project_reused": bool(partsbox_result.get("project_reused")),
+        "storage_reused": bool(partsbox_result.get("storage_reused")),
+        "storage_tag_missing": bool(partsbox_result.get("storage_tag_missing")),
+        "project_result": partsbox_result.get("project_result"),
+        "storage_result": partsbox_result.get("storage_result"),
+        "entries_added": partsbox_entries_result.get("entries_added", 0),
+        "entries_skipped_existing": partsbox_entries_result.get(
+            "entries_skipped_existing", 0
+        ),
+        "entries_considered": partsbox_entries_result.get("entries_considered", 0),
+        "unmatched_count": len(partsbox_entries_result.get("unmatched_rows", [])),
+    }
+
+
+def _write_run_summary(response, source_file_path, output_folder):
+    os.makedirs(output_folder, exist_ok=True)
     source_stem = Path(source_file_path).stem or "bom"
-    output_path = os.path.join(OUTPUT_FOLDER, f"{source_stem}_run_summary.json")
+    output_path = os.path.join(output_folder, f"{source_stem}_run_summary.json")
 
     with open(output_path, "w", encoding="utf-8") as summary_file:
         json.dump(response, summary_file, indent=2)
@@ -112,6 +235,8 @@ def run_bom_workflow(
     run_digikey_mylist=False,
     use_mouser_sourcing=True,
     use_digikey_sourcing=True,
+    run_id=None,
+    output_folder=None,
 ):
     load_dotenv(PROJECT_ROOT / ".env", override=True)
 
@@ -119,6 +244,15 @@ def run_bom_workflow(
     source_file_path = str(source_file_path)
     project_name = str(project_name or "").strip()
     project_description = str(project_description or "").strip()
+    run_id = run_id or new_run_id()
+    output_folder = str(output_folder) if output_folder else OUTPUT_FOLDER
+
+    response["run"] = {
+        "run_id": run_id,
+        "project_name": project_name,
+        "build_quantity": build_quantity,
+        "source_file_name": Path(source_file_path).name,
+    }
 
     try:
         build_quantity = int(build_quantity)
@@ -126,8 +260,10 @@ def run_bom_workflow(
         response["errors"].append("Build quantity must be an integer.")
         return response
 
+    response["run"]["build_quantity"] = build_quantity
+
     try:
-        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+        os.makedirs(output_folder, exist_ok=True)
 
         result = process_bom_file(source_file_path)
         result.clean_bom = apply_project_quantities(result.clean_bom, build_quantity)
@@ -135,6 +271,9 @@ def run_bom_workflow(
 
         source_stem = Path(source_file_path).stem
         list_name_base = project_name or source_stem
+
+        mouser_cart_result = None
+        digikey_mylist_result = None
 
         if run_sourcing and (use_mouser_sourcing or use_digikey_sourcing):
             response["messages"].append("Running supplier sourcing.")
@@ -174,7 +313,7 @@ def run_bom_workflow(
 
             sourcing_report_path = export_sourcing_report(
                 result.clean_bom,
-                OUTPUT_FOLDER,
+                output_folder,
                 file_stem=f"{source_stem}_sourcing_report",
             )
             response["outputs"]["sourcing_report"] = sourcing_report_path
@@ -204,7 +343,7 @@ def run_bom_workflow(
 
             digikey_list_path, digikey_count = export_digikey_list(
                 result.clean_bom,
-                OUTPUT_FOLDER,
+                output_folder,
                 file_stem=f"{source_stem}_digikey_list",
             )
             response["outputs"]["digikey_list_csv"] = digikey_list_path
@@ -259,12 +398,12 @@ def run_bom_workflow(
                     unmatched_path = export_partsbox_unmatched_csv(
                         partsbox_entries_result.get("unmatched_rows", []),
                         project_name,
-                        OUTPUT_FOLDER,
+                        output_folder,
                     )
                     partsbox_import_path = export_partsbox_import_csv(
                         result.clean_bom,
                         project_name,
-                        OUTPUT_FOLDER,
+                        output_folder,
                     )
 
                     response["outputs"]["partsbox_import_csv"] = partsbox_import_path
@@ -275,6 +414,10 @@ def run_bom_workflow(
                         partsbox_entries_result.get("entries_added", 0)
                     )
 
+                    response["partsbox"] = _build_partsbox_response(
+                        partsbox_result, partsbox_entries_result
+                    )
+
                     if partsbox_entries_result.get("skipped"):
                         response["messages"].append(
                             f"PartsBox entries skipped: {partsbox_entries_result.get('message')}"
@@ -283,6 +426,23 @@ def run_bom_workflow(
                         response["messages"].append(
                             "PartsBox entries added: "
                             f"{response['summary']['partsbox_entries_added']}"
+                        )
+                        skipped_existing = partsbox_entries_result.get(
+                            "entries_skipped_existing", 0
+                        )
+                        if skipped_existing:
+                            response["messages"].append(
+                                "PartsBox entries already present, skipped: "
+                                f"{skipped_existing}"
+                            )
+
+                    if partsbox_result.get("storage_tag_missing"):
+                        response["warnings"].append(
+                            "PartsBox storage "
+                            f"'{partsbox_result.get('storage_name')}' is missing the "
+                            "'production' tag and no supported API call exists to add "
+                            "it to an existing storage location. Add the tag manually "
+                            "in PartsBox."
                         )
 
                     response["messages"].append(f"PartsBox import CSV exported to: {partsbox_import_path}")
@@ -297,7 +457,7 @@ def run_bom_workflow(
 
         workbook_path, csv_path = build_output_paths(
             source_file_path,
-            OUTPUT_FOLDER,
+            output_folder,
             workbook_suffix=OUTPUT_CLEAN_WORKBOOK_SUFFIX,
             csv_suffix=OUTPUT_CLEAN_BOM_SUFFIX,
         )
@@ -315,13 +475,20 @@ def run_bom_workflow(
         response["summary"]["review_items"] = int(len(result.review_items))
         response["summary"]["warnings"] = int(len(response["warnings"]))
 
+        response["bom_rows"] = _dataframe_to_row_records(result.clean_bom, run_id)
+        response["review_items"] = _dataframe_to_row_records(result.review_items, run_id)
+        response["purchasing"] = {
+            "mouser": _build_mouser_purchasing(run_mouser_cart, mouser_cart_result),
+            "digikey": _build_digikey_purchasing(run_digikey_mylist, digikey_mylist_result),
+        }
+
         response["success"] = not response["errors"]
-        _write_run_summary(response, source_file_path)
+        _write_run_summary(response, source_file_path, output_folder)
     except Exception as exc:
         response["errors"].append(str(exc))
         response["success"] = False
         try:
-            _write_run_summary(response, source_file_path)
+            _write_run_summary(response, source_file_path, output_folder)
         except Exception:
             pass
 

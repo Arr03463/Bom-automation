@@ -154,7 +154,38 @@ def build_project_entries(clean_bom, client):
     return entries, unmatched_rows
 
 
-def add_bom_entries_to_project(partsbox_result, clean_bom):
+def _entry_signature(entry):
+    """
+    Identity used to decide whether a built entry already exists in the
+    project. Matched parts are identified by PartsBox part ID; unmatched
+    rows (no part-id) fall back to name, since that is the only stable
+    field build_project_entry() gives them. Designators are included so two
+    different rows for the same part are not treated as duplicates of
+    each other.
+    """
+    designators = tuple(sorted(str(d) for d in (entry.get("entry/designators") or [])))
+    part_id = entry.get("entry/part-id")
+
+    if part_id:
+        return ("part", str(part_id), designators)
+
+    name = str(entry.get("entry/name") or "").strip().lower()
+    return ("name", name, designators)
+
+
+def _extract_existing_entries(get_entries_response):
+    if not isinstance(get_entries_response, dict):
+        return []
+
+    for key in ("data", "entries", "project/entries"):
+        records = get_entries_response.get(key)
+        if isinstance(records, list):
+            return records
+
+    return []
+
+
+def add_bom_entries_to_project(partsbox_result, clean_bom, client=None):
     project_id = extract_project_id(partsbox_result)
 
     if not project_id:
@@ -162,27 +193,54 @@ def add_bom_entries_to_project(partsbox_result, clean_bom):
             "skipped": True,
             "message": "No PartsBox project ID found; entries were not added.",
             "entries_added": 0,
+            "entries_skipped_existing": 0,
+            "entries_considered": 0,
             "unmatched_rows": [],
         }
 
-    client = PartsBoxClient()
+    client = client or PartsBoxClient()
     entries, unmatched_rows = build_project_entries(clean_bom, client)
+
+    existing_entries = _extract_existing_entries(client.get_project_entries(project_id))
+    existing_signatures = {_entry_signature(entry) for entry in existing_entries}
+
+    new_entries = [
+        entry for entry in entries if _entry_signature(entry) not in existing_signatures
+    ]
+    entries_skipped_existing = len(entries) - len(new_entries)
 
     add_result = None
 
-    if entries:
-        add_result = client.add_project_entries(project_id, entries)
+    if new_entries:
+        add_result = client.add_project_entries(project_id, new_entries)
 
     return {
         "skipped": False,
         "project_id": project_id,
-        "entries_added": len(entries),
+        "entries_added": len(new_entries),
+        "entries_skipped_existing": entries_skipped_existing,
+        "entries_considered": len(entries),
         "unmatched_rows": unmatched_rows,
         "add_result": add_result,
     }
 
-def create_partsbox_project_and_storage(project_name, description=""):
-    client = PartsBoxClient()
+PRODUCTION_STORAGE_TAG = "production"
+
+
+def _storage_has_tag(storage_record, tag):
+    if not isinstance(storage_record, dict):
+        return False
+
+    tags = storage_record.get("storage/tags") or storage_record.get("tags") or []
+    if not isinstance(tags, (list, tuple, set)):
+        return False
+
+    normalized_tags = {str(item).strip().lower() for item in tags}
+    return tag.strip().lower() in normalized_tags
+
+
+def create_partsbox_project_and_storage(project_name, description="", client=None):
+    client = client or PartsBoxClient()
     names = build_default_names(project_name)
 
     existing_project = client.find_project_by_name(names["project_name"])
@@ -202,17 +260,23 @@ def create_partsbox_project_and_storage(project_name, description=""):
             #tags=["bom-automation"],
         )
 
+    storage_tag_missing = False
+
     if existing_storage:
         storage_result = {
             "reused": True,
             "message": "Storage already exists; reusing existing storage.",
             "storage": existing_storage,
         }
+        # No PartsBox API for updating tags on an existing storage location
+        # is implemented/confirmed here; surface the gap instead of
+        # inventing an endpoint. See partsbox_client.py.
+        storage_tag_missing = not _storage_has_tag(existing_storage, PRODUCTION_STORAGE_TAG)
     else:
         storage_result = client.create_storage_location(
             name=names["storage_name"],
+            tags=[PRODUCTION_STORAGE_TAG],
             #description=f"Incoming parts storage for {names['project_name']}",
-            #tags=["bom-automation", "incoming"],
         )
 
     return {
@@ -222,6 +286,7 @@ def create_partsbox_project_and_storage(project_name, description=""):
         "storage_result": storage_result,
         "project_reused": bool(existing_project),
         "storage_reused": bool(existing_storage),
+        "storage_tag_missing": storage_tag_missing,
     }
 
 
