@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# VS Code
+.vscode/
+
+# Secrets
+.env
+Documentation/env
+
+# Generated files
+output/
+.cache/
+
+# Local BOM inputs; keep test BOMs versioned
+input/*
+!input/test_bom*.csv

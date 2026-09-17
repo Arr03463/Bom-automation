@@ -1,0 +1,79 @@
+﻿,Line #,Name,Description,Designator,Revision ID,Revision Status,Quantity,Manufacturer 1,Manufacturer Part Number 1,Manufacturer Lifecycle 1,Supplier 1,Supplier Part Number 1,Supplier Unit Price 1,Supplier Subtotal 1
+,,08051C105K4T2A,"1 uF, 100 V, ï¿½ 10%, X7R, 0805 [2012 Metric], Multilayer Ceramic Capacitor",C47,CMP-001-00004-1,Up to date,1,Kyocera AVX,08051C105K4T2A,Unknown,Mouser,581-08051C105K4T2A,0.158,15.8
+,,GCJ188R72A104KA01D,"0.1 uF, 100 V, ï¿½ 10%, X7R, 0603 [1608 Metric], Multilayer Ceramic Capacitor",C50,CMP-001-00000-3,Up to date,1,Murata,GCJ188R72A104KA01D,Unknown,Newark,92AH8161,0.047,4.7
+,,08051C103K4T4A,"10nF, 100 V, ± 10%, X7R, 0805 [2012 Metric], Multilayer Ceramic Capacitor","C65, C66, C67, C68",CMP-001-00009-1,Up to date,4,Kyocera AVX,08051C103K4T4A,Unknown,Newark,77AH4977,0.038,15.2
+,,C1608X7R1H104K080AA,Multilayer Ceramic Capacitors 100nF ±10% 50V X7R SMD 0603,"C33, C48, C49, C51, C52",CMP-2000-04982-2,Up to date,5,TDK,C1608X7R1H104K080AA,Unknown,Newark,67T1082,0.022,11
+,,GRM21B5C1H223JA01K,"Chip Multilayer Ceramic Capacitors for General Purpose, 0805, 22000pF, C0G, 30ppm/°C, 5%, 50V",C40,CMP-06035-027566-1,Up to date,1,Murata,GRM21B5C1H223JA01K,Unknown,Digikey,490-GRM21B5C1H223JA01KCT-ND,0.1122,11.22
+,,C2012X7S2A105K125AB,Multilayer Ceramic Capacitors 1μF ±10% 100V X7S SMD 0805,C14,CMP-2000-05454-2,Up to date,1,TDK,C2012X7S2A105K125AB,Unknown,Mouser,810-C2012X7S2A105K,0.159,15.9
+,,GCJ188R72A104KA01D,Cap Ceramic 0.1uF 100V X7R 10% Pad SMD 0603 Soft Termination +125°C Automotive T/R,"C9, C20, C36, C38, C44, C54, C57",CMP-06035-047895-1,Up to date,7,Murata,GCJ188R72A104KA01D,Volume Production,"Digikey, Newark","490-13420-1-ND, 92AH8161","0.03973, 0.041","43.7, 45.1"
+,,885012207110,Multilayer Ceramic Capacitors MLCC - SMD/SMT WCAP-CSGP 100V 100pF 0805 10%,C41,CMP-207839-000039-1,Out of date,1,Wurth Electronics,885012207110,,Digikey,732-12231-1-ND,0.0423,4.23
+,,GRM21BZ7YA475ME15L,"Chip Multilayer Ceramic Capacitors for General Purpose, 0805, 4.7uF, X7R, 15%, 20%, 35V","C23, C39, C45",CMP-06035-014463-1,Up to date,3,Murata,GRM21BZ7YA475ME15L,Unknown,Digikey,490-GRM21BZ7YA475ME15LCT-ND,0.1016,71.12
+,,CL32B475KCVZW6E,"4.7uF, 100V, 10% +Tol, 10% -Tol, X7R, 15% TC,  Surface Mount, 1210, Ceramic Capacitor",C53,CMP-114-000000-2,Up to date,1,Samsung,CL32B475KCVZW6E,Unknown,Digikey,1276-7060-6-ND,0.4161,41.61
+,,C3225X7R1N106K250AC,"10 uF, 75 V, ± 10%, X7R, 1210 [3225 Metric], Multilayer Ceramic Capacitor","C55, C56",CMP-001-00010-1,Up to date,2,TDK,C3225X7R1N106K250AC,Unknown,Newark,71AH3393,0.377,75.4
+,,GCM188R72A103KA37J,Ceramic Capacitor for Automotive 10nF  ±10% 100VDC X7R 0603 Paper T/R,"C37, C58",CMP-2006-02393-2,Up to date,2,Murata,GCM188R72A103KA37J,Volume Production,Newark,66AJ7158,0.02,4
+,,LTST-C190GKT,LED GREEN CLEAR CHIP SMD,"D5, D10, D11, D12, D13, D14",CMP-22017-000005-2,Up to date,6,Vishay Lite-On,LTST-C190GKT,Volume Production,Digikey,160-1183-1-ND,0.05134,30.8
+,,LTST-C190EKT,LED RED CLEAR CHIP SMD,"D4, D6, D7, D8, D9",CMP-22017-000021-1,Up to date,5,Vishay Lite-On,LTST-C190EKT,Volume Production,Digikey,160-1182-1-ND,0.05448,27.24
+,,FSV20150V,FSV Series Single 150 V 270 A Surface Mount Schottky Rectifier - TO-277A,"D1, D2",,,2,,,,,,,
+,,SMBJ3V3-E3/5B,"Trans Voltage Suppressor Diode, 600W, 3.3V V(RWM), Unidirectional, 1 Element, Silicon, DO-214AA",D3,CMP-131-000001-2,Out of date,1,Vishay Semiconductors,SMBJ3V3-E3/5B,Unknown,Newark,57AJ0569,0.131,13.1
+,,SMCJ13A,ESD Protection / TVS Diodes 1.5kW 13V 5% Uni-Directional,"D15, D16, D18",CMP-004-00004-1,Up to date,3,,,,,,,
+,,0685P9200-01,"Electric Fuse, Fast Blow, 20A, 50VAC, 50VDC, 150A (IR), Surface Mount, 1206",F1,,,1,,,,,,,
+,,Heat Sink 567-94AB,"Heat Sinks Heat Sink for DC/DC Converters, Eighth Brick, 57.9x55x23.9mm, 6 Fins",HT1,,,1,,,,,,,
+,,CM5441Z161B-10,"Ferrite EMI Common Mode Chokes 160ohms 100MHz 75A 1 Choke, Thru-hole",L4,CMP-006-00003-1,Up to date,1,Laird Steward,CM5441Z161B-10,Volume Production,Mouser,875-CM5441Z161B-10,1.95,195
+,,TE Connectivity 2013499-1,Conn Micro USB 2.0 Type B RCP 5 POS 0.65mm Solder RA SMD 5 Terminal 1 Port T/R,P7,,,1,,,,,,,
+,,TE-Connectivity 2345986-1,Conn USB Type C PL 24 POS 0.5mm RA SMD Single Port Carton,"P3, P4",,,2,,,,,,,
+,,TE Connectivity 2-1445100-4,Conn Power HDR 4 POS 3mm Solder RA SMD 4 Terminal 1 Port Tape,P1,,,1,,,,,,,
+,,2N7002KT1G,MOSFET N-CH 60V 320MA SOT-23,"Q3, Q4",CMP-1058-00766-2,Up to date,2,ON Semiconductor,2N7002KT1G,Volume Production,Newark,04X9594,0.03,6
+,,BSC520N15NS3G,Single N-Channel 150 V 52 mOhm 8.7 nC OptiMOS Power Mosfet - TDSON-8,"Q1, Q2",CMP-00001-2,Up to date,2,Infineon,BSC520N15NS3GATMA1,Volume Production,,,,
+,,RC0603JR-073K3L,RES SMD 3.3K OHM 5% 1/10W 0603,R31,CMP-03412-037834-1,Up to date,1,Yageo,RC0603JR-073K3L,Volume Production,Newark,98K7312,0.006,0.6
+,,RK73B1JTTD471J,,"R26, R27, R28, R33, R34, R35, R36",CMP-2000-00992-1,Up to date,7,KOA Speer,RK73B1JTTD471J,Volume Production,Newark,84AH8830,0.003,2.1
+,,RT0603FRE071K5L,RES SMD 1.5K OHM 1% 1/10W 0603,"R15, R16, R18, R19",CMP-03412-003799-1,Up to date,4,Yageo,RT0603FRE071K5L,Volume Production,Newark,49AK4437,0.005,2
+,,RL3720WT-R050-F,Res Thin Film 0815 0.05 Ohm 1% 1W 0ppm/C to 350ppm/C Wide Terminal SMD Automotive T/R,R3,,,1,Susumu,RL3720WT-R050-F,Volume Production,Mouser,754-RL3720WT-R050-F,0.325,32.5
+,,RK73H1JTTD4991D,4.99kΩ ±0.5% 0.1W Chip Resistor 0603 Thick Film AEC-Q200 Qualified,R11,CMP-04015-101234-1,Up to date,1,KOA Speer,RK73H1JTTD4991D,Volume Production,Mouser,660-RK73H1JTTD4991D,0.06,6
+,,ERA-8AEB5903V,"Fixed Resistor, Thin Film, 0.25W, 590000ohm, 150V, 0.1% +/-Tol, 25ppm/Cel, Surface Mount, 1206","R4, RT1",,,2,,,,,,,
+,,RK73H1JTTD1303F,Thick Film Resistors - SMD 1/10watt 130Kohms 1%,R5,CMP-2000-01164-1,Up to date,1,KOA Speer,RK73H1JTTD1303F,Volume Production,Newark,85AH0456,0.007,0.7
+,,RC1210JR-0710KL,,"R25, R29, R30",CMP-2005-01721-1,Up to date,3,Yageo,RC1210JR-0710KL,Volume Production,Mouser,603-RC1210JR-0710KL,0.029,8.7
+,,RC0603FR-070RL,RES SMD 0 OHM JUMPER 1/10W 0603,"R38, R44, R45, R47, R48",CMP-2000-06925-2,Up to date,5,Yageo,RC0603FR-070RL,Volume Production,Newark,50Y7761,0.002,1.8
+,,ERA6AEB1403V,Thin Film Resistors - SMD 0805 140Kohm 0.1% 25ppm,R10,CMP-2001-00743-1,Up to date,1,Panasonic,ERA-6AEB1403V,Volume Production,Mouser,667-ERA-6AEB1403V,0.051,5.1
+,,ERA6AEB1872V,Thin Film Resistors - SMD 0805 18.7Kohm 0.1% 25ppm,"R17, R24, RB1",CMP-2001-00764-1,Up to date,3,Panasonic,ERA-6AEB1872V,Volume Production,Mouser,667-ERA-6AEB1872V,0.051,15.3
+,,CRG0603F10K,"Chip Resistor, 10 KOhm, +/- 1%, 0.1 W, -55 to 125 degC, 0603 (1608 Metric), RoHS, Tape and Reel",R32,CMP-2000-07508-1,Up to date,1,TE Connectivity,CRG0603F10K,Unknown,Mouser,279-1622829-1,0.011,1.1
+,,CRCW06031R00JNEA,"RES Thick Film, 1Ω, 5%, 0.1W, 200ppm/°C, 0603","R12, R14",CMP-2000-03050-2,Up to date,2,Vishay Dale,CRCW06031R00JNEA,Volume Production,Newark,59M6759,0.003,0.6
+,,RK73H1JTTD3482F,Thick Film Resistors - SMD 1/10watts 34.8Kohms 1%,RVB1,CMP-2000-01439-1,Up to date,1,KOA Speer,RK73H1JTTD3482F,Unknown,Newark,85AH0715,0.008,0.8
+,,RK73H1JTTD2213F,Thick Film Resistors - SMD 1/10watt 221Kohms 1%,RVT1,CMP-2000-01312-1,Up to date,1,KOA Speer,RK73H1JTTD2213F,Unknown,Mouser,660-RK73H1JTTD2213F,0.012,1.2
+,,TQL850CSV33RLG,LDO Regulator Positive 3.3V 500mA 8-Pin SOP EP T/R,U6,CMP-103-000001-1,Up to date,1,Taiwan Semiconductor,TQL850CSV33RLG,Volume Production,Digikey,1801-TQL850CSV33RLGCT-ND,1.09,109.27
+,,ISO7720DR,DGTL ISO 3000VRMS 2CH GP 8SOIC,U7,CMP-04872-000137-1,Up to date,1,Texas Instruments,ISO7720DR,Unknown,Digikey,296-47780-1-ND,1.11,111.46
+,,ISO1540QDRQ1,AUTO ISO I2C 2500VRMS 2CH 8SOIC,U5,CMP-04872-000105-1,Up to date,1,Texas Instruments,ISO1540QDRQ1,Unknown,Mouser,595-ISO1540QDRQ1,2.8,280
+,,INA237AIDGSR,"85-V, 16-BIT, I2C OUTPUT CURRENT",U3,CMP-04895-000433-1,Up to date,1,Texas Instruments,INA237AIDGSR,Unknown,Digikey,296-INA237AIDGSRCT-ND,1.3,130.05
+,,LT3758AHMSE#PBF,"High Input Voltage, Boost, Flyback, SEPIC and Inverting Controller-Improved Load Transient, 10-pin SOP (MSE-10-EDP), -40 to 150 degC, Pb-Free",U4,CMP-0491-01037-1,Up to date,1,Analog Devices / Linear Technology,LT3758AHMSE#PBF,Volume Production,Mouser,584-LT3758AHMSE#PBF,4.77,477
+,,C3216X5R1V226M160AC,Multilayer Ceramic Capacitors 22uF ±20% 35V X5R SMD 1206,"C1, C2, C3, C4, C5, C6, C7, C8, C13, C15, C21, C22, C28, C34, C35, C42, C43, C46",CMP-2000-05398-2,Up to date,18,TDK,C3216X5R1V226M160AC,Unknown,,,,
+,,22201C106MAT2A,Multilayer Ceramic Capacitors MLCC - SMD/SMT 100V 10uF X7R 2220 20%,"C10, C11, C12, C18, C19, C69, C70, C71, C72, C73, C74",CMP-2000-07534-2,Up to date,11,KYOCERA AVX,22201C106MAT2A,Volume Production,Avnet,KGM55DR72A106MV,0.71175,782.925
+,,CGA4J1X7R1V475K125AC,Cap Ceramic 4.7uF 35V X7R 10% Pad SMD 0805 +125°C Automotive T/R,C17,CMP-08246-002380-1,Up to date,1,TDK,CGA4J1X7R1V475K125AC,Unknown,,,,
+,,GRM188R6YA106MA73J,"Ceramic Capacitor, Ceramic, 35V, 20% +Tol, 20% -Tol, X5R, 15% TC, 10uF, Surface Mount, 0603","C59, C60",CMP-001-00016-1,Up to date,2,Murata,GRM188R6YA106MA73J,Unknown,,,,
+,,UMK107BJ474KAHT,None,C61,CMP-14477-003431-2,Up to date,1,TAIYO YUDEN,UMK107BJ474KAHT,Volume Production,Mouser,963-UMK107BJ474KAHT,0.047,4.7
+,,MAL215099103E3,CAP ALUM 220UF 20% 50V SMD,"C62, C76",CMP-02412-000023-1,Up to date,2,Vishay,MAL215099103E3,Volume Production,Mouser,594-MAL215099103E3,1.04,208
+,,C3216X5R1E476M160AC,Multilayer Ceramic Capacitors 47uF ±20% 25V X5R SMD 1206,C63,CMP-2000-05397-3,Up to date,1,TDK,C3216X5R1E476M160AC,Volume Production,DigiKey,445-8047-1-ND,0.4168,41.68
+,,C0603C681J5GACTU,CAP CER 680PF 50V C0G/NP0 0603,C64,CMP-2006-03316-2,Up to date,1,Yageo Group,C0603C681J5GACTU,Volume Production,Mouser,80-C0603C681J5G,0.031,3.1
+,,MAL215099907E3,MAL215099907E3 Cap Aluminum 100uF 100V 20% (12.5 X 13mm) Cylindrical 660mA 5000 hr 105°C Blister T/R,C75,CMP-00030-68114016-1,Up to date,1,Vishay,MAL215099907E3,Volume Production,Mouser,594-MAL215099907E3,1.07,107
+,,Cap 100nF 10% 50V X7R 0603,"Ceramic Capacitor, Multilayer, Ceramic, 50V, 10% -Tol, X7R, 15% Tc, 0.1Uf, Surface Mount, 0603",C77,CMP-001-00022-1,Up to date,1,TDK,C1608X7R1H104K080AA,Unknown,,,,
+,,Cap 10nF 10% 250V X7R 0805,C Series 0805 10 nF 250 V ±10 % Tolerance X7R SMT Multilayer Ceramic Capacitor,C78,CMP-001-00033-1,Up to date,1,TDK,C2012X7R2E103K125AA,Unknown,,,,
+,,MBRA340T3G,"Schottky Power Rectifier, 2-Pin SMA, Pb-Free, Tape and Reel",D17,CMP-1055-00306-1,Up to date,1,onsemi,MBRA340T3G,Volume Production,Newark,MBRA340T3G,0.186,930
+,,73251-1350,"RF SMA Connector, 1 Contact(s), Female, Board Mount, Surface Mount Terminal, Locking, Jack",J1,CMP-002-00018-1,Up to date,1,Molex,73251-1350,Unknown,,,,
+,,AGP4233-223ME,Fixed Inductors 22uH Magnetic Shielded 20% 24A 2.95mOhms AEC Qualified,L1,CMP-11268-000081-1,Up to date,1,Coilcraft,AGP4233-223ME,Volume Production,Mouser,994-AGP4233-223ME,20.63,2063
+,,XEL4030-472MEC,Fixed Inductors 4.7uH Shld 20% 5.1A 44.1mOhms AECQ2,L5,CMP-191-000000-2,Up to date,1,,,,,,,
+,,MA5173-AE,"Power inductor, for TI TAS5612/5614, RoHS, halogen-free",L6,CMP-006-00005-3,Out of date,1,Coilcraft,MA5173-AE,Volume Production,,,,
+,,TE-Connectivity  6-292161-6,"PCB Mount Header, Vertical, Wire-to-Board, 6 Position, 2 mm [.079 in] Centerline, Partially Shrouded, Tin, Through Hole - Solder, AMP CT",P2,CMP-013-000005-1,Up to date,1,,,,,,,
+,,1-350942-0,Pin & Socket Connectors 2 POS STD RT ANGLE,P5,CMP-002-00021-1,Out of date,1,TE Connectivity,1-350942-0,Volume Production,Avnet,1-350942-0,0.75653,75.653
+,,2-1445056-2,Pin & Socket Connectors MICRO MNL HDR ASSY SINGLE ROW,P6,CMP-002-00020-1,Out of date,1,TE Connectivity / AMP,2-1445056-2,Unknown,,,,
+,,CC6-1212SR-E,Module DC-DC 12VIN 1-OUT 12V 0.5A 6W 7-Pin PDIP SMD,PS1,CMP-001-0002-1,Up to date,1,TDK-Lambda,CC6-1212SR-E,Volume Production,DigiKey,445-3290-ND,20.3825,2038.25
+,,WSLP25125L000FEA,WSLP25125L000FEA Res Metal Strip 2512 0.005 Ohm 1% 3W ±110ppm/C Sulfur Resistant Pad SMD Automotive T/R,R13,CMP-00030-22061781-1,Up to date,1,Vishay,WSLP25125L000FEA,Volume Production,Mouser,71-WSLP25125L000FEA,0.492,49.2
+,,CRGP0603F10K,Res Thick Film 0603 10K Ohm 1% 0.25W(1/4W) ±100ppm/C Pad SMD T/R Automotive AEC-Q200,"R20, R21, R22, R23",CMP-009-00000-1,Up to date,4,TE Connectivity,CRGP0603F10K,Volume Production,DigiKey,A130428CT-ND,0.04024,16.096
+,,RK73H1JTTD1622F,,R37,CMP-2000-01217-1,Up to date,1,KOA Speer,RK73H1JTTD1622F,Volume Production,Newark,RK73H1JTTD1622F,0.013,1.3
+,,ERJ-3EKF6342V,,R39,CMP-2000-00601-1,Up to date,1,Panasonic,ERJ-3EKF6342V,Volume Production,Mouser,667-ERJ-3EKF6342V,0.018,1.8
+,,ERJ-3GEYJ153V,,R40,CMP-2000-00725-1,Up to date,1,Panasonic,ERJ-3GEYJ153V,Volume Production,Newark,ERJ3GEYJ153V,0.015,1.5
+,,CRGCQ0603F100K,CRGCQ 0603 100K 1%,R41,CMP-03211-000852-1,Up to date,1,TE Connectivity,CRGCQ0603F100K,Volume Production,Avnet,73AC9044,0.006,0.6
+,,RT0603FRE07536KL,RES SMD 536K OHM 1% 1/10W 0603,R42,CMP-03412-032934-1,Up to date,1,Yageo Group,RT0603FRE07536KL,Volume Production,DigiKey,13-RT0603FRE07536KLCT-ND,0.0119,1.19
+,,Res R05 1% 10W 2818,Res Current Sense Metal Strip 2818 5m Ohm 1% 10W ±200ppm/°C Molded T/R,R43,CMP-009-00052-1,Up to date,1,Vishay,WSHP28185L000FEA,Volume Production,Newark,WSHP28185L000FEA,1.21,121
+,,Res 10k 1% 250mW 0603,"10 kOhms ±1% 0.25W, 1/4W Chip Resistor 0603 (1608 Metric) Automotive AEC-Q200, Pulse Withstanding Thick Film",R46,CMP-009-00044-1,Up to date,1,TE Connectivity,CRGP0603F10K,Volume Production,Avnet,73AC3640,0.03,3
+,,5000,"Cable Wrap, 1/2 Inch, Polyethylene, Natural, 50 Ft, Spirap Series","TP1, TP2, TP7, TP8",CMP-00010-2,Up to date,4,Keystone,5000,Volume Production,Farnell,5000,0.12391,49.56576
+,,5001,"Test Point, Mini, Thm, Pc, .300 L, .100 Od, Heat Resistant Nylon 46, Black","TP5, TP6, TP11, TP12",CMP-00019-1,Up to date,4,Keystone,5001,Volume Production,Future Electronics,5001,0.154,61.6
+,,LT1913EDD#PBF,"3.5 A, 2.4 MHz Step-Down Switching Regulator, 10-pin SON (DD-10), -40 to 125 degC, Pb-Free",U8,CMP-0491-00113-1,Up to date,1,Analog Devices,LT1913EDD#PBF,Unknown,,,,
+,,INA228,"85V, 20-bit I²C-output E3-driver-capable current, voltage, power, energy, charge monitor with alert 10-VSSOP -40 to 125",U9,CMP-001-0012-1,Out of date,1,Texas Instruments,INA228AIDGSR,Volume Production,Mouser,595-INA228AIDGSR,2.88,288
