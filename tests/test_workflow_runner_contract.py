@@ -18,11 +18,17 @@ SAMPLE_BOM_CSV = (
     "C1 C2,2,Murata,GRM188R71C105KA12D,1uF Capacitor 16V 0603\n"
 )
 
+SAMPLE_BOM_WITH_REVIEW_ROW_CSV = (
+    "Designator,Quantity,Manufacturer,Part Number,Description\n"
+    "R1 R2 R3,3,Yageo,RC0603FR-0710KL,10k Resistor 1% 0603\n"
+    "U1,1,STMicroelectronics,,Missing part number\n"
+)
 
-def run_isolated_workflow(runs_root, project_name="Widget"):
+
+def run_isolated_workflow(runs_root, project_name="Widget", bom_csv=SAMPLE_BOM_CSV):
     workspace = build_run_workspace(runs_root=runs_root)
     source_path = save_uploaded_file(
-        workspace["input_dir"], "bom.csv", SAMPLE_BOM_CSV.encode("utf-8")
+        workspace["input_dir"], "bom.csv", bom_csv.encode("utf-8")
     )
 
     result = run_bom_workflow(
@@ -37,6 +43,12 @@ def run_isolated_workflow(runs_root, project_name="Widget"):
         output_folder=str(workspace["output_dir"]),
     )
     return workspace, result
+
+
+def run_isolated_workflow_with_review_row(runs_root, project_name="Widget"):
+    return run_isolated_workflow(
+        runs_root, project_name=project_name, bom_csv=SAMPLE_BOM_WITH_REVIEW_ROW_CSV
+    )
 
 
 class WorkflowRunnerContractTests(unittest.TestCase):
@@ -91,6 +103,28 @@ class WorkflowRunnerContractTests(unittest.TestCase):
         self.assertIn(workspace_b["run_id"], result_b["outputs"]["cleaned_csv"])
         self.assertNotIn(workspace_b["run_id"], result_a["outputs"]["cleaned_csv"])
         self.assertEqual(content_a, content_b)
+
+    def test_review_items_and_bom_rows_share_identity_from_one_canonical_state(self):
+        """
+        Guards against bom_rows and review_items being two independently
+        derived/copied datasets that could drift apart -- the review row's
+        row_id must also be present in bom_rows, with matching field
+        values, because both are produced from the same ActiveBomState.
+        """
+        _, result = run_isolated_workflow_with_review_row(self.temp_root)
+
+        self.assertEqual(len(result["review_items"]), 1)
+        review_row = result["review_items"][0]
+
+        matching_bom_row = next(
+            (row for row in result["bom_rows"] if row["row_id"] == review_row["row_id"]),
+            None,
+        )
+
+        self.assertIsNotNone(matching_bom_row)
+        self.assertEqual(matching_bom_row["status"], "missing_mpn")
+        self.assertEqual(matching_bom_row["status"], review_row["status"])
+        self.assertEqual(matching_bom_row["manufacturer"], review_row["manufacturer"])
 
 
 if __name__ == "__main__":

@@ -112,6 +112,32 @@ class FileTokenStore(TokenStore):
         return True
 
 
+# A single MemoryTokenStore, lazily created and reused for the life of the
+# process. Every DigiKeyClient() built without an explicit token_store
+# calls build_token_store(); if each call returned a fresh
+# MemoryTokenStore(), a rotated token set by one client instance would be
+# invisible to the next one constructed a moment later, even though both
+# are running in the very same process. This module-level handle is the
+# token_store abstraction's own internal state (not an unrelated
+# application global) -- it exists specifically to give the "memory"
+# backend the process-lifetime persistence its name promises.
+_shared_memory_token_store = None
+
+
+def _get_shared_memory_token_store():
+    global _shared_memory_token_store
+    if _shared_memory_token_store is None:
+        _shared_memory_token_store = MemoryTokenStore()
+    return _shared_memory_token_store
+
+
+def reset_shared_memory_token_store():
+    """Clear the process-wide memory store. Exposed for tests; also usable
+    if an operator ever needs to force-drop an in-memory token by hand."""
+    global _shared_memory_token_store
+    _shared_memory_token_store = None
+
+
 def build_token_store():
     """
     Backend selection, generic across local and hosted use:
@@ -124,8 +150,11 @@ def build_token_store():
     - DIGIKEY_TOKEN_STORE=file (with DIGIKEY_TOKEN_STORE_PATH=<dir>): for a
       host that provides a writable persistent directory outside the repo.
     - DIGIKEY_TOKEN_STORE=memory, or no .env file and no explicit setting
-      (e.g. Streamlit Community Cloud): in-process only. Documented as
-      non-persistent across restarts -- see MemoryTokenStore.
+      (e.g. Streamlit Community Cloud): in-process only, shared across
+      every DigiKeyClient() built in this process (see
+      _get_shared_memory_token_store). Documented as non-persistent across
+      restarts -- see MemoryTokenStore and
+      Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md.
     """
     backend = os.getenv("DIGIKEY_TOKEN_STORE", "").strip().lower()
     env_file_path = os.getenv("DIGIKEY_TOKEN_STORE_ENV_PATH", "").strip()
@@ -141,6 +170,6 @@ def build_token_store():
         directory = os.getenv("DIGIKEY_TOKEN_STORE_PATH", "").strip()
         if directory:
             return FileTokenStore(directory)
-        return MemoryTokenStore()
+        return _get_shared_memory_token_store()
 
-    return MemoryTokenStore()
+    return _get_shared_memory_token_store()

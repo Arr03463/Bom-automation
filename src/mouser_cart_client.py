@@ -4,6 +4,8 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from http_error_utils import describe_error_response
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env")
@@ -54,7 +56,10 @@ class MouserCartClient:
         )
 
         if response.status_code >= 400:
-            print("Mouser Cart response:", response.text)
+            # The request URL includes apiKey as a query parameter; never
+            # print the raw response body, since some vendor error
+            # responses echo request details back.
+            print("Mouser Cart response:", describe_error_response(response))
 
         response.raise_for_status()
         return response.json()

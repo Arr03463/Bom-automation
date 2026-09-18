@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import requests
 from dotenv import load_dotenv
 
+from http_error_utils import describe_error_response
 from token_store import EnvFileTokenStore
 
 
@@ -86,7 +87,7 @@ def main():
     )
     if response.status_code >= 400:
         print("DigiKey token exchange failed.")
-        print(response.text)
+        print(describe_error_response(response))
 
     response.raise_for_status()
 
@@ -138,7 +139,7 @@ def check_existing_refresh_token():
 
     if response.status_code >= 400:
         print("DigiKey refresh token check failed.")
-        print(response.text)
+        print(describe_error_response(response))
         response.raise_for_status()
 
     token_data = response.json()

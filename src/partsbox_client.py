@@ -2,6 +2,8 @@ import os
 import requests
 from dotenv import load_dotenv
 
+from http_error_utils import describe_error_response
+
 load_dotenv()
 
 
@@ -83,7 +85,7 @@ class PartsBoxClient:
         )
 
         if response.status_code >= 400:
-            print("PartsBox response:", response.text)
+            print("PartsBox response:", describe_error_response(response))
 
         response.raise_for_status()
         data = response.json()

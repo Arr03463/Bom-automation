@@ -7,6 +7,7 @@ import requests
 from dotenv import load_dotenv
 
 from digikey_client import DigiKeyClient
+from http_error_utils import describe_error_response
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env", override=True)
@@ -61,7 +62,7 @@ class DigiKeyMyListsClient:
         )
 
         if response.status_code >= 400:
-            print("DigiKey IsValidListName response:", response.text)
+            print("DigiKey IsValidListName response:", describe_error_response(response))
 
         _raise_for_status(response, "DigiKey MyLists name validation failed")
         result = response.json()
@@ -87,7 +88,7 @@ class DigiKeyMyListsClient:
         )
 
         if response.status_code >= 400:
-            print("DigiKey ValidListName response:", response.text)
+            print("DigiKey ValidListName response:", describe_error_response(response))
 
         _raise_for_status(response, "DigiKey MyLists valid-name request failed")
         result = response.json()
@@ -135,7 +136,7 @@ class DigiKeyMyListsClient:
         )
 
         if response.status_code >= 400:
-            print("DigiKey CreateList response:", response.text)
+            print("DigiKey CreateList response:", describe_error_response(response))
 
         _raise_for_status(response, "DigiKey MyLists create-list request failed")
         return response.json()
@@ -163,7 +164,7 @@ class DigiKeyMyListsClient:
         )
 
         if response.status_code >= 400:
-            print("DigiKey AddParts response:", response.text)
+            print("DigiKey AddParts response:", describe_error_response(response))
 
         _raise_for_status(response, "DigiKey MyLists add-parts request failed")
         return response.json()

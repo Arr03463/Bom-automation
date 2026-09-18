@@ -16,6 +16,7 @@ from token_store import (
     FileTokenStore,
     MemoryTokenStore,
     build_token_store,
+    reset_shared_memory_token_store,
 )
 
 
@@ -100,6 +101,9 @@ class BuildTokenStoreSelectionTests(unittest.TestCase):
             self._saved_env[key] = os.environ.pop(key, None)
         self.addCleanup(self._restore_env)
 
+        reset_shared_memory_token_store()
+        self.addCleanup(reset_shared_memory_token_store)
+
     def _restore_env(self):
         for key, value in self._saved_env.items():
             if value is None:
@@ -137,6 +141,79 @@ class BuildTokenStoreSelectionTests(unittest.TestCase):
     def test_memory_backend_auto_selected_when_target_env_path_missing(self):
         os.environ["DIGIKEY_TOKEN_STORE_ENV_PATH"] = str(self.temp_dir / "does-not-exist.env")
         self.assertIsInstance(build_token_store(), MemoryTokenStore)
+
+    def test_repeated_calls_share_the_same_memory_store_instance(self):
+        os.environ["DIGIKEY_TOKEN_STORE"] = "memory"
+
+        store_one = build_token_store()
+        store_two = build_token_store()
+
+        self.assertIs(store_one, store_two)
+
+    def test_reset_creates_a_fresh_memory_store(self):
+        os.environ["DIGIKEY_TOKEN_STORE"] = "memory"
+
+        store_before = build_token_store()
+        store_before.set("DIGIKEY_REFRESH_TOKEN", "value")
+
+        reset_shared_memory_token_store()
+        store_after = build_token_store()
+
+        self.assertIsNot(store_before, store_after)
+        self.assertIsNone(store_after.get("DIGIKEY_REFRESH_TOKEN"))
+
+
+class DigiKeyClientSharedMemoryTokenStoreTests(unittest.TestCase):
+    """
+    Covers the specific regression: build_token_store() previously
+    returned a brand-new MemoryTokenStore() on every call, so a token
+    rotated by one DigiKeyClient() was invisible to the next DigiKeyClient()
+    built moments later in the same process, even with no explicit
+    token_store passed to either.
+    """
+
+    def setUp(self):
+        self._saved_backend = os.environ.get("DIGIKEY_TOKEN_STORE")
+        os.environ["DIGIKEY_TOKEN_STORE"] = "memory"
+        self.addCleanup(self._restore_backend)
+
+        reset_shared_memory_token_store()
+        self.addCleanup(reset_shared_memory_token_store)
+
+    def _restore_backend(self):
+        if self._saved_backend is None:
+            os.environ.pop("DIGIKEY_TOKEN_STORE", None)
+        else:
+            os.environ["DIGIKEY_TOKEN_STORE"] = self._saved_backend
+
+    @patch("digikey_client.requests.post")
+    def test_rotated_token_is_visible_to_a_later_client_in_the_same_process(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "access_token": "access-token-a",
+            "refresh_token": "rotated-by-client-a",
+        }
+        mock_post.return_value = mock_response
+
+        # Client A: no explicit token_store, uses build_token_store()'s
+        # default memory backend, and rotates its refresh token.
+        client_a = DigiKeyClient()
+        client_a.dry_run = False
+        client_a.client_id = "test-client-id"
+        client_a.client_secret = "test-client-secret"
+        client_a.refresh_token = "original-token"
+        client_a.user_access_token = ""
+
+        client_a.get_user_access_token()
+        self.assertEqual(client_a.refresh_token, "rotated-by-client-a")
+
+        # Client B: constructed afterward, also with no explicit
+        # token_store. It must see client A's rotated token, not fall back
+        # to the stale static env value.
+        client_b = DigiKeyClient()
+
+        self.assertEqual(client_b.refresh_token, "rotated-by-client-a")
 
 
 class DigiKeyClientRefreshTokenTests(unittest.TestCase):

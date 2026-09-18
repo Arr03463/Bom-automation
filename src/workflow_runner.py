@@ -2,9 +2,9 @@ import json
 import os
 from pathlib import Path
 
-import pandas as pd
 from dotenv import load_dotenv
 
+from active_bom_state import ActiveBomState
 from bom_cleaner import (
     apply_project_quantities,
     build_output_paths,
@@ -20,7 +20,6 @@ from config import (
 from digikey_client import DigiKeyClient
 from digikey_list_export import export_digikey_list
 from digikey_mylists_client import create_digikey_mylist_from_bom
-from main import build_review_items
 from mouser_cart_client import create_mouser_cart_from_bom
 from mouser_client import MouserClient
 from partsbox_project_builder import (
@@ -72,27 +71,6 @@ def _empty_result():
             "digikey": None,
         },
     }
-
-
-def _dataframe_to_row_records(df, run_id):
-    """
-    Convert a cleaned/review BOM DataFrame into JSON-safe row dicts with a
-    stable row_id. review_items is always a filtered copy of clean_bom, so
-    matching pandas index labels are reused as the row_id suffix -- a
-    replacement decision made against a review row can be matched back to
-    the same row in bom_rows.
-    """
-    if df is None or df.empty:
-        return []
-
-    safe_df = df.where(pd.notnull(df), "")
-    rows = []
-    for index, record in safe_df.to_dict("index").items():
-        record = dict(record)
-        record["row_id"] = f"{run_id}:{index}"
-        rows.append(record)
-
-    return rows
 
 
 def _append_warning_rows(response, warnings_df):
@@ -209,6 +187,10 @@ def _build_partsbox_response(partsbox_result, partsbox_entries_result):
             "entries_skipped_existing", 0
         ),
         "entries_considered": partsbox_entries_result.get("entries_considered", 0),
+        "quantity_mismatches": partsbox_entries_result.get("quantity_mismatches", []),
+        "unrecognized_response": bool(
+            partsbox_entries_result.get("unrecognized_response")
+        ),
         "unmatched_count": len(partsbox_entries_result.get("unmatched_rows", [])),
     }
 
@@ -422,6 +404,13 @@ def run_bom_workflow(
                         response["messages"].append(
                             f"PartsBox entries skipped: {partsbox_entries_result.get('message')}"
                         )
+                        if partsbox_entries_result.get("unrecognized_response"):
+                            response["warnings"].append(
+                                "PartsBox project entries were not added: the "
+                                "project/get-entries response was not in a "
+                                "recognized shape, so AutoBOM could not safely "
+                                "confirm what already exists in the project."
+                            )
                     else:
                         response["messages"].append(
                             "PartsBox entries added: "
@@ -434,6 +423,19 @@ def run_bom_workflow(
                             response["messages"].append(
                                 "PartsBox entries already present, skipped: "
                                 f"{skipped_existing}"
+                            )
+
+                        for mismatch in partsbox_entries_result.get(
+                            "quantity_mismatches", []
+                        ):
+                            response["warnings"].append(
+                                "PartsBox quantity mismatch for "
+                                f"'{mismatch.get('entry_name')}': project has "
+                                f"{mismatch.get('existing_quantity')}, BOM now "
+                                f"requires {mismatch.get('intended_quantity')}. "
+                                "Not updated automatically -- no verified "
+                                "PartsBox update operation is implemented; "
+                                "update the quantity manually in PartsBox."
                             )
 
                     if partsbox_result.get("storage_tag_missing"):
@@ -453,7 +455,14 @@ def run_bom_workflow(
         else:
             response["messages"].append("PartsBox flow skipped.")
 
-        result.review_items = build_review_items(result.clean_bom)
+        # ActiveBomState wraps result.clean_bom by reference (not a copy) --
+        # it is the single canonical BOM state for this run. Review items,
+        # the response's bom_rows/review_items, and the exported workbook's
+        # Review_Items sheet are all derived from it below, rather than
+        # each independently re-filtering/re-copying clean_bom.
+        active_bom_state = ActiveBomState(result.clean_bom, run_id)
+        review_items_df = active_bom_state.review_items_dataframe()
+        result.review_items = review_items_df
 
         workbook_path, csv_path = build_output_paths(
             source_file_path,
@@ -462,21 +471,21 @@ def run_bom_workflow(
             csv_suffix=OUTPUT_CLEAN_BOM_SUFFIX,
         )
         export_clean_bom_workbook(result, workbook_path)
-        export_clean_bom(result.clean_bom, csv_path)
+        export_clean_bom(active_bom_state.dataframe, csv_path)
         response["outputs"]["cleaned_workbook"] = workbook_path
         response["outputs"]["cleaned_csv"] = csv_path
         response["messages"].append(f"Cleaned workbook exported to: {workbook_path}")
         response["messages"].append(f"Cleaned CSV exported to: {csv_path}")
 
-        mouser_sourced, digikey_sourced, manual_review = _count_sourcing(result.clean_bom)
+        mouser_sourced, digikey_sourced, manual_review = _count_sourcing(active_bom_state.dataframe)
         response["summary"]["mouser_sourced"] = mouser_sourced
         response["summary"]["digikey_sourced"] = digikey_sourced
         response["summary"]["manual_review"] = manual_review
-        response["summary"]["review_items"] = int(len(result.review_items))
+        response["summary"]["review_items"] = int(len(review_items_df))
         response["summary"]["warnings"] = int(len(response["warnings"]))
 
-        response["bom_rows"] = _dataframe_to_row_records(result.clean_bom, run_id)
-        response["review_items"] = _dataframe_to_row_records(result.review_items, run_id)
+        response["bom_rows"] = active_bom_state.rows()
+        response["review_items"] = active_bom_state.to_records(review_items_df)
         response["purchasing"] = {
             "mouser": _build_mouser_purchasing(run_mouser_cart, mouser_cart_result),
             "digikey": _build_digikey_purchasing(run_digikey_mylist, digikey_mylist_result),

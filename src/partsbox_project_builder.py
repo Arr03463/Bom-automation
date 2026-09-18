@@ -1,5 +1,7 @@
 import os
 import re
+from dataclasses import dataclass, field
+
 import pandas as pd
 
 from partsbox_client import PartsBoxClient
@@ -154,14 +156,19 @@ def build_project_entries(clean_bom, client):
     return entries, unmatched_rows
 
 
-def _entry_signature(entry):
+def _entry_identity(entry):
     """
     Identity used to decide whether a built entry already exists in the
-    project. Matched parts are identified by PartsBox part ID; unmatched
-    rows (no part-id) fall back to name, since that is the only stable
-    field build_project_entry() gives them. Designators are included so two
-    different rows for the same part are not treated as duplicates of
-    each other.
+    project -- deliberately EXCLUDES quantity. Matched parts are
+    identified by PartsBox part ID; unmatched rows (no part-id) fall back
+    to name, since that is the only stable field build_project_entry()
+    gives them. Designators are included so two different rows for the
+    same part are not treated as duplicates of each other.
+
+    Because quantity is excluded, two entries can share an identity while
+    disagreeing on quantity -- callers must check that separately (see
+    add_bom_entries_to_project) rather than treating identity-match as
+    "fully in sync."
     """
     designators = tuple(sorted(str(d) for d in (entry.get("entry/designators") or [])))
     part_id = entry.get("entry/part-id")
@@ -173,16 +180,53 @@ def _entry_signature(entry):
     return ("name", name, designators)
 
 
+def _quantities_equal(existing_quantity, intended_quantity):
+    try:
+        return float(existing_quantity) == float(intended_quantity)
+    except (TypeError, ValueError):
+        return existing_quantity == intended_quantity
+
+
+@dataclass
+class ExistingEntriesExtraction:
+    """
+    recognized=True means this response shape was understood -- entries
+    may legitimately be an empty list for a project with no entries yet.
+    recognized=False means the response could not be interpreted at all
+    (wrong type, missing/non-list envelope key) and entries is always
+    empty in that case; callers must fail closed rather than treat that
+    as "confirmed no entries."
+    """
+
+    recognized: bool
+    entries: list = field(default_factory=list)
+
+
 def _extract_existing_entries(get_entries_response):
+    """
+    The live project/get-entries response shape has not been verified
+    against the PartsBox API (per the Codex audit). Distinguish a
+    recognized envelope -- including a genuinely empty project, which is
+    valid -- from one this client cannot interpret, so an unrecognized
+    shape can be fail-closed by the caller instead of silently treated as
+    "no entries" (which would risk re-adding entries that already exist).
+    """
     if not isinstance(get_entries_response, dict):
-        return []
+        return ExistingEntriesExtraction(recognized=False)
 
     for key in ("data", "entries", "project/entries"):
-        records = get_entries_response.get(key)
-        if isinstance(records, list):
-            return records
+        if key not in get_entries_response:
+            continue
 
-    return []
+        records = get_entries_response[key]
+        if isinstance(records, list):
+            return ExistingEntriesExtraction(recognized=True, entries=records)
+
+        # The key we expected exists but is not a list -- don't guess at
+        # what it means.
+        return ExistingEntriesExtraction(recognized=False)
+
+    return ExistingEntriesExtraction(recognized=False)
 
 
 def add_bom_entries_to_project(partsbox_result, clean_bom, client=None):
@@ -195,19 +239,68 @@ def add_bom_entries_to_project(partsbox_result, clean_bom, client=None):
             "entries_added": 0,
             "entries_skipped_existing": 0,
             "entries_considered": 0,
+            "quantity_mismatches": [],
             "unmatched_rows": [],
         }
 
     client = client or PartsBoxClient()
     entries, unmatched_rows = build_project_entries(clean_bom, client)
 
-    existing_entries = _extract_existing_entries(client.get_project_entries(project_id))
-    existing_signatures = {_entry_signature(entry) for entry in existing_entries}
+    extraction = _extract_existing_entries(client.get_project_entries(project_id))
 
-    new_entries = [
-        entry for entry in entries if _entry_signature(entry) not in existing_signatures
-    ]
-    entries_skipped_existing = len(entries) - len(new_entries)
+    if not extraction.recognized:
+        return {
+            "skipped": True,
+            "message": (
+                "PartsBox project/get-entries response was not in a recognized "
+                "shape; no entries were added to avoid risking duplicates. "
+                "Verify the current PartsBox API response schema before "
+                "retrying."
+            ),
+            "entries_added": 0,
+            "entries_skipped_existing": 0,
+            "entries_considered": len(entries),
+            "quantity_mismatches": [],
+            "unmatched_rows": unmatched_rows,
+            "unrecognized_response": True,
+        }
+
+    existing_by_identity = {}
+    for existing_entry in extraction.entries:
+        if isinstance(existing_entry, dict):
+            existing_by_identity[_entry_identity(existing_entry)] = existing_entry
+
+    new_entries = []
+    quantity_mismatches = []
+    entries_skipped_existing = 0
+
+    for entry in entries:
+        existing_entry = existing_by_identity.get(_entry_identity(entry))
+
+        if existing_entry is None:
+            new_entries.append(entry)
+            continue
+
+        existing_quantity = existing_entry.get("entry/quantity")
+        intended_quantity = entry.get("entry/quantity")
+
+        if _quantities_equal(existing_quantity, intended_quantity):
+            entries_skipped_existing += 1
+            continue
+
+        # Same logical part/designators, different quantity: do not
+        # silently skip (that would leave PartsBox stale) and do not
+        # append a duplicate entry (no verified PartsBox update operation
+        # exists for this yet). Surface it instead.
+        quantity_mismatches.append(
+            {
+                "entry_name": entry.get("entry/name"),
+                "part_id": entry.get("entry/part-id"),
+                "designators": entry.get("entry/designators"),
+                "existing_quantity": existing_quantity,
+                "intended_quantity": intended_quantity,
+            }
+        )
 
     add_result = None
 
@@ -220,6 +313,7 @@ def add_bom_entries_to_project(partsbox_result, clean_bom, client=None):
         "entries_added": len(new_entries),
         "entries_skipped_existing": entries_skipped_existing,
         "entries_considered": len(entries),
+        "quantity_mismatches": quantity_mismatches,
         "unmatched_rows": unmatched_rows,
         "add_result": add_result,
     }
