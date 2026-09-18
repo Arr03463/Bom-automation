@@ -219,6 +219,35 @@ class SourceAndStatusDerivationTests(unittest.TestCase):
             {"total_parts": 4, "partsbox": 1, "mouser": 1, "digikey": 1, "needs_review": 1},
         )
 
+    def test_error_rows_are_included_in_needs_review_count_and_view(self):
+        """
+        result_status can distinguish Error from Needs Review as labels,
+        but a row with supplier_match_status=error still needs operator
+        attention -- it must appear in review_items() and be counted in
+        summary_counts()["needs_review"], not silently dropped from
+        either just because its label says "Error" instead of
+        "Needs Review".
+        """
+        df = pd.DataFrame(
+            [
+                {
+                    "mpn": "ABC123",
+                    "manufacturer": "Yageo",
+                    "status": "clean",
+                    "supplier_match_status": "error",
+                }
+            ]
+        )
+        state = ActiveBomState(df, run_id="run-1")
+
+        row = state.rows()[0]
+        self.assertEqual(row["result_status"], "Error")
+        self.assertTrue(row["needs_review"])
+
+        self.assertEqual(len(state.review_items()), 1)
+        self.assertEqual(state.summary_counts()["needs_review"], 1)
+        self.assertEqual(state.summary_counts()["needs_review"], len(state.review_items()))
+
     def test_summary_counts_reflect_update_row(self):
         df = pd.DataFrame(
             [{"mpn": "", "manufacturer": "M", "status": "missing_mpn"}]

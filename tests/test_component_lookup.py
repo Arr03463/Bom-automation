@@ -198,6 +198,24 @@ class ComponentLookupSourceTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["mpn"], "ABC123")
 
+    def test_explicitly_empty_source_set_returns_no_results_not_partsbox_fallback(self):
+        query = LookupQuery(mpn="ABC123", sources=frozenset())
+        partsbox_client = FakePartsBoxClient(PARTSBOX_PARTS)
+        mouser_client = FakeSupplierSearchClient({"ABC123": [mouser_result()]})
+        digikey_client = FakeSupplierSearchClient({"ABC123": [digikey_result()]})
+
+        results = search_components(
+            query,
+            partsbox_client=partsbox_client,
+            mouser_client=mouser_client,
+            digikey_client=digikey_client,
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(partsbox_client.get_parts_calls, 0)
+        self.assertEqual(mouser_client.calls, [])
+        self.assertEqual(digikey_client.calls, [])
+
     def test_empty_query_does_not_call_supplier_search(self):
         query = LookupQuery(sources=frozenset({"mouser", "digikey"}))
         mouser_client = FakeSupplierSearchClient()

@@ -98,12 +98,13 @@ def build_query_from_bom_row(row, sources=None):
     required recovery order) and Check PartsBox (call again with
     sources={"partsbox"}) -- one prepopulation implementation, not two.
     """
+    resolved_sources = frozenset({"mouser", "digikey"}) if sources is None else frozenset(sources)
     return LookupQuery(
         mpn=str(row.get("mpn", "") or "").strip(),
         manufacturer=str(row.get("manufacturer", "") or "").strip(),
         keywords=str(row.get("description", "") or "").strip(),
         required_qty=row.get("required_qty"),
-        sources=frozenset(sources) if sources else frozenset({"mouser", "digikey"}),
+        sources=resolved_sources,
     )
 
 
@@ -114,7 +115,10 @@ def search_components(query, partsbox_client=None, mouser_client=None, digikey_c
     record_filter.search_and_filter() for further text search/filtering --
     the same filtering layer the Results Workspace uses.
     """
-    sources = query.sources or DEFAULT_SOURCES
+    # An explicitly empty source set must stay empty (no results) rather
+    # than silently falling back to PartsBox -- only a genuinely unset
+    # (None) sources value uses the default.
+    sources = query.sources if query.sources is not None else DEFAULT_SOURCES
     results = []
 
     if "partsbox" in sources:

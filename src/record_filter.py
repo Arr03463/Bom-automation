@@ -33,8 +33,10 @@ def apply_filters(records, filters):
     its value is empty/None or the sentinel "All" (the usual "no
     selection" state for a UI dropdown). Every other field does a
     case-insensitive exact match against the record's value. The "stock"
-    field is a special case: desired value "In Stock"/"Out of Stock"
-    compares against a numeric threshold instead of an exact string match.
+    field is a special case: desired value "In Stock"/"Out of Stock"/
+    "Unknown" compares against a numeric threshold (or its absence)
+    instead of an exact string match -- a record with no confirmed stock
+    figure (e.g. a PartsBox match) is Unknown, never treated as zero.
     """
     if not filters:
         return list(records)
@@ -65,18 +67,26 @@ def _matches_filters(record, filters):
 
 
 def _matches_stock_filter(record, desired):
-    stock = _coerce_int(record.get("stock"))
+    stock = coerce_int_or_none(record.get(STOCK_FILTER_FIELD))
     desired_normalized = str(desired).strip().lower()
 
     if desired_normalized == "in stock":
         return stock is not None and stock > 0
     if desired_normalized == "out of stock":
-        return stock is None or stock <= 0
+        return stock is not None and stock <= 0
+    if desired_normalized == "unknown":
+        return stock is None
 
     return True
 
 
-def _coerce_int(value):
+def coerce_int_or_none(value):
+    """
+    Shared numeric coercion: used here for the stock filter, and by
+    active_bom_state.py to derive a normalized display `stock` field from
+    a row's supplier-specific mouser_stock/digikey_stock columns -- one
+    implementation instead of two.
+    """
     try:
         return int(value)
     except (TypeError, ValueError):

@@ -6,6 +6,7 @@ from main import (
     SUPPLIER_REVIEW_STATUSES,
     build_review_items,
 )
+from record_filter import coerce_int_or_none
 
 SOURCED_STATUSES_BY_SUPPLIER = {
     "sourced_mouser": "Mouser",
@@ -77,6 +78,23 @@ def _derive_result_status(row):
 
     # No sourcing or PartsBox step has run for this row at all yet.
     return "Ready" if str(row.get("status", "")).strip() == "clean" else "Needs Review"
+
+
+def _derive_stock(row):
+    """
+    Normalized display stock: results rows never have a generic `stock`
+    field (only source-specific mouser_stock/digikey_stock), so a naive
+    record.get("stock") lookup always misses and the Results Stock filter
+    would wrongly treat every sourced row as unknown/out-of-stock. Pick
+    the figure matching the row's actual source; PartsBox and unsourced
+    rows have no confirmed stock number and stay None (Unknown), never 0.
+    """
+    source = _derive_source(row)
+    if source == "Mouser":
+        return coerce_int_or_none(row.get("mouser_stock"))
+    if source == "DigiKey":
+        return coerce_int_or_none(row.get("digikey_stock"))
+    return None
 
 
 def _derive_review_reason(row):
@@ -198,6 +216,14 @@ class ActiveBomState:
             record["source"] = _derive_source(record)
             record["result_status"] = _derive_result_status(record)
             record["review_reason"] = _derive_review_reason(record)
+            record["stock"] = _derive_stock(record)
+            # needs_review is the boolean ground truth (same criteria as
+            # review_items()/build_review_items()). result_status can say
+            # "Error" for a row that still needs attention -- callers
+            # that want a review COUNT must use this flag, not a string
+            # match against result_status, so Error rows are never
+            # silently dropped from that count.
+            record["needs_review"] = _needs_review(record)
             records.append(record)
 
         return records
@@ -206,7 +232,9 @@ class ActiveBomState:
         """
         Total/source/needs-review counts for the Results Workspace summary
         metrics -- computed once here from rows(), so the UI never
-        recalculates these counts itself.
+        recalculates these counts itself. needs_review here is always
+        exactly len(self.review_items()), since both derive from the same
+        per-row _needs_review() check.
         """
         rows = self.rows()
         counts = {
@@ -223,7 +251,7 @@ class ActiveBomState:
             source_key = source_keys.get(row.get("source"))
             if source_key:
                 counts[source_key] += 1
-            if row.get("result_status") == "Needs Review":
+            if row.get("needs_review"):
                 counts["needs_review"] += 1
 
         return counts

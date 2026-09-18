@@ -11,7 +11,7 @@ sys.path.insert(0, str(SRC_FOLDER))
 
 from active_bom_state import ActiveBomState
 from run_workspace import build_run_workspace, save_uploaded_file
-from workflow_runner import run_bom_workflow
+from workflow_runner import refresh_response_snapshot, run_bom_workflow
 
 
 SAMPLE_BOM_CSV = (
@@ -149,6 +149,30 @@ class WorkflowRunnerContractTests(unittest.TestCase):
 
         self.assertNotIn("_active_bom_state", on_disk)
         self.assertIn("results_summary", on_disk)
+
+    def test_refresh_response_snapshot_recomputes_from_live_state_and_marks_stale(self):
+        _, result = run_isolated_workflow(self.temp_root)
+        active_bom_state = result["_active_bom_state"]
+
+        self.assertFalse(result["stale_after_mutation"])
+
+        row_id = active_bom_state.rows()[0]["row_id"]
+        active_bom_state.update_row(row_id, {"status": "manual_review", "notes": "mutated out of band"})
+
+        refresh_response_snapshot(result)
+
+        self.assertTrue(result["stale_after_mutation"])
+        refreshed_row = next(r for r in result["bom_rows"] if r["row_id"] == row_id)
+        self.assertEqual(refreshed_row["notes"], "mutated out of band")
+        self.assertEqual(result["results_summary"], active_bom_state.summary_counts())
+
+    def test_refresh_response_snapshot_is_a_noop_without_active_bom_state(self):
+        response = {"_active_bom_state": None, "bom_rows": ["untouched"]}
+
+        refresh_response_snapshot(response)
+
+        self.assertEqual(response["bom_rows"], ["untouched"])
+        self.assertNotIn("stale_after_mutation", response)
 
 
 if __name__ == "__main__":

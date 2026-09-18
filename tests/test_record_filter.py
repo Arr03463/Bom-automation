@@ -113,6 +113,17 @@ class ApplyFiltersTests(unittest.TestCase):
         result = apply_filters(records, {"stock": "Out of Stock"})
         self.assertEqual([r["mpn"] for r in result], ["XYZ789"])
 
+    def test_unknown_stock_filter_is_distinct_from_out_of_stock(self):
+        records = make_records()
+        records.append({"mpn": "UNKNOWNPART", "source": "PartsBox", "status": "Ready", "stock": None})
+
+        unknown = apply_filters(records, {"stock": "Unknown"})
+        out_of_stock = apply_filters(records, {"stock": "Out of Stock"})
+
+        self.assertEqual([r["mpn"] for r in unknown], ["UNKNOWNPART"])
+        self.assertEqual([r["mpn"] for r in out_of_stock], ["XYZ789"])
+        self.assertNotIn("UNKNOWNPART", [r["mpn"] for r in out_of_stock])
+
 
 class SearchAndFilterTests(unittest.TestCase):
     def test_search_then_filter_combined(self):

@@ -78,7 +78,36 @@ def _empty_result():
             "digikey": None,
         },
         "_active_bom_state": None,
+        "stale_after_mutation": False,
     }
+
+
+def refresh_response_snapshot(response):
+    """
+    bom_rows/review_items/results_summary are snapshots taken once at run
+    completion. A Needs Review action (Retry Exact, replacement
+    selection) mutates the live _active_bom_state directly and does not
+    touch those snapshots -- call this one shared function afterward to
+    recompute them, instead of hand-updating several dict keys inline in
+    UI code.
+
+    purchasing/outputs are deliberately left untouched: they describe the
+    last generated cart/MyList/export artifacts, which remain exactly
+    what they were, not what they'd be if regenerated now. Setting
+    stale_after_mutation marks that those specific keys -- and any file
+    already downloaded from `outputs` -- no longer necessarily match the
+    current canonical state; callers must treat them as pending
+    regeneration, not silently current, once this has been called.
+    """
+    active_bom_state = response.get("_active_bom_state")
+    if active_bom_state is None:
+        return response
+
+    response["bom_rows"] = active_bom_state.rows()
+    response["review_items"] = active_bom_state.to_records(active_bom_state.review_items_dataframe())
+    response["results_summary"] = active_bom_state.summary_counts()
+    response["stale_after_mutation"] = True
+    return response
 
 
 def _append_warning_rows(response, warnings_df):

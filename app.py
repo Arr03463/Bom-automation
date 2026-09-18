@@ -15,7 +15,6 @@ if str(SRC_FOLDER) not in sys.path:
     sys.path.insert(0, str(SRC_FOLDER))
 
 from component_lookup import (  # noqa: E402
-    DEFAULT_SOURCES,
     LookupQuery,
     build_query_from_bom_row,
     search_components,
@@ -23,7 +22,7 @@ from component_lookup import (  # noqa: E402
 from record_filter import search_and_filter  # noqa: E402
 from review_actions import apply_replacement, retry_exact_sourcing  # noqa: E402
 from run_workspace import build_run_workspace, save_uploaded_file  # noqa: E402
-from workflow_runner import run_bom_workflow  # noqa: E402
+from workflow_runner import refresh_response_snapshot, run_bom_workflow  # noqa: E402
 
 
 RESULTS_SEARCH_FIELDS = ["mpn", "manufacturer", "description", "supplier_part_number", "designators"]
@@ -53,6 +52,16 @@ LOOKUP_DISPLAY_COLUMNS = {
 }
 
 
+RUN_SCOPED_STATE_DEFAULTS = {
+    "selected_review_row_id": None,
+    "results_search": "",
+    "results_filter_source": "All",
+    "results_filter_status": "All",
+    "results_filter_manufacturer": "All",
+    "results_filter_stock": "All",
+}
+
+
 def init_session_state():
     """
     Every session gets its own st.session_state dict (Streamlit's own
@@ -63,9 +72,33 @@ def init_session_state():
     anywhere in this file.
     """
     st.session_state.setdefault("current_run", None)
-    st.session_state.setdefault("selected_review_row_id", None)
     st.session_state.setdefault("replacement_lookup_sources", frozenset({"mouser", "digikey"}))
     st.session_state.setdefault("lookup_results", [])
+    for key, default in RUN_SCOPED_STATE_DEFAULTS.items():
+        st.session_state.setdefault(key, default)
+
+
+def reset_run_scoped_session_state():
+    """
+    Clears state tied to the PREVIOUS run's rows so it cannot reappear
+    against a new run: the open review row, its in-progress replacement
+    search results, and the results search/filters. Called whenever a
+    new run replaces current_run.
+
+    General Component Search (lookup_results) is deliberately left
+    alone: it is a global entry point independent of any specific BOM
+    run, not a per-run cache that needs clearing.
+    """
+    for key, default in RUN_SCOPED_STATE_DEFAULTS.items():
+        st.session_state[key] = default
+
+    stale_keys = [
+        key
+        for key in st.session_state
+        if key.startswith("replacement_results_") or key.startswith("replacement_query_")
+    ]
+    for key in stale_keys:
+        del st.session_state[key]
 
 
 def show_download(label, file_path):
@@ -130,7 +163,7 @@ def render_run_bom_page():
             # A new run replaces the session's active state outright --
             # one canonical run per session, never two held side by side.
             st.session_state.current_run = result
-            st.session_state.selected_review_row_id = None
+            reset_run_scoped_session_state()
 
     current_run = st.session_state.current_run
     if current_run is None:
@@ -164,6 +197,15 @@ def render_run_messages(current_run):
 
 def render_downloads(current_run):
     st.subheader("Outputs")
+
+    if current_run.get("stale_after_mutation"):
+        st.warning(
+            "A Needs Review action changed the BOM since these files were generated. "
+            "Downloads, purchasing carts/lists, and the run summary below reflect the "
+            "BOM *before* that change. Re-run BOM Automation to regenerate them from "
+            "the current state."
+        )
+
     outputs = current_run.get("outputs", {})
     download_labels = {
         "cleaned_workbook": "Download cleaned workbook",
@@ -209,7 +251,7 @@ def render_results_workspace(current_run):
     with filter_cols[2]:
         st.selectbox("Manufacturer", _options(rows, "manufacturer"), key="results_filter_manufacturer")
     with filter_cols[3]:
-        st.selectbox("Stock", ["All", "In Stock", "Out of Stock"], key="results_filter_stock")
+        st.selectbox("Stock", ["All", "In Stock", "Out of Stock", "Unknown"], key="results_filter_stock")
 
     filters = {
         "source": st.session_state.results_filter_source,
@@ -234,7 +276,7 @@ def render_results_workspace(current_run):
             search_fields=RESULTS_SEARCH_FIELDS,
             filters=filters,
         )
-        render_needs_review(active_bom_state, review_rows)
+        render_needs_review(current_run, active_bom_state, review_rows)
 
 
 def _options(rows, field):
@@ -253,7 +295,7 @@ def render_results_table(rows):
     st.dataframe(table_df, width="stretch", hide_index=True)
 
 
-def render_needs_review(active_bom_state, review_rows):
+def render_needs_review(current_run, active_bom_state, review_rows):
     if not review_rows:
         st.success("Nothing currently needs review.")
         return
@@ -272,6 +314,7 @@ def render_needs_review(active_bom_state, review_rows):
             if action_cols[0].button("Retry Exact Part", key=f"retry_{row_id}"):
                 with st.spinner("Retrying exact part lookup..."):
                     retry_exact_sourcing(active_bom_state, row_id)
+                refresh_response_snapshot(current_run)
                 st.rerun()
 
             if action_cols[1].button("Find Replacement", key=f"find_replacement_{row_id}"):
@@ -283,10 +326,10 @@ def render_needs_review(active_bom_state, review_rows):
                 st.session_state.replacement_lookup_sources = frozenset({"partsbox"})
 
             if st.session_state.selected_review_row_id == row_id:
-                render_replacement_lookup(active_bom_state, row_id)
+                render_replacement_lookup(current_run, active_bom_state, row_id)
 
 
-def render_replacement_lookup(active_bom_state, row_id):
+def render_replacement_lookup(current_run, active_bom_state, row_id):
     """
     Find Replacement / Check PartsBox share this exact function. Both
     prepopulate a LookupQuery from what AutoBOM already knows about the
@@ -302,14 +345,26 @@ def render_replacement_lookup(active_bom_state, row_id):
     st.caption(f"Searching {source_label} for a replacement for {row.get('mpn') or '(missing MPN)'}.")
 
     search_key = f"replacement_query_{row_id}"
-    search_value = st.text_input(
-        "MPN / keywords (loosen or tighten as needed)",
-        value=query.mpn or query.keywords,
-        key=search_key,
-    )
+    if search_key not in st.session_state:
+        st.session_state[search_key] = query.mpn or query.keywords
+
+    # Two one-click alternatives instead of requiring the operator to
+    # erase the known MPN by hand: the MPN stays available for an exact
+    # retry-style search, and the description offers a route to
+    # alternatives without retyping anything AutoBOM already knows.
+    quick_cols = st.columns(2)
+    if row.get("mpn") and quick_cols[0].button(f"Search MPN: {row['mpn']}", key=f"search_by_mpn_{row_id}"):
+        st.session_state[search_key] = row["mpn"]
+    if row.get("description") and quick_cols[1].button(
+        f"Search description instead: {row['description']}", key=f"search_by_desc_{row_id}"
+    ):
+        st.session_state[search_key] = row["description"]
+
+    search_value = st.text_input("MPN / keywords (loosen or tighten as needed)", key=search_key)
 
     if st.button("Search", key=f"do_replacement_search_{row_id}"):
         query.mpn = search_value
+        query.keywords = search_value
         with st.spinner("Searching..."):
             st.session_state[f"replacement_results_{row_id}"] = search_components(query)
 
@@ -324,12 +379,14 @@ def render_replacement_lookup(active_bom_state, row_id):
             st.write(
                 f"**{candidate.get('source')}** · {candidate.get('mpn')} · "
                 f"{candidate.get('manufacturer') or 'unknown manufacturer'} · "
-                f"stock: {candidate.get('stock')} · "
+                f"stock: {candidate.get('stock') if candidate.get('stock') is not None else 'Unknown'} · "
                 f"supplier P/N: {candidate.get('supplier_part_number') or '—'}"
             )
         with candidate_cols[1]:
             if st.button("Select", key=f"select_replacement_{row_id}_{index}"):
-                apply_replacement(active_bom_state, row_id, candidate)
+                with st.spinner("Re-sourcing replacement..."):
+                    apply_replacement(active_bom_state, row_id, candidate)
+                refresh_response_snapshot(current_run)
                 st.session_state.selected_review_row_id = None
                 st.session_state.pop(f"replacement_results_{row_id}", None)
                 st.rerun()
@@ -363,14 +420,21 @@ def render_component_search_page():
             )
             if enabled
         }
-        query = LookupQuery(
-            mpn=search_text,
-            keywords=search_text,
-            manufacturer=manufacturer_filter,
-            sources=frozenset(sources) if sources else DEFAULT_SOURCES,
-        )
-        with st.spinner("Searching..."):
-            st.session_state.lookup_results = search_components(query)
+        if not sources:
+            # An explicitly empty source set must stay empty -- never
+            # silently fall back to PartsBox just because every checkbox
+            # is off.
+            st.warning("Select at least one source.")
+            st.session_state.lookup_results = []
+        else:
+            query = LookupQuery(
+                mpn=search_text,
+                keywords=search_text,
+                manufacturer=manufacturer_filter,
+                sources=frozenset(sources),
+            )
+            with st.spinner("Searching..."):
+                st.session_state.lookup_results = search_components(query)
 
     results = st.session_state.lookup_results
     if not results:
@@ -381,7 +445,9 @@ def render_component_search_page():
     with filter_cols[0]:
         st.selectbox("Filter by source", _options(results, "source"), key="component_search_source_filter")
     with filter_cols[1]:
-        st.selectbox("Stock", ["All", "In Stock", "Out of Stock"], key="component_search_stock_filter")
+        st.selectbox(
+            "Stock", ["All", "In Stock", "Out of Stock", "Unknown"], key="component_search_stock_filter"
+        )
 
     filtered = search_and_filter(
         results,
