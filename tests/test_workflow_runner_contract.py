@@ -1,3 +1,4 @@
+import json
 import shutil
 import sys
 import tempfile
@@ -8,6 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
 
+from active_bom_state import ActiveBomState
 from run_workspace import build_run_workspace, save_uploaded_file
 from workflow_runner import run_bom_workflow
 
@@ -125,6 +127,28 @@ class WorkflowRunnerContractTests(unittest.TestCase):
         self.assertEqual(matching_bom_row["status"], "missing_mpn")
         self.assertEqual(matching_bom_row["status"], review_row["status"])
         self.assertEqual(matching_bom_row["manufacturer"], review_row["manufacturer"])
+
+    def test_live_active_bom_state_is_exposed_for_session_state_use(self):
+        _, result = run_isolated_workflow(self.temp_root)
+
+        state = result["_active_bom_state"]
+        self.assertIsInstance(state, ActiveBomState)
+        self.assertEqual(state.rows(), result["bom_rows"])
+
+    def test_results_summary_matches_active_bom_state(self):
+        _, result = run_isolated_workflow(self.temp_root)
+
+        self.assertEqual(result["results_summary"], result["_active_bom_state"].summary_counts())
+        self.assertEqual(result["results_summary"]["total_parts"], 2)
+
+    def test_run_summary_json_on_disk_excludes_live_state(self):
+        _, result = run_isolated_workflow(self.temp_root)
+
+        summary_path = Path(result["outputs"]["run_summary"])
+        on_disk = json.loads(summary_path.read_text())
+
+        self.assertNotIn("_active_bom_state", on_disk)
+        self.assertIn("results_summary", on_disk)
 
 
 if __name__ == "__main__":

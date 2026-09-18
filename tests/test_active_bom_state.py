@@ -93,6 +93,144 @@ class ActiveBomStateTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             state.update_row("run-1:999", {"status": "clean"})
 
+    def test_get_row_includes_derived_fields(self):
+        df = make_dataframe()
+        state = ActiveBomState(df, run_id="run-1")
+
+        row = state.get_row("run-1:1")
+
+        self.assertEqual(row["source"], "None")
+        self.assertEqual(row["result_status"], "Needs Review")
+
+
+class SourceAndStatusDerivationTests(unittest.TestCase):
+    def test_source_and_status_are_distinct_concepts(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "mpn": "ABC123",
+                    "manufacturer": "Yageo",
+                    "status": "clean",
+                    "selected_supplier": "Mouser",
+                    "sourcing_status": "sourced_mouser",
+                },
+                {
+                    "mpn": "XYZ789",
+                    "manufacturer": "TI",
+                    "status": "clean",
+                    "selected_supplier": "",
+                    "sourcing_status": "check_wall_inventory",
+                },
+            ]
+        )
+        state = ActiveBomState(df, run_id="run-1")
+        rows = state.rows()
+
+        # A Mouser-sourced row is Source=Mouser, Status=Ready -- two
+        # separate fields, neither one standing in for the other.
+        self.assertEqual(rows[0]["source"], "Mouser")
+        self.assertEqual(rows[0]["result_status"], "Ready")
+
+        # A row needing review still has no usable source.
+        self.assertEqual(rows[1]["source"], "None")
+        self.assertEqual(rows[1]["result_status"], "Needs Review")
+
+    def test_partsbox_matched_row_is_ready(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "mpn": "ABC123",
+                    "manufacturer": "Yageo",
+                    "status": "clean",
+                    "partsbox_match_status": "matched",
+                    "partsbox_part_id": "part-1",
+                }
+            ]
+        )
+        state = ActiveBomState(df, run_id="run-1")
+        row = state.rows()[0]
+
+        self.assertEqual(row["source"], "PartsBox")
+        self.assertEqual(row["result_status"], "Ready")
+
+    def test_partsbox_unmatched_row_with_no_sourcing_is_not_found(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "mpn": "ABC123",
+                    "manufacturer": "Yageo",
+                    "status": "clean",
+                    "partsbox_match_status": "unmatched",
+                }
+            ]
+        )
+        state = ActiveBomState(df, run_id="run-1")
+        row = state.rows()[0]
+
+        self.assertEqual(row["source"], "None")
+        self.assertEqual(row["result_status"], "Not Found")
+
+    def test_review_reason_is_populated_for_review_rows_only(self):
+        df = pd.DataFrame(
+            [
+                {"mpn": "ABC123", "manufacturer": "Yageo", "status": "clean"},
+                {"mpn": "", "manufacturer": "TI", "status": "missing_mpn", "notes": "missing mpn"},
+            ]
+        )
+        state = ActiveBomState(df, run_id="run-1")
+        rows = state.rows()
+
+        self.assertEqual(rows[0]["review_reason"], "")
+        self.assertIn("missing mpn", rows[1]["review_reason"])
+
+    def test_summary_counts_derive_from_canonical_state(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "mpn": "A",
+                    "manufacturer": "M",
+                    "status": "clean",
+                    "selected_supplier": "Mouser",
+                    "sourcing_status": "sourced_mouser",
+                },
+                {
+                    "mpn": "B",
+                    "manufacturer": "M",
+                    "status": "clean",
+                    "selected_supplier": "DigiKey",
+                    "sourcing_status": "sourced_digikey",
+                },
+                {
+                    "mpn": "C",
+                    "manufacturer": "M",
+                    "status": "clean",
+                    "partsbox_match_status": "matched",
+                    "partsbox_part_id": "p1",
+                },
+                {"mpn": "", "manufacturer": "M", "status": "missing_mpn"},
+            ]
+        )
+        state = ActiveBomState(df, run_id="run-1")
+
+        counts = state.summary_counts()
+
+        self.assertEqual(
+            counts,
+            {"total_parts": 4, "partsbox": 1, "mouser": 1, "digikey": 1, "needs_review": 1},
+        )
+
+    def test_summary_counts_reflect_update_row(self):
+        df = pd.DataFrame(
+            [{"mpn": "", "manufacturer": "M", "status": "missing_mpn"}]
+        )
+        state = ActiveBomState(df, run_id="run-1")
+
+        self.assertEqual(state.summary_counts()["needs_review"], 1)
+
+        state.update_row("run-1:0", {"mpn": "NEWPART", "status": "clean"})
+
+        self.assertEqual(state.summary_counts()["needs_review"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -120,10 +120,22 @@ def build_project_entry(row, order_number, part=None, match_note=""):
 
 
 def build_project_entries(clean_bom, client):
+    """
+    Builds PartsBox entries AND writes partsbox_match_status/
+    partsbox_part_id back onto clean_bom (by row index) so the canonical
+    BOM state carries per-row PartsBox match info -- the Results
+    Workspace's Source/Status model reads these columns rather than
+    recomputing PartsBox matching separately.
+    """
     entries = []
     unmatched_rows = []
 
-    for order_number, (_, row) in enumerate(clean_bom.iterrows(), start=1):
+    if "partsbox_match_status" not in clean_bom.columns:
+        clean_bom["partsbox_match_status"] = ""
+    if "partsbox_part_id" not in clean_bom.columns:
+        clean_bom["partsbox_part_id"] = ""
+
+    for order_number, (index, row) in enumerate(clean_bom.iterrows(), start=1):
         mpn = str(row.get("mpn", "") or "").strip()
         manufacturer = str(row.get("manufacturer", "") or "").strip()
         quantity = calculate_project_entry_quantity(row)
@@ -134,6 +146,7 @@ def build_project_entries(clean_bom, client):
         if quantity is None:
             unmatched_row["partsbox_match_notes"] = "Missing or invalid BOM quantity."
             unmatched_rows.append(unmatched_row)
+            clean_bom.at[index, "partsbox_match_status"] = "unmatched"
             continue
 
         part = None
@@ -143,6 +156,8 @@ def build_project_entries(clean_bom, client):
 
         if part:
             entries.append(build_project_entry(row, order_number, part=part))
+            clean_bom.at[index, "partsbox_match_status"] = "matched"
+            clean_bom.at[index, "partsbox_part_id"] = part.get("part/id", "")
         else:
             if mpn:
                 match_note = "No PartsBox part matched MPN/manufacturer."
@@ -152,6 +167,7 @@ def build_project_entries(clean_bom, client):
             entries.append(build_project_entry(row, order_number, match_note=match_note))
             unmatched_row["partsbox_match_notes"] = match_note
             unmatched_rows.append(unmatched_row)
+            clean_bom.at[index, "partsbox_match_status"] = "unmatched"
 
     return entries, unmatched_rows
 

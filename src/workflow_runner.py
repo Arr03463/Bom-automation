@@ -65,11 +65,19 @@ def _empty_result():
         "run": {},
         "bom_rows": [],
         "review_items": [],
+        "results_summary": {
+            "total_parts": 0,
+            "partsbox": 0,
+            "mouser": 0,
+            "digikey": 0,
+            "needs_review": 0,
+        },
         "partsbox": None,
         "purchasing": {
             "mouser": None,
             "digikey": None,
         },
+        "_active_bom_state": None,
     }
 
 
@@ -200,8 +208,15 @@ def _write_run_summary(response, source_file_path, output_folder):
     source_stem = Path(source_file_path).stem or "bom"
     output_path = os.path.join(output_folder, f"{source_stem}_run_summary.json")
 
+    # Keys starting with "_" carry live Python objects for in-process
+    # session-state use (e.g. "_active_bom_state") -- never JSON-safe, and
+    # never written to disk.
+    json_safe_response = {
+        key: value for key, value in response.items() if not key.startswith("_")
+    }
+
     with open(output_path, "w", encoding="utf-8") as summary_file:
-        json.dump(response, summary_file, indent=2)
+        json.dump(json_safe_response, summary_file, indent=2)
 
     response["outputs"]["run_summary"] = output_path
 
@@ -483,6 +498,14 @@ def run_bom_workflow(
         response["summary"]["manual_review"] = manual_review
         response["summary"]["review_items"] = int(len(review_items_df))
         response["summary"]["warnings"] = int(len(response["warnings"]))
+
+        # Live object, kept out of the JSON-serialized response (see
+        # _write_run_summary) -- app.py stores this directly in
+        # st.session_state so the Results Workspace/Needs Review always
+        # read and mutate the one canonical BOM state, not a copy re-built
+        # from the serialized bom_rows/review_items below.
+        response["_active_bom_state"] = active_bom_state
+        response["results_summary"] = active_bom_state.summary_counts()
 
         response["bom_rows"] = active_bom_state.rows()
         response["review_items"] = active_bom_state.to_records(review_items_df)
