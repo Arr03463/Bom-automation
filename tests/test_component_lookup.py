@@ -269,5 +269,108 @@ class BuildQueryFromBomRowTests(unittest.TestCase):
         self.assertEqual(query.characteristics, {})
 
 
+class PartsBoxBrowseAllTests(unittest.TestCase):
+    """PartsBox Inventory reuses this exact search path to browse the
+    full catalog with an empty query -- not a second listing function."""
+
+    def test_empty_query_with_partsbox_returns_every_part(self):
+        query = LookupQuery(sources=frozenset({"partsbox"}))
+        client = FakePartsBoxClient(PARTSBOX_PARTS)
+
+        results = search_components(query, partsbox_client=client)
+
+        self.assertEqual({r["mpn"] for r in results}, {"ABC123", "XYZ789"})
+        self.assertEqual(client.get_parts_calls, 1)
+
+    def test_browse_all_still_respects_manufacturer_filter(self):
+        query = LookupQuery(manufacturer="Yageo", sources=frozenset({"partsbox"}))
+        client = FakePartsBoxClient(PARTSBOX_PARTS)
+
+        results = search_components(query, partsbox_client=client)
+
+        self.assertEqual([r["mpn"] for r in results], ["ABC123"])
+
+
+class PartsBoxCharacteristicsExtractionTests(unittest.TestCase):
+    def test_unrecognized_partsbox_fields_become_characteristics(self):
+        parts = [
+            {
+                "part/id": "p1",
+                "part/mpn": "CAP123",
+                "part/manufacturer": "Murata",
+                "part/capacitance": "10uF",
+                "part/voltage": "25V",
+                "part/empty_field": "",
+            }
+        ]
+        client = FakePartsBoxClient(parts)
+        results = search_components(
+            LookupQuery(sources=frozenset({"partsbox"})), partsbox_client=client
+        )
+
+        result = results[0]
+        self.assertEqual(result["characteristics"], {"capacitance": "10uF", "voltage": "25V"})
+        # Flattened onto the top level too, for record_filter facets/ranges.
+        self.assertEqual(result["capacitance"], "10uF")
+        self.assertEqual(result["voltage"], "25V")
+        self.assertNotIn("empty_field", result["characteristics"])
+
+    def test_known_fields_are_not_duplicated_into_characteristics(self):
+        client = FakePartsBoxClient(PARTSBOX_PARTS)
+        results = search_components(
+            LookupQuery(sources=frozenset({"partsbox"})), partsbox_client=client
+        )
+
+        for result in results:
+            self.assertNotIn("mpn", result["characteristics"])
+            self.assertNotIn("manufacturer", result["characteristics"])
+
+
+class RequiredQuantityAwarenessTests(unittest.TestCase):
+    def test_stock_sufficient_true_when_stock_covers_requirement(self):
+        query = LookupQuery(mpn="ABC123", required_qty="10", sources=frozenset({"mouser"}))
+        mouser_client = FakeSupplierSearchClient({"ABC123": [mouser_result(stock=500)]})
+
+        results = search_components(query, mouser_client=mouser_client)
+
+        self.assertTrue(results[0]["stock_sufficient"])
+
+    def test_stock_sufficient_false_when_stock_is_short(self):
+        query = LookupQuery(mpn="ABC123", required_qty="1000", sources=frozenset({"mouser"}))
+        mouser_client = FakeSupplierSearchClient({"ABC123": [mouser_result(stock=5)]})
+
+        results = search_components(query, mouser_client=mouser_client)
+
+        self.assertFalse(results[0]["stock_sufficient"])
+
+    def test_stock_sufficient_none_when_stock_unknown(self):
+        query = LookupQuery(mpn="ABC123", required_qty="10", sources=frozenset({"partsbox"}))
+        client = FakePartsBoxClient(PARTSBOX_PARTS)
+
+        results = search_components(query, partsbox_client=client)
+
+        self.assertIsNone(results[0]["stock_sufficient"])
+
+    def test_stock_sufficient_none_when_no_requirement_given(self):
+        query = LookupQuery(mpn="ABC123", sources=frozenset({"mouser"}))
+        mouser_client = FakeSupplierSearchClient({"ABC123": [mouser_result(stock=500)]})
+
+        results = search_components(query, mouser_client=mouser_client)
+
+        self.assertIsNone(results[0]["stock_sufficient"])
+
+
+class CategoryFieldTests(unittest.TestCase):
+    def test_mouser_category_extracted_when_present_as_string(self):
+        query = LookupQuery(mpn="ABC123", sources=frozenset({"mouser"}))
+        candidate = mouser_result()
+        candidate.category = "Resistors"
+        mouser_client = FakeSupplierSearchClient({"ABC123": [candidate]})
+
+        results = search_components(query, mouser_client=mouser_client)
+
+        self.assertEqual(results[0]["category"], "Resistors")
+
+
 if __name__ == "__main__":
     unittest.main()

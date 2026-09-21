@@ -15,6 +15,13 @@ class SupplierResult:
     supplier_part_number: str = ""
     product_url: str = ""
     notes: str = ""
+    # Best-effort, defensively populated from whatever category-style
+    # field the vendor's raw response happens to expose (see
+    # mouser_client._mouser_part_to_result / digikey_client
+    # ._digikey_product_to_result). Empty when the response doesn't have
+    # one -- never fabricated. Existing cached SupplierResult JSON
+    # without this key still loads fine via the field's default.
+    category: str = ""
 
 
 def parse_int(value):

@@ -17,6 +17,7 @@ Reuses, rather than reimplements:
 
 from dataclasses import asdict, dataclass, field
 
+from engineering_units import parse_engineering_value
 from manufacturer_aliases import manufacturers_equivalent
 from partsbox_client import PartsBoxClient
 from mouser_client import MouserClient
@@ -24,6 +25,22 @@ from digikey_client import DigiKeyClient
 
 DEFAULT_SOURCES = frozenset({"partsbox"})
 ALL_SOURCES = frozenset({"partsbox", "mouser", "digikey"})
+
+# PartsBox part fields already mapped onto a named LookupResult field --
+# everything else on the raw part dict is exposed generically through
+# `characteristics` (see _partsbox_part_to_result) instead of being
+# dropped, so a category-specific field PartsBox actually returns (e.g.
+# a capacitance or voltage attribute) becomes filterable without this
+# module needing to know its name in advance.
+_KNOWN_PARTSBOX_FIELDS = {
+    "part/id",
+    "part/mpn",
+    "part/name",
+    "part/manufacturer",
+    "part/description",
+    "part/category",
+    "part/package",
+}
 
 
 @dataclass
@@ -81,9 +98,22 @@ class LookupResult:
     lifecycle_status: str = ""
     characteristics: dict = field(default_factory=dict)
     raw: dict = field(default_factory=dict)
+    # Display-only fact, not a sourcing decision: whether this candidate's
+    # known stock covers a required quantity the caller supplied (e.g. a
+    # BOM row's required_qty during Find Replacement). None when unknown
+    # (stock or the requirement itself isn't known) -- never guessed.
+    stock_sufficient: object = None
 
     def to_dict(self):
-        return asdict(self)
+        data = asdict(self)
+        # Flatten characteristics onto the top level too, so
+        # record_filter's generic field-based facet/range filtering can
+        # operate on them directly (filters={"voltage": {...}}) without
+        # needing to know about the nested "characteristics" dict.
+        # setdefault avoids a characteristic overwriting a named field.
+        for key, value in (self.characteristics or {}).items():
+            data.setdefault(key, value)
+        return data
 
 
 def build_query_from_bom_row(row, sources=None):
@@ -133,14 +163,29 @@ def search_components(query, partsbox_client=None, mouser_client=None, digikey_c
         client = digikey_client or DigiKeyClient()
         results.extend(_search_digikey(query, client))
 
+    required_qty = parse_engineering_value(query.required_qty)
+    for result in results:
+        result.stock_sufficient = _stock_covers_requirement(result.stock, required_qty)
+
     return [result.to_dict() for result in results]
 
 
-def _search_partsbox(query, client):
-    search_term = query.search_term()
-    if not search_term and not query.manufacturer:
-        return []
+def _stock_covers_requirement(stock, required_qty):
+    if required_qty is None or stock is None:
+        return None
+    try:
+        return float(stock) >= required_qty
+    except (TypeError, ValueError):
+        return None
 
+
+def _search_partsbox(query, client):
+    """
+    An empty query (no mpn/keywords/manufacturer) matches every part --
+    this is what lets the PartsBox Inventory workspace browse the full
+    catalog through the exact same function Component Search and Find
+    Replacement use, rather than a separate "list everything" path.
+    """
     matches = []
     for part in client.get_parts():
         if _partsbox_part_matches(part, query):
@@ -168,6 +213,14 @@ def _partsbox_part_matches(part, query):
 
 
 def _partsbox_part_to_result(part):
+    characteristics = {
+        key.replace("part/", ""): value
+        for key, value in part.items()
+        if key not in _KNOWN_PARTSBOX_FIELDS
+        and key != "part/tags"
+        and value not in (None, "", [], {})
+    }
+
     return LookupResult(
         source="PartsBox",
         manufacturer=part.get("part/manufacturer", "") or "",
@@ -182,7 +235,7 @@ def _partsbox_part_to_result(part):
         supplier_part_number="",
         unit_price="",
         lifecycle_status="",
-        characteristics={},
+        characteristics=characteristics,
         raw=part,
     )
 
@@ -224,7 +277,7 @@ def _supplier_result_to_lookup_result(supplier_result, source):
         manufacturer=supplier_result.manufacturer,
         mpn=supplier_result.mpn,
         description="",
-        category="",
+        category=supplier_result.category,
         package="",
         stock=supplier_result.stock,
         supplier_part_number=supplier_result.supplier_part_number,

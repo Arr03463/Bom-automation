@@ -355,6 +355,16 @@ def _digikey_product_to_result(product, notes=None):
     if status:
         result_notes.append(str(status))
 
+    # Best-effort only: DigiKey's live "Category" field shape is not
+    # confirmed against this codebase's own tests/mocks -- extracted
+    # defensively the same way Manufacturer/ProductStatus are (nested
+    # {"Name": ...} or a plain string), left "" otherwise.
+    category = product.get("Category", "")
+    if isinstance(category, dict):
+        category = category.get("Name", "") or category.get("Value", "")
+    if not isinstance(category, str):
+        category = ""
+
     return SupplierResult(
         supplier="DigiKey",
         manufacturer=manufacturer,
@@ -364,6 +374,7 @@ def _digikey_product_to_result(product, notes=None):
         supplier_part_number=supplier_part_number,
         product_url=product.get("ProductUrl", ""),
         notes="; ".join(result_notes),
+        category=category,
     )
 
 

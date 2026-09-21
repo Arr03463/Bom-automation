@@ -175,6 +175,14 @@ def _parse_stock(value):
 
 
 def _mouser_part_to_result(part, notes=None):
+    # Best-effort only: Mouser's live "Category" field shape is not
+    # confirmed against this codebase's own tests/mocks. Extracted
+    # defensively (plain string only) and left "" otherwise, rather than
+    # guessing at a nested shape the way DigiKey's Category is handled.
+    category = part.get("Category", "")
+    if not isinstance(category, str):
+        category = ""
+
     return SupplierResult(
         supplier="Mouser",
         manufacturer=part.get("Manufacturer", ""),
@@ -184,6 +192,7 @@ def _mouser_part_to_result(part, notes=None):
         supplier_part_number=part.get("MouserPartNumber", ""),
         product_url=part.get("ProductDetailUrl", ""),
         notes="; ".join(notes or []),
+        category=category,
     )
 
 

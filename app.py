@@ -19,10 +19,17 @@ from component_lookup import (  # noqa: E402
     build_query_from_bom_row,
     search_components,
 )
-from record_filter import search_and_filter  # noqa: E402
+from engineering_units import parse_engineering_value  # noqa: E402
+from partsbox_client import PartsBoxClient  # noqa: E402
+from record_filter import generate_facets, search_and_filter  # noqa: E402
 from review_actions import apply_replacement, retry_exact_sourcing  # noqa: E402
 from run_workspace import build_run_workspace, save_uploaded_file  # noqa: E402
-from workflow_runner import refresh_response_snapshot, run_bom_workflow  # noqa: E402
+from workflow_runner import (  # noqa: E402
+    build_purchasing_summary,
+    refresh_response_snapshot,
+    regenerate_purchasing,
+    run_bom_workflow,
+)
 
 
 RESULTS_SEARCH_FIELDS = ["mpn", "manufacturer", "description", "supplier_part_number", "designators"]
@@ -51,6 +58,32 @@ LOOKUP_DISPLAY_COLUMNS = {
     "unit_price": "Unit Price",
 }
 
+INVENTORY_DISPLAY_COLUMNS = {
+    "mpn": "Manufacturer Part Number",
+    "manufacturer": "Manufacturer",
+    "description": "Description",
+    "category": "Category",
+    "package": "Package",
+}
+
+# Facets shown only when the current result set actually has data for
+# them (record_filter.generate_facets) -- never a fixed always-shown
+# list. Categorical facets get an exact-match selectbox; range facets get
+# min/max numeric inputs parsed via engineering_units. "stock" is
+# excluded from both since it already has its own dedicated In Stock/Out
+# of Stock/Unknown filter.
+CATEGORICAL_FACET_FIELDS = ["category", "package", "mounting", "dielectric", "lifecycle_status"]
+RANGE_FACET_FIELDS = [
+    "voltage",
+    "current",
+    "power",
+    "tolerance",
+    "resistance",
+    "capacitance",
+    "inductance",
+    "unit_price",
+]
+
 
 RUN_SCOPED_STATE_DEFAULTS = {
     "selected_review_row_id": None,
@@ -74,6 +107,8 @@ def init_session_state():
     st.session_state.setdefault("current_run", None)
     st.session_state.setdefault("replacement_lookup_sources", frozenset({"mouser", "digikey"}))
     st.session_state.setdefault("lookup_results", [])
+    st.session_state.setdefault("inventory_results", [])
+    st.session_state.setdefault("inventory_storage_locations", None)
     for key, default in RUN_SCOPED_STATE_DEFAULTS.items():
         st.session_state.setdefault(key, default)
 
@@ -101,7 +136,7 @@ def reset_run_scoped_session_state():
         del st.session_state[key]
 
 
-def show_download(label, file_path):
+def show_download(label, file_path, disabled=False):
     if not file_path:
         return
 
@@ -115,6 +150,7 @@ def show_download(label, file_path):
             data=file_handle,
             file_name=path.name,
             mime="application/octet-stream",
+            disabled=disabled,
         )
 
 
@@ -198,12 +234,14 @@ def render_run_messages(current_run):
 def render_downloads(current_run):
     st.subheader("Outputs")
 
-    if current_run.get("stale_after_mutation"):
+    stale = bool(current_run.get("stale_after_mutation"))
+    if stale:
         st.warning(
             "A Needs Review action changed the BOM since these files were generated. "
-            "Downloads, purchasing carts/lists, and the run summary below reflect the "
-            "BOM *before* that change. Re-run BOM Automation to regenerate them from "
-            "the current state."
+            "Downloads below are disabled until they're regenerated so nobody hands "
+            "purchasing a BOM file that doesn't match what Results now shows. "
+            "Go to the Purchasing page and click Regenerate Purchasing, or re-run "
+            "BOM Automation, to update them from the current state."
         )
 
     outputs = current_run.get("outputs", {})
@@ -218,7 +256,7 @@ def render_downloads(current_run):
     }
 
     for key, label in download_labels.items():
-        show_download(label, outputs.get(key))
+        show_download(label, outputs.get(key), disabled=stale)
 
 
 def render_results_workspace(current_run):
@@ -373,14 +411,25 @@ def render_replacement_lookup(current_run, active_bom_state, row_id):
         st.info("No candidates yet. Adjust the query above and click Search.")
         return
 
+    row_required_qty = row.get("required_qty")
+
     for index, candidate in enumerate(results):
         candidate_cols = st.columns([5, 1])
         with candidate_cols[0]:
+            stock_display = candidate.get("stock") if candidate.get("stock") is not None else "Unknown"
+            coverage = ""
+            if row_required_qty:
+                sufficient = candidate.get("stock_sufficient")
+                if sufficient is True:
+                    coverage = f" · ✓ covers required qty ({row_required_qty})"
+                elif sufficient is False:
+                    coverage = f" · ✗ short of required qty ({row_required_qty})"
             st.write(
                 f"**{candidate.get('source')}** · {candidate.get('mpn')} · "
                 f"{candidate.get('manufacturer') or 'unknown manufacturer'} · "
-                f"stock: {candidate.get('stock') if candidate.get('stock') is not None else 'Unknown'} · "
+                f"stock: {stock_display} · "
                 f"supplier P/N: {candidate.get('supplier_part_number') or '—'}"
+                f"{coverage}"
             )
         with candidate_cols[1]:
             if st.button("Select", key=f"select_replacement_{row_id}_{index}"):
@@ -390,6 +439,49 @@ def render_replacement_lookup(current_run, active_bom_state, row_id):
                 st.session_state.selected_review_row_id = None
                 st.session_state.pop(f"replacement_results_{row_id}", None)
                 st.rerun()
+
+
+def render_dynamic_facet_filters(results, key_prefix):
+    """
+    Shared by Component Search and PartsBox Inventory: builds filter
+    widgets only for facets that actually have data in the current
+    result set (record_filter.generate_facets), instead of a fixed list
+    of often-empty filters. Categorical facets (category, package, ...)
+    get an exact-match selectbox; numeric facets (voltage, tolerance,
+    ...) get min/max range inputs parsed through engineering_units.
+    Returns a filters dict ready for record_filter.search_and_filter().
+    """
+    filters = {}
+
+    categorical_facets = generate_facets(results, CATEGORICAL_FACET_FIELDS)
+    if categorical_facets:
+        facet_cols = st.columns(len(categorical_facets))
+        for col, (field, values) in zip(facet_cols, categorical_facets.items()):
+            with col:
+                selection = st.selectbox(
+                    field.replace("_", " ").title(), ["All"] + values, key=f"{key_prefix}_facet_{field}"
+                )
+                filters[field] = selection
+
+    range_facets = generate_facets(results, RANGE_FACET_FIELDS)
+    if range_facets:
+        st.caption("Range filters (values shown in the current results):")
+        for field in range_facets:
+            range_cols = st.columns(2)
+            with range_cols[0]:
+                min_value = st.text_input(
+                    f"Min {field}", key=f"{key_prefix}_range_min_{field}", placeholder="e.g. 10uF"
+                )
+            with range_cols[1]:
+                max_value = st.text_input(
+                    f"Max {field}", key=f"{key_prefix}_range_max_{field}", placeholder="e.g. 25V"
+                )
+            parsed_min = parse_engineering_value(min_value) if min_value else None
+            parsed_max = parse_engineering_value(max_value) if max_value else None
+            if parsed_min is not None or parsed_max is not None:
+                filters[field] = {"min": parsed_min, "max": parsed_max}
+
+    return filters
 
 
 def render_component_search_page():
@@ -449,34 +541,208 @@ def render_component_search_page():
             "Stock", ["All", "In Stock", "Out of Stock", "Unknown"], key="component_search_stock_filter"
         )
 
-    filtered = search_and_filter(
-        results,
-        filters={
-            "source": st.session_state.component_search_source_filter,
-            "stock": st.session_state.component_search_stock_filter,
-        },
-    )
+    dynamic_filters = render_dynamic_facet_filters(results, key_prefix="component_search")
+    filters = {
+        "source": st.session_state.component_search_source_filter,
+        "stock": st.session_state.component_search_stock_filter,
+        **dynamic_filters,
+    }
+
+    filtered = search_and_filter(results, filters=filters)
     render_lookup_results_table(filtered)
 
 
-def render_lookup_results_table(results):
+def render_lookup_results_table(results, show_stock_sufficiency=False):
     if not results:
         st.info("No results match the current filters.")
         return
 
     table_df = pd.DataFrame(results)
-    available_columns = [col for col in LOOKUP_DISPLAY_COLUMNS if col in table_df.columns]
-    table_df = table_df[available_columns].rename(columns=LOOKUP_DISPLAY_COLUMNS)
+    display_columns = dict(LOOKUP_DISPLAY_COLUMNS)
+    if show_stock_sufficiency and "stock_sufficient" in table_df.columns:
+        display_columns = {**display_columns, "stock_sufficient": "Covers Required Qty?"}
+
+    available_columns = [col for col in display_columns if col in table_df.columns]
+    table_df = table_df[available_columns].rename(columns=display_columns)
     st.dataframe(table_df, width="stretch", hide_index=True)
+
+
+def render_partsbox_inventory_page():
+    """
+    Reuses component_lookup.search_components() (sources={"partsbox"},
+    which now supports an empty query as "browse everything") and
+    record_filter -- no second PartsBox search/filter implementation.
+    Read-only: no write action in this phase has confirmed PartsBox API
+    support (see the Phase 4 report), so none is offered here rather
+    than inventing one.
+    """
+    st.subheader("PartsBox Inventory")
+    st.caption(
+        "PartsBox remains the system of record; this is a read-only view over it. "
+        "**Confirmed** fields (Manufacturer, MPN, PartsBox part ID) are already used "
+        "elsewhere in this app. **Inferred** fields (Description, Category, Package) "
+        "are read defensively and may be blank if PartsBox's live schema differs. "
+        "Quantity/stock is **not exposed** -- no confirmed PartsBox field for it "
+        "exists in this integration."
+    )
+
+    search_cols = st.columns([3, 1])
+    with search_cols[0]:
+        search_text = st.text_input(
+            "MPN or keywords (leave blank to browse everything)", key="inventory_search_text"
+        )
+    with search_cols[1]:
+        manufacturer_filter = st.text_input("Manufacturer (optional)", key="inventory_manufacturer")
+
+    if st.button("Search / Browse All", key="inventory_search_button"):
+        query = LookupQuery(
+            mpn=search_text,
+            keywords=search_text,
+            manufacturer=manufacturer_filter,
+            sources=frozenset({"partsbox"}),
+        )
+        with st.spinner("Loading from PartsBox..."):
+            st.session_state.inventory_results = search_components(query)
+
+    results = st.session_state.inventory_results
+    if results:
+        dynamic_filters = render_dynamic_facet_filters(results, key_prefix="inventory")
+        filtered = search_and_filter(
+            results,
+            query_text="",
+            search_fields=[],
+            filters=dynamic_filters,
+        )
+        st.write(f"{len(filtered)} of {len(results)} parts shown.")
+        render_lookup_results_table(filtered)
+    else:
+        st.info("No results yet. Search, or click Browse All with an empty query.")
+
+    st.divider()
+    render_partsbox_storage_locations()
+
+
+def render_partsbox_storage_locations():
+    st.subheader("Storage Locations")
+    st.caption(
+        "The project/storage/production-tag convention (same-name project + storage, "
+        "storage tagged \"production\") is unchanged from the PartsBox project lifecycle "
+        "already used when running a BOM."
+    )
+
+    if st.button("Load storage locations", key="load_storage_locations_button"):
+        with st.spinner("Loading from PartsBox..."):
+            try:
+                response = PartsBoxClient().list_storage_locations()
+                st.session_state.inventory_storage_locations = response.get(
+                    "data", response.get("storage", [])
+                )
+            except Exception as exc:
+                st.error(f"Could not load storage locations: {exc}")
+
+    storage_locations = st.session_state.inventory_storage_locations
+    if storage_locations is None:
+        st.info("Click 'Load storage locations' to fetch them from PartsBox.")
+        return
+
+    if not storage_locations:
+        st.info("No storage locations returned.")
+        return
+
+    rows = []
+    for storage in storage_locations:
+        tags = storage.get("storage/tags") or storage.get("tags") or []
+        rows.append(
+            {
+                "Name": storage.get("storage/name") or storage.get("name") or "",
+                "Tags": ", ".join(str(tag) for tag in tags) if isinstance(tags, list) else str(tags),
+                "Production": "Yes" if "production" in [str(t).strip().lower() for t in tags] else "No",
+            }
+        )
+
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+
+def render_purchasing_page():
+    """
+    Purchasing summary/status/regeneration all derive from the canonical
+    ActiveBomState via workflow_runner's build_purchasing_summary()/
+    regenerate_purchasing() -- no sourcing decision is recalculated here.
+    """
+    current_run = st.session_state.current_run
+    if current_run is None:
+        st.info("Run a BOM first to see purchasing handoff information.")
+        return
+
+    active_bom_state = current_run.get("_active_bom_state")
+    if active_bom_state is None:
+        st.info("No active BOM state for the current run.")
+        return
+
+    summary = build_purchasing_summary(current_run)
+    st.subheader(f"Purchasing Handoff — {summary['status']}")
+
+    if summary["status"] == "Stale — BOM Changed":
+        st.warning(
+            "The BOM changed (via Retry/Find Replacement) since purchasing artifacts "
+            "were last generated. Regenerate before handing off to purchasing."
+        )
+    elif summary["status"] == "Needs Review":
+        st.warning(
+            f"{summary['needs_review_count']} part(s) still need review. Resolve them "
+            "in Results → Needs Review before generating purchasing artifacts."
+        )
+    elif summary["status"] == "Generation Failed":
+        for error in current_run.get("purchasing_regeneration_errors", []):
+            st.error(error)
+
+    cols = st.columns(2)
+    with cols[0]:
+        st.markdown("#### Mouser")
+        st.write(f"Items: {summary['mouser']['item_count']}")
+        st.write(f"Total quantity: {summary['mouser']['total_quantity']}")
+        st.write(f"Cart created: {'Yes' if summary['mouser']['cart_created'] else 'No'}")
+        st.write(f"CartKey: {summary['mouser']['cart_key'] or 'Not available'}")
+        st.caption(
+            "Sharing is manual for now: complete the Share action in Mouser directly "
+            "and hand the resulting Access ID to purchasing. No need to paste it back "
+            "into AutoBOM."
+        )
+
+    with cols[1]:
+        st.markdown("#### DigiKey")
+        st.write(f"Items: {summary['digikey']['item_count']}")
+        st.write(f"Total quantity: {summary['digikey']['total_quantity']}")
+        st.write(f"MyList created: {'Yes' if summary['digikey']['list_created'] else 'No'}")
+        st.write(f"List ID: {summary['digikey']['list_id'] or 'Not available'}")
+        st.write(f"Share identifier: {summary['digikey']['share_id'] or 'Not confirmed by current API'}")
+
+    st.divider()
+
+    can_regenerate = summary["needs_review_count"] == 0
+    if st.button("Regenerate Purchasing", disabled=not can_regenerate, type="primary"):
+        with st.spinner("Regenerating purchasing artifacts from the current BOM..."):
+            regenerate_purchasing(current_run, run_mouser_cart=True, run_digikey_mylist=True)
+        st.rerun()
+
+    if not can_regenerate:
+        st.caption("Resolve remaining Needs Review items before regenerating purchasing.")
+
+    st.divider()
+    render_downloads(current_run)
 
 
 st.set_page_config(page_title="AutoBOM", layout="wide")
 init_session_state()
 
 st.title("AutoBOM")
-page = st.sidebar.radio("Navigate", ["Run BOM", "Component Search"])
+page = st.sidebar.radio("Navigate", ["Run BOM", "Component Search", "PartsBox Inventory", "Purchasing"])
 
 if page == "Run BOM":
     render_run_bom_page()
-else:
+elif page == "Component Search":
     render_component_search_page()
+elif page == "PartsBox Inventory":
+    render_partsbox_inventory_page()
+else:
+    render_purchasing_page()

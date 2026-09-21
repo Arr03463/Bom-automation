@@ -6,7 +6,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
 
-from record_filter import apply_filters, search_and_filter, text_search
+from record_filter import apply_filters, generate_facets, search_and_filter, text_search
 
 
 def make_records():
@@ -123,6 +123,67 @@ class ApplyFiltersTests(unittest.TestCase):
         self.assertEqual([r["mpn"] for r in unknown], ["UNKNOWNPART"])
         self.assertEqual([r["mpn"] for r in out_of_stock], ["XYZ789"])
         self.assertNotIn("UNKNOWNPART", [r["mpn"] for r in out_of_stock])
+
+    def test_range_filter_bounds_a_numeric_field(self):
+        records = [
+            {"mpn": "A", "voltage": "16V"},
+            {"mpn": "B", "voltage": "25V"},
+            {"mpn": "C", "voltage": "50V"},
+        ]
+        result = apply_filters(records, {"voltage": {"min": 20, "max": 30}})
+        self.assertEqual([r["mpn"] for r in result], ["B"])
+
+    def test_range_filter_unbounded_side(self):
+        records = [
+            {"mpn": "A", "voltage": "16V"},
+            {"mpn": "B", "voltage": "25V"},
+            {"mpn": "C", "voltage": "50V"},
+        ]
+        result = apply_filters(records, {"voltage": {"min": 20}})
+        self.assertEqual({r["mpn"] for r in result}, {"B", "C"})
+
+    def test_range_filter_excludes_unparseable_values(self):
+        records = [
+            {"mpn": "A", "voltage": "25V"},
+            {"mpn": "B", "voltage": "unknown"},
+            {"mpn": "C", "voltage": ""},
+        ]
+        result = apply_filters(records, {"voltage": {"min": 0, "max": 100}})
+        self.assertEqual([r["mpn"] for r in result], ["A"])
+
+    def test_range_and_categorical_filters_combine(self):
+        records = [
+            {"mpn": "A", "source": "Mouser", "voltage": "25V"},
+            {"mpn": "B", "source": "DigiKey", "voltage": "25V"},
+        ]
+        result = apply_filters(records, {"source": "Mouser", "voltage": {"min": 20, "max": 30}})
+        self.assertEqual([r["mpn"] for r in result], ["A"])
+
+
+class GenerateFacetsTests(unittest.TestCase):
+    def test_only_fields_with_real_data_are_returned(self):
+        records = [
+            {"mpn": "A", "package": "0603", "dielectric": ""},
+            {"mpn": "B", "package": "0805", "dielectric": ""},
+        ]
+        facets = generate_facets(records, ["package", "dielectric", "mounting"])
+
+        self.assertEqual(facets, {"package": ["0603", "0805"]})
+        self.assertNotIn("dielectric", facets)
+        self.assertNotIn("mounting", facets)
+
+    def test_values_are_sorted_and_deduplicated(self):
+        records = [
+            {"mpn": "A", "manufacturer": "Yageo"},
+            {"mpn": "B", "manufacturer": "Murata"},
+            {"mpn": "C", "manufacturer": "Yageo"},
+        ]
+        facets = generate_facets(records, ["manufacturer"])
+
+        self.assertEqual(facets["manufacturer"], ["Murata", "Yageo"])
+
+    def test_empty_records_produce_no_facets(self):
+        self.assertEqual(generate_facets([], ["package", "manufacturer"]), {})
 
 
 class SearchAndFilterTests(unittest.TestCase):

@@ -3,11 +3,13 @@ Shared search/filter layer over lists of dict-like records.
 
 Deliberately generic: it knows nothing about BOM rows or supplier
 lookups specifically. The Results Workspace filters ActiveBomState rows
-through this; Component Search and the future Needs Review replacement
-lookup filter component_lookup results through the same functions. One
-filtering implementation, multiple callers -- no page gets its own
-one-off filter logic.
+through this; Component Search, PartsBox Inventory, and the Needs Review
+replacement lookup filter component_lookup results through the same
+functions. One filtering implementation, multiple callers -- no page
+gets its own one-off filter logic.
 """
+
+from engineering_units import parse_engineering_value, value_in_range
 
 STOCK_FILTER_FIELD = "stock"
 
@@ -31,12 +33,21 @@ def apply_filters(records, filters):
     """
     filters: dict of field name -> desired value. A filter is skipped when
     its value is empty/None or the sentinel "All" (the usual "no
-    selection" state for a UI dropdown). Every other field does a
-    case-insensitive exact match against the record's value. The "stock"
-    field is a special case: desired value "In Stock"/"Out of Stock"/
-    "Unknown" compares against a numeric threshold (or its absence)
-    instead of an exact string match -- a record with no confirmed stock
-    figure (e.g. a PartsBox match) is Unknown, never treated as zero.
+    selection" state for a UI dropdown). Three kinds of desired value are
+    recognized:
+
+    - a plain string -> case-insensitive exact match against the
+      record's value (category/exact-match facets: manufacturer,
+      package, category, source, status, ...).
+    - the "stock" field with "In Stock"/"Out of Stock"/"Unknown" ->
+      compares against a numeric threshold (or its absence) instead of
+      an exact string match; a record with no confirmed stock figure
+      (e.g. a PartsBox match) is Unknown, never treated as zero.
+    - a dict with a "min" and/or "max" key -> a range filter (voltage,
+      tolerance, price, ...): the record's raw value for that field is
+      parsed via engineering_units.parse_engineering_value() and must
+      fall within the given bounds. A record whose value can't be parsed
+      never matches a bounded range.
     """
     if not filters:
         return list(records)
@@ -49,13 +60,43 @@ def search_and_filter(records, query_text="", search_fields=(), filters=None):
     return apply_filters(matched, filters)
 
 
+def generate_facets(records, candidate_fields):
+    """
+    Returns {field: sorted distinct values} for only the fields in
+    candidate_fields that have at least one non-empty value across
+    `records` -- never a facet with nothing behind it (e.g. offering a
+    "Dielectric" filter when no result in the current set has one).
+    Shared by every page that needs "show the filters that actually
+    apply to what's on screen right now" instead of a fixed, often-empty
+    filter list.
+    """
+    facets = {}
+    for field in candidate_fields:
+        values = sorted(
+            {
+                str(record.get(field)).strip()
+                for record in records
+                if record.get(field) not in (None, "", [], {})
+            }
+        )
+        if values:
+            facets[field] = values
+
+    return facets
+
+
 def _matches_filters(record, filters):
     for field, desired in filters.items():
         if desired in (None, "", "All"):
             continue
 
-        if field == STOCK_FILTER_FIELD:
+        if field == STOCK_FILTER_FIELD and isinstance(desired, str):
             if not _matches_stock_filter(record, desired):
+                return False
+            continue
+
+        if isinstance(desired, dict):
+            if not _matches_range_filter(record, field, desired):
                 return False
             continue
 
@@ -64,6 +105,11 @@ def _matches_filters(record, filters):
             return False
 
     return True
+
+
+def _matches_range_filter(record, field, desired_range):
+    value = parse_engineering_value(record.get(field))
+    return value_in_range(value, desired_range.get("min"), desired_range.get("max"))
 
 
 def _matches_stock_filter(record, desired):
