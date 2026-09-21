@@ -9,9 +9,11 @@ SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
 
 from partsbox_project_builder import (
+    PRODUCTION_STORAGE_TAG,
     add_bom_entries_to_project,
     build_project_entries,
     create_partsbox_project_and_storage,
+    storage_has_tag,
 )
 
 
@@ -376,6 +378,28 @@ class ProductionTagLifecycleTests(unittest.TestCase):
         result = create_partsbox_project_and_storage("Widget", client=client)
 
         self.assertFalse(result["storage_tag_missing"])
+
+    def test_storage_has_tag_is_the_single_shared_implementation(self):
+        """
+        app.py's PartsBox Inventory Storage Locations view previously
+        duplicated this exact tag-detection logic inline instead of
+        importing it. Guard against that regressing by asserting app.py
+        imports and calls this same public function.
+        """
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app_source = app_path.read_text(encoding="utf-8")
+
+        self.assertIn("storage_has_tag", app_source)
+        self.assertIn("from partsbox_project_builder import", app_source)
+        # No leftover inline reimplementation of the tag-membership check.
+        self.assertNotIn('"production" in [str(t)', app_source)
+
+    def test_storage_has_tag_matches_tag_case_and_whitespace_insensitively(self):
+        self.assertTrue(
+            storage_has_tag({"storage/tags": [" Production "]}, PRODUCTION_STORAGE_TAG)
+        )
+        self.assertFalse(storage_has_tag({"storage/tags": ["misc"]}, PRODUCTION_STORAGE_TAG))
+        self.assertFalse(storage_has_tag(None, PRODUCTION_STORAGE_TAG))
 
     def test_existing_project_and_storage_are_reused_not_duplicated(self):
         client = FakePartsBoxClient(

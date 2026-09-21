@@ -337,7 +337,13 @@ def add_bom_entries_to_project(partsbox_result, clean_bom, client=None):
 PRODUCTION_STORAGE_TAG = "production"
 
 
-def _storage_has_tag(storage_record, tag):
+def storage_has_tag(storage_record, tag):
+    """
+    Shared production-tag detection: used both by the PartsBox project
+    lifecycle below (deciding storage_tag_missing) and by the PartsBox
+    Inventory UI's Storage Locations view (app.py), so the two never
+    duplicate this check with diverging logic.
+    """
     if not isinstance(storage_record, dict):
         return False
 
@@ -381,7 +387,7 @@ def create_partsbox_project_and_storage(project_name, description="", client=Non
         # No PartsBox API for updating tags on an existing storage location
         # is implemented/confirmed here; surface the gap instead of
         # inventing an endpoint. See partsbox_client.py.
-        storage_tag_missing = not _storage_has_tag(existing_storage, PRODUCTION_STORAGE_TAG)
+        storage_tag_missing = not storage_has_tag(existing_storage, PRODUCTION_STORAGE_TAG)
     else:
         storage_result = client.create_storage_location(
             name=names["storage_name"],

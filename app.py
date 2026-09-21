@@ -21,6 +21,7 @@ from component_lookup import (  # noqa: E402
 )
 from engineering_units import parse_engineering_value  # noqa: E402
 from partsbox_client import PartsBoxClient  # noqa: E402
+from partsbox_project_builder import PRODUCTION_STORAGE_TAG, storage_has_tag  # noqa: E402
 from record_filter import generate_facets, search_and_filter  # noqa: E402
 from review_actions import apply_replacement, retry_exact_sourcing  # noqa: E402
 from run_workspace import build_run_workspace, save_uploaded_file  # noqa: E402
@@ -234,14 +235,14 @@ def render_run_messages(current_run):
 def render_downloads(current_run):
     st.subheader("Outputs")
 
-    stale = bool(current_run.get("stale_after_mutation"))
-    if stale:
+    artifact_status = current_run.get("artifact_status") or {}
+    if bool(current_run.get("stale_after_mutation")):
         st.warning(
-            "A Needs Review action changed the BOM since these files were generated. "
-            "Downloads below are disabled until they're regenerated so nobody hands "
-            "purchasing a BOM file that doesn't match what Results now shows. "
-            "Go to the Purchasing page and click Regenerate Purchasing, or re-run "
-            "BOM Automation, to update them from the current state."
+            "A Needs Review action changed the BOM since some of these files were "
+            "generated. Files marked stale below are disabled until they're "
+            "regenerated so nobody hands purchasing a BOM file that doesn't match "
+            "what Results now shows. Go to the Purchasing page and click "
+            "Regenerate Purchasing, or re-run BOM Automation, to update them."
         )
 
     outputs = current_run.get("outputs", {})
@@ -254,9 +255,16 @@ def render_downloads(current_run):
         "partsbox_unmatched_csv": "Download PartsBox unmatched CSV",
         "run_summary": "Download run summary",
     }
+    stale_status_labels = {
+        "stale": "(stale — regenerate to update)",
+        "failed": "(last generation attempt failed)",
+    }
 
     for key, label in download_labels.items():
-        show_download(label, outputs.get(key), disabled=stale)
+        status = artifact_status.get(key)
+        suffix = stale_status_labels.get(status, "")
+        full_label = f"{label} {suffix}".strip()
+        show_download(full_label, outputs.get(key), disabled=status in ("stale", "failed"))
 
 
 def render_results_workspace(current_run):
@@ -478,6 +486,10 @@ def render_dynamic_facet_filters(results, key_prefix):
                 )
             parsed_min = parse_engineering_value(min_value) if min_value else None
             parsed_max = parse_engineering_value(max_value) if max_value else None
+            if min_value and parsed_min is None:
+                st.warning(f"Could not parse Min {field} value '{min_value}' -- not applied.")
+            if max_value and parsed_max is None:
+                st.warning(f"Could not parse Max {field} value '{max_value}' -- not applied.")
             if parsed_min is not None or parsed_max is not None:
                 filters[field] = {"min": parsed_min, "max": parsed_max}
 
@@ -656,7 +668,7 @@ def render_partsbox_storage_locations():
             {
                 "Name": storage.get("storage/name") or storage.get("name") or "",
                 "Tags": ", ".join(str(tag) for tag in tags) if isinstance(tags, list) else str(tags),
-                "Production": "Yes" if "production" in [str(t).strip().lower() for t in tags] else "No",
+                "Production": "Yes" if storage_has_tag(storage, PRODUCTION_STORAGE_TAG) else "No",
             }
         )
 
@@ -692,13 +704,22 @@ def render_purchasing_page():
             f"{summary['needs_review_count']} part(s) still need review. Resolve them "
             "in Results → Needs Review before generating purchasing artifacts."
         )
-    elif summary["status"] == "Generation Failed":
+    elif summary["status"] in ("Generation Failed", "Partial — Generation Failed"):
         for error in current_run.get("purchasing_regeneration_errors", []):
             st.error(error)
+
+    artifact_status_labels = {
+        "current": "Current / Ready",
+        "stale": "Stale — BOM Changed",
+        "not_generated": "Not Yet Generated",
+        "failed": "Generation Failed",
+        "not_required": "Not Required (no items for this supplier)",
+    }
 
     cols = st.columns(2)
     with cols[0]:
         st.markdown("#### Mouser")
+        st.write(f"Status: {artifact_status_labels.get(summary['mouser']['artifact_status'], 'Unknown')}")
         st.write(f"Items: {summary['mouser']['item_count']}")
         st.write(f"Total quantity: {summary['mouser']['total_quantity']}")
         st.write(f"Cart created: {'Yes' if summary['mouser']['cart_created'] else 'No'}")
@@ -711,6 +732,7 @@ def render_purchasing_page():
 
     with cols[1]:
         st.markdown("#### DigiKey")
+        st.write(f"Status: {artifact_status_labels.get(summary['digikey']['artifact_status'], 'Unknown')}")
         st.write(f"Items: {summary['digikey']['item_count']}")
         st.write(f"Total quantity: {summary['digikey']['total_quantity']}")
         st.write(f"MyList created: {'Yes' if summary['digikey']['list_created'] else 'No'}")

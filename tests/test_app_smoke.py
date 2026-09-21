@@ -459,6 +459,52 @@ class PurchasingPageSmokeTests(unittest.TestCase):
 
         mock_regenerate.assert_not_called()
 
+    def test_download_buttons_disable_and_reenable_per_artifact_after_regeneration(self):
+        """
+        Per-artifact download disabling (Phase 4 purchasing-correctness fix
+        pass): a mutation disables every regeneratable download, but an
+        explicit Regenerate re-enables only the ones that actually came
+        back current -- the multi-sheet workbook has no regeneration path
+        here and must stay disabled even after other downloads recover.
+        """
+        saved_env = {
+            key: os.environ.get(key) for key in ("MOUSER_CART_ENABLED", "DIGIKEY_MYLISTS_ENABLED")
+        }
+        self.addCleanup(
+            lambda: [
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+                for k, v in saved_env.items()
+            ]
+        )
+        os.environ["MOUSER_CART_ENABLED"] = "false"
+        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
+
+        result = self._run(CLEAN_BOM_CSV)
+        active_bom_state = result["_active_bom_state"]
+        row_id = active_bom_state.rows()[0]["row_id"]
+        active_bom_state.update_row(row_id, {"mpn": "CHANGED123"})
+        from workflow_runner import refresh_response_snapshot
+
+        refresh_response_snapshot(result)
+
+        at = self._navigate_to_purchasing(result)
+
+        def find(label_prefix):
+            return next(b for b in at.download_button if b.label.startswith(label_prefix))
+
+        self.assertTrue(find("Download cleaned CSV").disabled)
+        self.assertTrue(find("Download cleaned workbook").disabled)
+
+        regenerate_button = next(b for b in at.button if b.label == "Regenerate Purchasing")
+        regenerate_button.click()
+        at.run()
+
+        self.assertFalse(find("Download cleaned CSV").disabled)
+        # Still stale: no regeneration path exists for the multi-sheet
+        # workbook (needs the original run's column_mapping/warnings,
+        # which are not retained after the run completes).
+        self.assertTrue(find("Download cleaned workbook").disabled)
+
 
 if __name__ == "__main__":
     unittest.main()
