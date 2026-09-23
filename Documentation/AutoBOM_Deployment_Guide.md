@@ -1,0 +1,144 @@
+# AutoBOM Deployment Guide
+
+Audience: whoever deploys/redeploys AutoBOM, not the original developer.
+
+## 1. Requirements
+
+- Python 3.12 (matches the development environment this app was built
+  against; see `requirements.txt` for pinned dependency names).
+- Dependencies: `pip install -r requirements.txt` (requests, pandas,
+  openpyxl, python-dotenv, streamlit).
+- Outbound HTTPS access to: `api.mouser.com`, `api.digikey.com`,
+  `api.partsbox.com` (or your configured `PARTSBOX_API_BASE_URL`), and,
+  if configured, your chosen DigiKey token-store HTTPS endpoint.
+
+## 2. Hosting decision
+
+**Recommendation: Streamlit Community Cloud is acceptable**, provided the
+conditions below are met. See
+`Documentation/AutoBOM_Final_Deployment_Hardening_Report.md` §1 for the
+full assessment; summary:
+
+- Community Cloud has **no writable persistent filesystem** and periodic
+  hibernation/restart. This is fine for `runs/<run_id>/` (per-run
+  isolation already treats it as ephemeral scratch space) but is NOT fine
+  for the DigiKey rotating refresh token if left in the default
+  in-process store.
+- **Before enabling `DIGIKEY_MYLISTS_ENABLED=true` on Community Cloud**,
+  configure a durable `DIGIKEY_TOKEN_STORE` backend (`file` against a
+  mounted persistent volume, or `http` against a small external
+  HTTPS key-value/secrets service you control -- see §5 below and
+  `Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md`). The app
+  shows a startup warning banner if this isn't configured correctly.
+- Deploy the app as a **private** Streamlit app restricted to your team's
+  identities. AutoBOM has no built-in login of its own.
+- If a persistent-volume host is preferred instead of Community Cloud
+  (a small VM, or a container platform with a mounted volume), point
+  `DIGIKEY_TOKEN_STORE=file` at that volume -- no code change needed.
+
+## 3. Environment variables
+
+See `.env.example` in the repository root for the full list with
+placeholders, grouped by Mouser / DigiKey / PartsBox / token-store /
+application configuration. Copy it to `.env` for local development, or
+set the same names as your host's secrets/environment configuration for
+a deployed instance.
+
+**Never commit a file with real values.** `.env` and `Documentation/env`
+are both already listed in `.gitignore`.
+
+## 4. Deploying
+
+1. Set every required environment variable (see `.env.example`) in your
+   host's secrets/config mechanism.
+2. Push/deploy the current `main` branch.
+3. On first load, confirm the app shows no configuration warning banners
+   (see `src/config_validation.py`). If it does, fix the named problem
+   before proceeding -- these mean a feature you've enabled cannot
+   actually work as configured.
+4. Confirm `runs/` is writable by the running process (it's created
+   automatically on first BOM run if missing).
+
+## 5. Authorizing DigiKey (first-time / after a durable-store change)
+
+1. Locally, with real DigiKey `DIGIKEY_CLIENT_ID`/`DIGIKEY_CLIENT_SECRET`
+   set, run:
+   ```
+   python src/digikey_oauth_setup.py
+   ```
+   Follow its instructions to authorize against your My DigiKey account
+   and obtain a refresh token.
+2. Set `DIGIKEY_REFRESH_TOKEN` to that value as your deployment's initial
+   secret. On first use, `DigiKeyClient` reads this as a fallback if the
+   durable store has nothing yet, then persists any rotated value to the
+   durable store from then on (see `src/token_store.py`).
+3. Confirm `DIGIKEY_TOKEN_STORE` (and `DIGIKEY_TOKEN_STORE_PATH` or
+   `DIGIKEY_TOKEN_STORE_URL`/`DIGIKEY_TOKEN_STORE_API_KEY`) point at a
+   location that survives a restart of your deployment. Community Cloud
+   in particular has no writable persistent filesystem of its own -- see
+   §2.
+
+## 6. Choosing a durable DigiKey token-store backend
+
+| Backend | When to use | Config |
+|---|---|---|
+| `env_file` (default in local dev) | Local development only | none beyond the default `.env` path |
+| `file` | Host with a mounted persistent volume | `DIGIKEY_TOKEN_STORE=file`, `DIGIKEY_TOKEN_STORE_PATH=<dir>` |
+| `http` | Host with no persistent filesystem (e.g. Community Cloud) | `DIGIKEY_TOKEN_STORE=http`, `DIGIKEY_TOKEN_STORE_URL=<https base url>`, `DIGIKEY_TOKEN_STORE_API_KEY=<static key for that store>` |
+| `memory` | Never for a real deployment with MyLists enabled | none -- this is the "not durable" fallback the startup banner warns about |
+
+`http` assumes a small hosted key-value/secrets service reachable over
+HTTPS that supports `GET {url}/{key}` → `{"value": ...}` and
+`PUT {url}/{key}` with the same body shape, authenticated with a bearer
+token. Picking the actual service is a team decision (see
+`Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md` §"Candidate
+categories") -- `HttpTokenStore` in `src/token_store.py` does not assume
+any specific vendor.
+
+## 7. Rotating credentials
+
+Rotate any vendor credential the same way you'd rotate any secret at that
+vendor (Mouser API keys, DigiKey client secret, PartsBox API key): update
+it at the vendor, then update your host's secret/environment
+configuration, then restart the app. The DigiKey **refresh** token is
+different -- it rotates automatically on use and is written back through
+`DIGIKEY_TOKEN_STORE`; you should not need to manually rotate it unless
+re-authorizing from scratch (§5).
+
+**Reminder:** earlier work in this project identified live credentials
+present in a local, git-ignored `Documentation/env` file. Confirm those
+were rotated before this deployment goes live if that has not already
+happened -- see
+`Documentation/AutoBOM_Final_Deployment_Hardening_Report.md` §9 for the
+current verification status.
+
+## 8. Rolling back
+
+AutoBOM has no database migrations and no persistent state outside
+`runs/<run_id>/` (ephemeral, per-run) and the supplier lookup cache
+(`.cache/`, safe to delete/ignore). Rolling back is: redeploy the
+previous commit/tag. No data migration/cleanup step is required.
+
+## 9. Inspecting logs
+
+AutoBOM prints operational messages (dry-run previews, sanitized vendor
+error summaries via `describe_error_response()`) to stdout/stderr, which
+your host's log viewer captures. No structured log aggregation is
+implemented; see
+`Documentation/AutoBOM_Final_Deployment_Hardening_Report.md` §10 for the
+current state and what was deliberately not built in this pass.
+
+## 10. Run-directory retention
+
+`runs/<run_id>/` directories are reaped automatically once per new BOM
+run kick-off (`src/run_retention.py`), based on:
+
+- `AUTOBOM_RUN_RETENTION_DAYS` (default 14; 0 disables age-based cleanup)
+- `AUTOBOM_MAX_RUNS` (default 200, a total cap including the run just
+  created; 0 disables count-based cleanup)
+
+The currently active run is never deleted regardless of its age or
+position. Cleanup failures are caught and never crash a run. On a host
+with an ephemeral filesystem (Community Cloud), a restart already wipes
+`runs/` entirely -- this policy mainly matters for hosts with persistent
+storage, or long uptime stretches between restarts.
