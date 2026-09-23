@@ -4,13 +4,14 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from http_error_utils import raise_for_status as _raise_for_status
 from manufacturer_aliases import (
     manufacturers_equivalent,
     normalize_part_number,
     part_numbers_equivalent,
 )
 from sourcing_engine import SupplierResult, manufacturer_matches, mpn_matches
-from token_store import build_token_store
+from token_store import TokenStoreError, build_token_store
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env", override=True)
@@ -32,6 +33,12 @@ class DigiKeyClient:
         self.account_id = os.getenv("DIGIKEY_ACCOUNT_ID", "").strip()
 
         self.token_store = token_store or build_token_store()
+        # Surfaced (not swallowed) when a durable backend can't be reached --
+        # see _current_refresh_token() and Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md.
+        # Configuration validation (config_validation.py) also reads this
+        # indirectly via digikey_status() to warn operators before a
+        # request fails.
+        self.token_store_error = None
         self.refresh_token = self._load_refresh_token()
 
     def _load_refresh_token(self):
@@ -40,9 +47,36 @@ class DigiKeyClient:
         # DigiKeyClient() instances within the same process even when the
         # backend can't rewrite .env (see token_store.py for the
         # per-backend persistence guarantees, or lack thereof).
-        stored_value = self.token_store.get(REFRESH_TOKEN_STORE_KEY)
         env_value = os.getenv("DIGIKEY_REFRESH_TOKEN", "").strip()
+        try:
+            stored_value = self.token_store.get(REFRESH_TOKEN_STORE_KEY)
+        except TokenStoreError as exc:
+            # Fall back to the static value rather than raising out of
+            # __init__ -- many callers construct a DigiKeyClient() only to
+            # do a dry-run product lookup that never touches the refresh
+            # token at all. Record the failure so anything that DOES need
+            # a live user token surfaces it clearly instead of a bare
+            # "missing refresh token" error that looks like a config typo.
+            self.token_store_error = str(exc)
+            stored_value = None
+
         return (stored_value or env_value or "").strip()
+
+    def _current_refresh_token(self):
+        """
+        Re-reads the store immediately before a refresh attempt (see
+        get_user_access_token()), rather than trusting the value loaded at
+        construction time -- a concurrent process holding the same
+        durable backend may have already rotated the token since this
+        client was built.
+        """
+        try:
+            stored_value = self.token_store.get(REFRESH_TOKEN_STORE_KEY)
+        except TokenStoreError as exc:
+            self.token_store_error = str(exc)
+            stored_value = None
+
+        return (stored_value or self.refresh_token or "").strip()
 
     def get_access_token(self):
         if self.dry_run:
@@ -75,34 +109,51 @@ class DigiKeyClient:
         if self.user_access_token:
             return self.user_access_token
 
-        if not self.refresh_token:
-            raise ValueError(
-                "DigiKey MyLists requires 3-legged OAuth. Set DIGIKEY_REFRESH_TOKEN "
-                "or DIGIKEY_ACCESS_TOKEN in .env after authorizing this app with your "
-                "My DigiKey account."
-            )
-
         if not self.client_id or not self.client_secret:
             raise ValueError("Missing DigiKey credentials in .env")
 
-        response = requests.post(
-            self.token_url,
-            data={
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "refresh_token": self.refresh_token,
-                "grant_type": "refresh_token",
-            },
-            timeout=30,
-        )
-        _raise_for_status(response, "DigiKey user token request failed")
+        # Locked for the full read-refresh-write cycle: for the file/
+        # env-file backends (the only ones where two AutoBOM processes
+        # can share the same persistent store), this serializes concurrent
+        # refreshes so the second caller re-reads the FIRST caller's
+        # already-rotated token instead of retrying the one DigiKey just
+        # invalidated. See token_store.TokenStore.lock() and
+        # Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md for what
+        # backs this on backends with no real lock (memory, http).
+        with self.token_store.lock():
+            current_refresh_token = self._current_refresh_token()
+            if not current_refresh_token:
+                raise ValueError(
+                    "DigiKey MyLists requires 3-legged OAuth. Set DIGIKEY_REFRESH_TOKEN "
+                    "or DIGIKEY_ACCESS_TOKEN in .env after authorizing this app with your "
+                    "My DigiKey account."
+                )
 
-        token_data = response.json()
-        self.access_token = token_data.get("access_token")
-        new_refresh_token = token_data.get("refresh_token", self.refresh_token)
-        if new_refresh_token != self.refresh_token:
-            self.token_store.set(REFRESH_TOKEN_STORE_KEY, new_refresh_token)
+            response = requests.post(
+                self.token_url,
+                data={
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "refresh_token": current_refresh_token,
+                    "grant_type": "refresh_token",
+                },
+                timeout=30,
+            )
+            _raise_for_status(response, "DigiKey user token request failed")
+
+            token_data = response.json()
+            self.access_token = token_data.get("access_token")
+            new_refresh_token = token_data.get("refresh_token", current_refresh_token)
+            # Update in-memory state before attempting to persist: DigiKey
+            # has already invalidated current_refresh_token by returning a
+            # new one, so this process must use the new value for any
+            # further refresh even if durable persistence below fails.
             self.refresh_token = new_refresh_token
+            if new_refresh_token != current_refresh_token:
+                try:
+                    self.token_store.set(REFRESH_TOKEN_STORE_KEY, new_refresh_token)
+                except TokenStoreError as exc:
+                    self.token_store_error = str(exc)
 
         if not self.access_token:
             raise ValueError("DigiKey did not return a user access token.")
@@ -458,20 +509,3 @@ def _append_note(existing, note):
     return "; ".join(notes)
 
 
-def _raise_for_status(response, context):
-    try:
-        response.raise_for_status()
-    except requests.HTTPError as exc:
-        detail = response.text.strip()
-        try:
-            payload = response.json()
-            message = payload.get("ErrorMessage") or payload.get("message")
-            error_detail = payload.get("ErrorDetails") or payload.get("detail")
-            request_id = payload.get("RequestId")
-            parts = [part for part in [message, error_detail, f"RequestId: {request_id}" if request_id else ""] if part]
-            if parts:
-                detail = " | ".join(parts)
-        except ValueError:
-            pass
-
-        raise RuntimeError(f"{context}: {response.status_code} {detail}") from exc

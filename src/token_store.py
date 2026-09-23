@@ -1,7 +1,24 @@
+import contextlib
 import os
 from pathlib import Path
 
+import requests
+
+from file_lock import FileLock
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+class TokenStoreError(Exception):
+    """
+    Raised by a TokenStore backend when it cannot durably read/write a
+    value -- a network failure, an unreachable host, an auth failure
+    against the store itself, etc. Deliberately distinct from returning
+    None: None means "no token has ever been stored here", while this
+    means "the store could not be reached and we don't actually know".
+    Callers must not treat the two the same way (see
+    DigiKeyClient._current_refresh_token()).
+    """
 
 
 class TokenStore:
@@ -13,6 +30,17 @@ class TokenStore:
     def set(self, key, value):
         raise NotImplementedError
 
+    def lock(self, timeout=None):
+        """
+        Context manager serializing a read-refresh-write cycle across
+        concurrent callers. Backends with no real cross-process
+        contention (in-process memory) or no supported coordination
+        primitive (a generic HTTPS key/value endpoint) return a no-op --
+        see the class docstrings below for what actually protects each
+        backend against a lost update.
+        """
+        return contextlib.nullcontext()
+
 
 class MemoryTokenStore(TokenStore):
     """
@@ -22,6 +50,10 @@ class MemoryTokenStore(TokenStore):
     token survives for the life of the running process only; it is lost on
     restart/redeploy, and the operator must refresh DIGIKEY_REFRESH_TOKEN
     through the host's secret manager if that happens.
+
+    Single-process by construction (see
+    _get_shared_memory_token_store), so there is no concurrent-writer
+    scenario for lock() to protect against.
     """
 
     def __init__(self, initial=None):
@@ -82,6 +114,9 @@ class EnvFileTokenStore(TokenStore):
         self.env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return True
 
+    def lock(self, timeout=None):
+        return FileLock(self.env_path, timeout=timeout)
+
 
 class FileTokenStore(TokenStore):
     """
@@ -109,6 +144,95 @@ class FileTokenStore(TokenStore):
 
         tmp_path.write_text(str(value), encoding="utf-8")
         os.replace(str(tmp_path), str(path))
+        return True
+
+    def lock(self, timeout=None):
+        self.directory.mkdir(parents=True, exist_ok=True)
+        # One shared lock file per directory (not per key): today there is
+        # exactly one key in practice (DIGIKEY_REFRESH_TOKEN), and a
+        # per-directory lock is simpler than inventing per-key lock paths.
+        return FileLock(self.directory / "_rotation", timeout=timeout)
+
+
+class HttpTokenStore(TokenStore):
+    """
+    Generic HTTPS key-value backend for hosts with no writable persistent
+    filesystem (e.g. Streamlit Community Cloud). Deliberately vendor-
+    agnostic: it PUTs/GETs a JSON {"value": ...} body against
+    f"{base_url}/{key}" with a bearer token, which is the shape most small
+    hosted key-value/secrets services expose. Picking an actual service is
+    a deployment decision for the team (see
+    Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md) -- this class
+    only needs that shape to exist somewhere reachable over HTTPS.
+
+    Failures raise TokenStoreError rather than returning None, so a
+    network/auth problem with the store is never confused with "nothing
+    has been stored yet" (see DigiKeyClient._current_refresh_token()).
+
+    lock() is a no-op here: coordinating a lock against a generic HTTP
+    endpoint would require assuming a specific conditional-write/ETag
+    capability this class does not assume any particular vendor provides.
+    If the chosen backend supports conditional writes, a subclass can
+    override lock() to use them. Absent that, DigiKey's own rejection of
+    an already-used refresh token is the safety net against a lost race
+    (see get_user_access_token()) -- a losing process gets a clear,
+    surfaced error instead of silently corrupting the stored token.
+    """
+
+    def __init__(self, base_url=None, api_key=None, timeout=10):
+        self.base_url = (base_url or os.getenv("DIGIKEY_TOKEN_STORE_URL", "")).strip().rstrip("/")
+        self.api_key = api_key or os.getenv("DIGIKEY_TOKEN_STORE_API_KEY", "").strip()
+        self.timeout = timeout
+
+    def _headers(self):
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def get(self, key):
+        if not self.base_url:
+            raise TokenStoreError("DIGIKEY_TOKEN_STORE_URL is not configured.")
+
+        try:
+            response = requests.get(
+                f"{self.base_url}/{key}", headers=self._headers(), timeout=self.timeout
+            )
+        except requests.RequestException as exc:
+            raise TokenStoreError(f"Token store request failed: {exc}") from exc
+
+        if response.status_code == 404:
+            return None
+
+        if response.status_code >= 400:
+            raise TokenStoreError(f"Token store returned HTTP {response.status_code}.")
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise TokenStoreError("Token store returned a non-JSON response.") from exc
+
+        if isinstance(payload, dict):
+            return payload.get("value")
+        return None
+
+    def set(self, key, value):
+        if not self.base_url:
+            raise TokenStoreError("DIGIKEY_TOKEN_STORE_URL is not configured.")
+
+        try:
+            response = requests.put(
+                f"{self.base_url}/{key}",
+                headers=self._headers(),
+                json={"value": value},
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise TokenStoreError(f"Token store request failed: {exc}") from exc
+
+        if response.status_code >= 400:
+            raise TokenStoreError(f"Token store returned HTTP {response.status_code}.")
+
         return True
 
 
@@ -149,12 +273,15 @@ def build_token_store():
       change.
     - DIGIKEY_TOKEN_STORE=file (with DIGIKEY_TOKEN_STORE_PATH=<dir>): for a
       host that provides a writable persistent directory outside the repo.
-    - DIGIKEY_TOKEN_STORE=memory, or no .env file and no explicit setting
-      (e.g. Streamlit Community Cloud): in-process only, shared across
-      every DigiKeyClient() built in this process (see
-      _get_shared_memory_token_store). Documented as non-persistent across
-      restarts -- see MemoryTokenStore and
+    - DIGIKEY_TOKEN_STORE=http (with DIGIKEY_TOKEN_STORE_URL and
+      DIGIKEY_TOKEN_STORE_API_KEY): for a host with no writable persistent
+      filesystem at all (e.g. Streamlit Community Cloud) -- see
+      HttpTokenStore and
       Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md.
+    - DIGIKEY_TOKEN_STORE=memory, or no .env file and no explicit setting:
+      in-process only, shared across every DigiKeyClient() built in this
+      process (see _get_shared_memory_token_store). Documented as
+      non-persistent across restarts.
     """
     backend = os.getenv("DIGIKEY_TOKEN_STORE", "").strip().lower()
     env_file_path = os.getenv("DIGIKEY_TOKEN_STORE_ENV_PATH", "").strip()
@@ -170,6 +297,12 @@ def build_token_store():
         directory = os.getenv("DIGIKEY_TOKEN_STORE_PATH", "").strip()
         if directory:
             return FileTokenStore(directory)
+        return _get_shared_memory_token_store()
+
+    if backend == "http":
+        base_url = os.getenv("DIGIKEY_TOKEN_STORE_URL", "").strip()
+        if base_url:
+            return HttpTokenStore(base_url=base_url)
         return _get_shared_memory_token_store()
 
     return _get_shared_memory_token_store()

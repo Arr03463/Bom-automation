@@ -19,6 +19,7 @@ from component_lookup import (  # noqa: E402
     build_query_from_bom_row,
     search_components,
 )
+from config_validation import collect_startup_warnings  # noqa: E402
 from engineering_units import parse_engineering_value  # noqa: E402
 from partsbox_client import PartsBoxClient  # noqa: E402
 from partsbox_project_builder import PRODUCTION_STORAGE_TAG, storage_has_tag  # noqa: E402
@@ -758,6 +759,10 @@ st.set_page_config(page_title="AutoBOM", layout="wide")
 init_session_state()
 
 st.title("AutoBOM")
+
+for warning in collect_startup_warnings():
+    st.warning(warning)
+
 page = st.sidebar.radio("Navigate", ["Run BOM", "Component Search", "PartsBox Inventory", "Purchasing"])
 
 if page == "Run BOM":

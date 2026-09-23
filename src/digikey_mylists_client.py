@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from digikey_client import DigiKeyClient
 from http_error_utils import describe_error_response
+from http_error_utils import raise_for_status as _raise_for_status
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env", override=True)
@@ -260,20 +261,3 @@ def create_digikey_mylist_from_bom(clean_bom, list_name):
     }
 
 
-def _raise_for_status(response, context):
-    try:
-        response.raise_for_status()
-    except requests.HTTPError as exc:
-        detail = response.text.strip()
-        try:
-            payload = response.json()
-            message = payload.get("ErrorMessage") or payload.get("message")
-            error_detail = payload.get("ErrorDetails") or payload.get("detail")
-            request_id = payload.get("RequestId")
-            parts = [part for part in [message, error_detail, f"RequestId: {request_id}" if request_id else ""] if part]
-            if parts:
-                detail = " | ".join(parts)
-        except ValueError:
-            pass
-
-        raise RuntimeError(f"{context}: {response.status_code} {detail}") from exc

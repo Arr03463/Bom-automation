@@ -5,6 +5,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from http_error_utils import raise_for_status as _raise_for_status
 from manufacturer_aliases import (
     manufacturers_equivalent,
     normalize_part_number,
@@ -310,12 +311,3 @@ def _is_mouser_rate_limit_response(response):
     return False
 
 
-def _raise_for_status(response, context):
-    try:
-        response.raise_for_status()
-    except requests.HTTPError as exc:
-        detail = response.text.strip()
-        if not detail:
-            detail = response.reason or "No response body"
-
-        raise RuntimeError(f"{context}: {response.status_code} {detail}") from exc

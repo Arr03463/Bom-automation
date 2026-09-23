@@ -1,3 +1,5 @@
+import requests
+
 SAFE_MESSAGE_FIELDS = (
     "error",
     "error_description",
@@ -59,3 +61,24 @@ def describe_error_response(response, max_length=300):
         text = text[: max_length - 3] + "..."
 
     return f"HTTP {status}: {text}"
+
+
+def raise_for_status(response, context):
+    """
+    Shared error-raising helper for every vendor HTTP client in this
+    codebase (previously duplicated near-identically across
+    digikey_client.py, digikey_mylists_client.py, and mouser_client.py --
+    two of the three fell back to the RAW response body/reason text when
+    no allow-listed field matched, which can end up embedded in a
+    RuntimeError message that later lands in response["errors"] and gets
+    persisted to run_summary.json).
+
+    Always uses describe_error_response()'s allow-list-only extraction,
+    so no vendor client's error path can accidentally leak a request
+    detail a vendor's error response happens to echo back (e.g. Mouser's
+    Cart API takes its key as a URL query parameter).
+    """
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        raise RuntimeError(f"{context}: {describe_error_response(response)}") from exc

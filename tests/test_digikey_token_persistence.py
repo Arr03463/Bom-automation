@@ -1,20 +1,27 @@
+import contextlib
 import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import requests
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
 
 from digikey_client import DigiKeyClient
+from file_lock import FileLock
 from token_store import (
     EnvFileTokenStore,
     FileTokenStore,
+    HttpTokenStore,
     MemoryTokenStore,
+    TokenStoreError,
     build_token_store,
     reset_shared_memory_token_store,
 )
@@ -298,6 +305,238 @@ class DigiKeyClientRefreshTokenTests(unittest.TestCase):
         client.get_user_access_token()
 
         self.assertIsNone(store.get("DIGIKEY_REFRESH_TOKEN"))
+
+
+class HttpTokenStoreTests(unittest.TestCase):
+    def test_missing_base_url_raises_token_store_error(self):
+        store = HttpTokenStore(base_url="", api_key="key")
+        with self.assertRaises(TokenStoreError):
+            store.get("DIGIKEY_REFRESH_TOKEN")
+        with self.assertRaises(TokenStoreError):
+            store.set("DIGIKEY_REFRESH_TOKEN", "value")
+
+    @patch("token_store.requests.get")
+    def test_get_returns_none_for_404(self, mock_get):
+        mock_get.return_value = MagicMock(status_code=404)
+        store = HttpTokenStore(base_url="https://kv.example.test/v1", api_key="key")
+
+        self.assertIsNone(store.get("DIGIKEY_REFRESH_TOKEN"))
+
+    @patch("token_store.requests.get")
+    def test_get_returns_stored_value(self, mock_get):
+        mock_get.return_value = MagicMock(status_code=200, json=lambda: {"value": "abc123"})
+        store = HttpTokenStore(base_url="https://kv.example.test/v1", api_key="key")
+
+        self.assertEqual(store.get("DIGIKEY_REFRESH_TOKEN"), "abc123")
+
+    @patch("token_store.requests.get")
+    def test_get_raises_on_network_failure(self, mock_get):
+        mock_get.side_effect = requests.ConnectionError("boom")
+        store = HttpTokenStore(base_url="https://kv.example.test/v1", api_key="key")
+
+        with self.assertRaises(TokenStoreError):
+            store.get("DIGIKEY_REFRESH_TOKEN")
+
+    @patch("token_store.requests.get")
+    def test_get_raises_on_http_error_status(self, mock_get):
+        mock_get.return_value = MagicMock(status_code=500)
+        store = HttpTokenStore(base_url="https://kv.example.test/v1", api_key="key")
+
+        with self.assertRaises(TokenStoreError):
+            store.get("DIGIKEY_REFRESH_TOKEN")
+
+    @patch("token_store.requests.put")
+    def test_set_success(self, mock_put):
+        mock_put.return_value = MagicMock(status_code=200)
+        store = HttpTokenStore(base_url="https://kv.example.test/v1", api_key="key")
+
+        self.assertTrue(store.set("DIGIKEY_REFRESH_TOKEN", "new-value"))
+        called_url = mock_put.call_args[0][0]
+        self.assertEqual(called_url, "https://kv.example.test/v1/DIGIKEY_REFRESH_TOKEN")
+
+    @patch("token_store.requests.put")
+    def test_set_raises_on_http_error_status(self, mock_put):
+        mock_put.return_value = MagicMock(status_code=403)
+        store = HttpTokenStore(base_url="https://kv.example.test/v1", api_key="key")
+
+        with self.assertRaises(TokenStoreError):
+            store.set("DIGIKEY_REFRESH_TOKEN", "new-value")
+
+    def test_lock_is_a_noop_context_manager(self):
+        store = HttpTokenStore(base_url="https://kv.example.test/v1", api_key="key")
+        with store.lock():
+            pass  # must not raise / must not require network access
+
+
+class TokenStoreLockTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp(prefix="autobom_token_lock_test_"))
+        self.addCleanup(shutil.rmtree, self.temp_dir, ignore_errors=True)
+
+    def test_memory_token_store_lock_is_noop(self):
+        store = MemoryTokenStore()
+        with store.lock():
+            pass
+
+    def test_file_token_store_lock_returns_a_real_file_lock(self):
+        store = FileTokenStore(self.temp_dir)
+        with store.lock(timeout=1) as lock:
+            self.assertIsInstance(lock, FileLock)
+            self.assertTrue(lock.acquired)
+
+    def test_env_file_token_store_lock_returns_a_real_file_lock(self):
+        store = EnvFileTokenStore(self.temp_dir / ".env")
+        with store.lock(timeout=1) as lock:
+            self.assertIsInstance(lock, FileLock)
+            self.assertTrue(lock.acquired)
+
+    def test_file_token_store_lock_serializes_two_holders(self):
+        store = FileTokenStore(self.temp_dir)
+        first_holder_has_lock = threading.Event()
+        second_holder_tried = threading.Event()
+        second_holder_acquired_while_first_held = threading.Event()
+
+        def hold_first():
+            with store.lock(timeout=2):
+                first_holder_has_lock.set()
+                second_holder_tried.wait(timeout=2)
+
+        def try_second():
+            first_holder_has_lock.wait(timeout=2)
+            lock = store.lock(timeout=0.3)
+            with lock:
+                if lock.acquired:
+                    second_holder_acquired_while_first_held.set()
+            second_holder_tried.set()
+
+        thread_a = threading.Thread(target=hold_first)
+        thread_b = threading.Thread(target=try_second)
+        thread_a.start()
+        thread_b.start()
+        thread_a.join(timeout=3)
+        thread_b.join(timeout=3)
+
+        self.assertFalse(second_holder_acquired_while_first_held.is_set())
+
+
+class DigiKeyClientTokenStoreErrorSurfacingTests(unittest.TestCase):
+    def test_construction_falls_back_to_env_value_when_store_get_fails(self):
+        store = MagicMock()
+        store.get.side_effect = TokenStoreError("store unreachable")
+        store.lock.return_value = contextlib.nullcontext()
+
+        client = DigiKeyClient(token_store=store)
+
+        self.assertEqual(client.token_store_error, "store unreachable")
+        self.assertEqual(client.refresh_token, os.getenv("DIGIKEY_REFRESH_TOKEN", "").strip())
+
+    @patch("digikey_client.requests.post")
+    def test_rotation_updates_memory_even_when_persistence_fails(self, mock_post):
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"access_token": "new-access", "refresh_token": "new-refresh"},
+        )
+        store = MagicMock()
+        store.get.return_value = "old-refresh"
+        store.set.side_effect = TokenStoreError("store unreachable")
+        store.lock.return_value = contextlib.nullcontext()
+
+        client = DigiKeyClient(token_store=store)
+        client.dry_run = False
+        client.client_id = "test-client-id"
+        client.client_secret = "test-client-secret"
+        client.user_access_token = ""
+
+        token = client.get_user_access_token()
+
+        self.assertEqual(token, "new-access")
+        # In-memory continuity survives even though the durable write
+        # failed -- losing only the persisted copy (recoverable on
+        # restart via re-auth) is safer than also losing in-process state
+        # DigiKey has already invalidated the old value for.
+        self.assertEqual(client.refresh_token, "new-refresh")
+        self.assertEqual(client.token_store_error, "store unreachable")
+
+
+class DigiKeyClientConcurrentRotationTests(unittest.TestCase):
+    """
+    Regression coverage for the durable-token concurrency requirement:
+    two DigiKeyClient instances sharing the same FileTokenStore directory
+    (simulating two processes/threads racing a near-simultaneous refresh)
+    must not both submit the same now-stale refresh token to DigiKey. The
+    lock + re-read-under-lock in get_user_access_token()/
+    _current_refresh_token() must serialize them so the second caller
+    picks up the first caller's already-rotated token before attempting
+    its own refresh.
+    """
+
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp(prefix="autobom_digikey_rotation_test_"))
+        self.addCleanup(shutil.rmtree, self.temp_dir, ignore_errors=True)
+
+    def _make_client(self, store, initial_refresh_token):
+        client = DigiKeyClient(token_store=store)
+        client.dry_run = False
+        client.client_id = "test-client-id"
+        client.client_secret = "test-client-secret"
+        client.refresh_token = initial_refresh_token
+        client.user_access_token = ""
+        return client
+
+    def test_two_concurrent_clients_never_submit_an_already_rotated_token(self):
+        store = FileTokenStore(self.temp_dir)
+        store.set("DIGIKEY_REFRESH_TOKEN", "T0")
+
+        server_lock = threading.Lock()
+        state = {"current": "T0", "rotations": 0, "rejected": []}
+
+        def fake_post(url, data=None, timeout=None):
+            with server_lock:
+                submitted = (data or {}).get("refresh_token")
+                response = MagicMock()
+                if submitted != state["current"]:
+                    state["rejected"].append(submitted)
+                    response.status_code = 400
+                    response.raise_for_status.side_effect = requests.HTTPError("invalid_grant")
+                    response.json.return_value = {"error": "invalid_grant"}
+                    response.text = "invalid_grant"
+                    return response
+
+                state["rotations"] += 1
+                new_token = f"T{state['rotations']}"
+                state["current"] = new_token
+                response.status_code = 200
+                response.raise_for_status.return_value = None
+                response.json.return_value = {
+                    "access_token": f"access-{state['rotations']}",
+                    "refresh_token": new_token,
+                }
+                return response
+
+        client_a = self._make_client(store, "T0")
+        client_b = self._make_client(store, "T0")
+        results = {}
+        errors = {}
+
+        def run(name, client):
+            try:
+                results[name] = client.get_user_access_token()
+            except Exception as exc:  # pragma: no cover - failure path asserted below
+                errors[name] = exc
+
+        with patch("digikey_client.requests.post", side_effect=fake_post):
+            thread_a = threading.Thread(target=run, args=("a", client_a))
+            thread_b = threading.Thread(target=run, args=("b", client_b))
+            thread_a.start()
+            thread_b.start()
+            thread_a.join(timeout=5)
+            thread_b.join(timeout=5)
+
+        self.assertEqual(errors, {})
+        self.assertEqual(set(results.keys()), {"a", "b"})
+        self.assertEqual(state["rejected"], [])
+        self.assertEqual(state["rotations"], 2)
+        self.assertEqual(store.get("DIGIKEY_REFRESH_TOKEN"), state["current"])
 
 
 if __name__ == "__main__":

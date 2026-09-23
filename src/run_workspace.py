@@ -17,12 +17,19 @@ def safe_upload_name(file_name):
     return f"{stem}{suffix}"
 
 
-def build_run_workspace(run_id=None, runs_root=None):
+def build_run_workspace(run_id=None, runs_root=None, cleanup=True):
     """
     Create an isolated input/output directory pair for one BOM run.
 
     Every run gets its own directory under runs/<run_id>/, so two sessions
     uploading a file with the same name never share a path.
+
+    Also the one safe, predictable point where old run directories are
+    reaped (see run_retention.cleanup_old_runs): once per new run
+    kick-off, never mid-workflow. cleanup=False lets callers (tests, or a
+    future maintenance script) opt out explicitly. A cleanup failure is
+    caught by cleanup_old_runs() itself and never blocks workspace
+    creation -- run isolation must not depend on retention succeeding.
     """
     run_id = run_id or new_run_id()
     run_root = Path(runs_root) if runs_root else RUNS_ROOT
@@ -32,6 +39,14 @@ def build_run_workspace(run_id=None, runs_root=None):
 
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if cleanup:
+        try:
+            from run_retention import cleanup_old_runs
+
+            cleanup_old_runs(runs_root=run_root, active_run_id=run_id)
+        except Exception:
+            pass
 
     return {
         "run_id": run_id,
