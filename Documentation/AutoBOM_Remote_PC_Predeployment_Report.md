@@ -270,13 +270,20 @@ placed or submitted.
 - Mouser has directly confirmed (per the user, standing instruction
   incorporated into this pass): API-created carts appear in My Saved
   Carts, and the Cart Sharing Access ID is derived internally from the
-  CartKey/GUID, but that derivation is **not exposed through any
-  supported public or Automation Services API**. Model B (automatic
+  CartKey/GUID, but that derivation is **not currently exposed through
+  any supported public or Automation Services API**. Model B (automatic
   cart creation, manual Share action, manual hand-off of the Access ID)
-  is therefore the confirmed correct long-term design, not a temporary
-  gap pending a future API -- updated in `app.py`'s Purchasing page
-  caption and the operator guide accordingly. **Do not attempt to
-  reverse-engineer the Access-ID derivation.**
+  is therefore the **current supported/interim workflow** -- not the
+  intended final product direction, but the correct approach until
+  Mouser exposes a supported sharing API. The automatic Cart API
+  creation and its CartKey remain the foundation/extension point for a
+  future fully-automated handoff; nothing about that path was narrowed
+  or removed. Updated in `app.py`'s Purchasing page caption and the
+  operator guide accordingly. **Do not attempt to reverse-engineer the
+  Access-ID derivation.** AutoBOM's product boundary is unchanged by
+  this: it prepares cart/MyList/share/export handoff data only --
+  checkout, payment, and order submission remain manual, outside
+  AutoBOM, regardless of which sharing model is in use.
 
 **Not performed:** a live invalid-API-key/error-response capture (would
 require deliberately breaking working credentials); `describe_error_response()`'s
@@ -402,8 +409,9 @@ part/entries) matched what the existing defensive extraction code
 already assumed. The only changes here are comment/docstring updates
 (§11-§13 above, and the file-level diffs) moving several "best-effort,
 unconfirmed" notes to "confirmed live (2026-09-24)" status, and one
-Purchasing-page caption update reflecting Mouser's confirmed Access-ID
-statement.
+Purchasing-page caption update reflecting Mouser's confirmed
+Access-ID-derivation statement (framed as the current supported/interim
+workflow, not a permanent/final design -- see §11).
 
 ## 15. Production/development isolation
 
@@ -486,7 +494,10 @@ per instruction not to build automatic production deployment.
   historical reference, not deleted); run-retention wording corrected to
   no longer overclaim protection for other sessions' runs (Codex F4).
 - `Documentation/AutoBOM_Operator_Guide.md`: Mouser share section updated
-  to reflect the confirmed (not merely temporary) Model B design.
+  to describe Model B as the current supported/interim workflow (per
+  Mouser's confirmed Access-ID-derivation statement), not the intended
+  final product direction, with the automatic Cart API/CartKey path
+  preserved as the extension point for a future supported sharing API.
 - `Documentation/AutoBOM_Onsite_Deployment_Checklist.md` (new): the exact
   27-step install procedure.
 - `deploy/README.md` (new): what each deployment file is for.
@@ -535,7 +546,9 @@ Yank PC:
 - Production Streamlit config template.
 - CI running the full suite + compile checks.
 - Live Mouser search + one disposable cart verified; CartKey shape
-  confirmed; Mouser's Access-ID-derivation statement incorporated.
+  confirmed; Mouser's Access-ID-derivation statement incorporated (Model
+  B documented as the current supported/interim workflow, not a final
+  design).
 - Live DigiKey auth + product search verified; MyList blocked on
   external credential state, not code.
 - Live PartsBox search/storage-tag/project-entry shapes verified;
