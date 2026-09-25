@@ -14,6 +14,9 @@ Documentation/env
 output/
 .cache/
 runs/
+# Copied into place by deploy/launch_production.ps1 from
+# deploy/streamlit_config.prod.toml -- environment-specific, not source.
+.streamlit/
 
 # Local BOM inputs; keep test BOMs versioned
 input/*

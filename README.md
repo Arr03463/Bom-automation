@@ -46,6 +46,36 @@ Then open:
 http://localhost:8501
 ```
 
+## One-Click Local Launcher (Operator Testing)
+
+For local/operator testing, double-click **`Start_AutoBOM.bat`** in this
+folder instead of typing the commands above: it finds this checkout from
+its own location, uses the existing `.venv`, loads `.env`, runs the same
+preflight/launch logic `deploy/launch_production.ps1` uses, waits until
+AutoBOM is actually responding, then opens your browser to it
+automatically. If something can't start (missing `.venv`, missing
+`.env`, a preflight failure), the window stays open with a plain-English
+error instead of just closing.
+
+To get a desktop icon instead of opening this folder every time, run
+once (from this folder, in PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Create_AutoBOM_Desktop_Shortcut.ps1
+```
+
+This creates an **AutoBOM** shortcut on your own Windows Desktop pointing
+at `Start_AutoBOM.bat`. Double-click it any time: browser opens, use the
+app.
+
+This launcher is for local/operator testing and maintenance, not
+production. **Once AutoBOM is installed on the Yank engineering PC as a
+Windows service, normal team users should NOT run this launcher to start
+the server** -- the production service is already running. Their
+eventual shortcut should simply open the AutoBOM browser URL (see
+`Documentation/AutoBOM_Onsite_Deployment_Checklist.md`), not launch a
+second local instance.
+
 The web app lets you:
 
 - Upload a `.csv` or `.xlsx` BOM.

@@ -12,21 +12,25 @@
 # This script does NOT install anything. Run it manually to verify
 # AutoBOM starts correctly before wiring up any service wrapper.
 #
-# Usage (from an elevated or service-account PowerShell session):
+# Usage -- production (explicit paths, e.g. from a service wrapper):
 #   powershell -ExecutionPolicy Bypass -File launch_production.ps1 `
 #       -RepoPath "C:\AutoBOM\prod\repo" `
 #       -VenvPath "C:\AutoBOM\prod\.venv" `
 #       -EnvFile "C:\AutoBOM\prod\repo\.env"
+#
+# Usage -- local/operator testing (no params needed): all three default
+# to this checkout's own layout (repo root = this script's parent
+# directory, .venv, .env), so the SAME script backs both
+# Start_AutoBOM.bat/deploy\launch_local.ps1 and the production service
+# install templates -- one launch mechanism, not two.
+#   powershell -ExecutionPolicy Bypass -File launch_production.ps1
 
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$RepoPath,
+    [string]$RepoPath = (Split-Path -Parent $PSScriptRoot),
 
-    [Parameter(Mandatory = $true)]
-    [string]$VenvPath,
+    [string]$VenvPath = (Join-Path (Split-Path -Parent $PSScriptRoot) ".venv"),
 
-    [Parameter(Mandatory = $true)]
-    [string]$EnvFile
+    [string]$EnvFile = (Join-Path (Split-Path -Parent $PSScriptRoot) ".env")
 )
 
 $ErrorActionPreference = "Stop"
