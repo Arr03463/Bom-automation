@@ -19,6 +19,15 @@ STORAGE_A12 = {"storage/id": "storage-a12", "storage/name": "A12"}
 STORAGE_A13 = {"storage/id": "storage-a13", "storage/name": "A13"}
 STORAGE_A10 = {"storage/id": "storage-a10", "storage/name": "A10"}
 
+# Project storage per the verified convention: tagged "production" AND
+# named exactly like an existing project (see storage_space_classifier.py).
+STORAGE_PROJECT_DAB = {
+    "storage/id": "storage-dab",
+    "storage/name": "DAB Prototype",
+    "storage/tags": ["production"],
+}
+PROJECT_DAB = {"project/name": "DAB Prototype"}
+
 
 class FakePartsBoxClient:
     """
@@ -26,9 +35,10 @@ class FakePartsBoxClient:
     fake client pattern already used in tests/test_partsbox_lifecycle.py.
     """
 
-    def __init__(self, parts=None, storage_locations=None):
+    def __init__(self, parts=None, storage_locations=None, projects=None):
         self.parts = parts or []
         self.storage_locations = storage_locations or [STORAGE_A10, STORAGE_A12, STORAGE_A13]
+        self.projects = projects or []
 
     def get_parts(self):
         return self.parts
@@ -43,6 +53,9 @@ class FakePartsBoxClient:
 
     def list_storage_locations(self):
         return {"data": self.storage_locations}
+
+    def list_projects(self):
+        return {"data": self.projects}
 
 
 def _ledger(*entries):
@@ -248,6 +261,110 @@ class SimilarityRecommendationTests(unittest.TestCase):
         result = recommend_location("NEEDSLOC", "Yageo", partsbox_client=client)
 
         self.assertEqual(result.confidence, CONFIDENCE_MANUAL)
+
+
+class DevelopmentVsProjectPreferenceTests(unittest.TestCase):
+    """
+    Codex/audit finding: Project storage must never outrank Development
+    storage for an ordinary INV-<LOCATION> recommendation merely because
+    it holds more stock or appears more often.
+    """
+
+    def test_development_wins_over_higher_quantity_project_storage(self):
+        # Development C1 = 10, Project DAB = 100 -- must still recommend
+        # the Development location (see the worked example in the
+        # request this fixes).
+        client = FakePartsBoxClient(
+            parts=[
+                {
+                    "part/mpn": "DEVWINS123",
+                    "part/manufacturer": "Yageo",
+                    "part/stock": _ledger(("storage-a12", 10), ("storage-dab", 100)),
+                }
+            ],
+            storage_locations=[STORAGE_A12, STORAGE_PROJECT_DAB],
+            projects=[PROJECT_DAB],
+        )
+
+        result = recommend_location("DEVWINS123", "Yageo", partsbox_client=client)
+
+        self.assertEqual(result.confidence, CONFIDENCE_EXACT_PART)
+        self.assertEqual(result.location, "A12")
+
+    def test_project_only_stock_is_low_confidence_not_exact_part(self):
+        client = FakePartsBoxClient(
+            parts=[
+                {
+                    "part/mpn": "PROJONLY123",
+                    "part/manufacturer": "Yageo",
+                    "part/stock": _ledger(("storage-dab", 50)),
+                }
+            ],
+            storage_locations=[STORAGE_PROJECT_DAB],
+            projects=[PROJECT_DAB],
+        )
+
+        result = recommend_location("PROJONLY123", "Yageo", partsbox_client=client)
+
+        self.assertEqual(result.confidence, CONFIDENCE_LOW)
+        self.assertNotEqual(result.confidence, CONFIDENCE_EXACT_PART)
+        # Still shown for context, not blanked out.
+        self.assertEqual(result.location, "DAB Prototype")
+
+    def test_similar_parts_only_in_project_storage_is_low_confidence(self):
+        client = FakePartsBoxClient(
+            parts=[
+                {
+                    "part/mpn": "SIMPROJ1",
+                    "part/manufacturer": "Yageo",
+                    "part/category": "Resistor",
+                    "part/package": "0603",
+                    "part/stock": _ledger(("storage-dab", 10)),
+                },
+            ],
+            storage_locations=[STORAGE_PROJECT_DAB],
+            projects=[PROJECT_DAB],
+        )
+
+        result = recommend_location("NEWSIMPROJ", "Yageo", partsbox_client=client)
+
+        self.assertEqual(result.confidence, CONFIDENCE_LOW)
+
+    def test_similar_parts_prefer_development_location_over_project(self):
+        client = FakePartsBoxClient(
+            parts=[
+                {
+                    "part/mpn": "SIMDEV1",
+                    "part/manufacturer": "Yageo",
+                    "part/category": "Resistor",
+                    "part/package": "0603",
+                    "part/stock": _ledger(("storage-a12", 5)),
+                },
+                {
+                    "part/mpn": "SIMPROJ2",
+                    "part/manufacturer": "Yageo",
+                    "part/category": "Resistor",
+                    "part/package": "0603",
+                    # More similar parts in Project storage than
+                    # Development -- Development must still win.
+                    "part/stock": _ledger(("storage-dab", 5)),
+                },
+                {
+                    "part/mpn": "SIMPROJ3",
+                    "part/manufacturer": "Yageo",
+                    "part/category": "Resistor",
+                    "part/package": "0603",
+                    "part/stock": _ledger(("storage-dab", 5)),
+                },
+            ],
+            storage_locations=[STORAGE_A12, STORAGE_PROJECT_DAB],
+            projects=[PROJECT_DAB],
+        )
+
+        result = recommend_location("NEWMIXED", "Yageo", partsbox_client=client)
+
+        self.assertEqual(result.location, "A12")
+        self.assertNotEqual(result.confidence, CONFIDENCE_LOW)
 
 
 class RecommendationIsNeverFinalTests(unittest.TestCase):

@@ -37,11 +37,16 @@ from customer_reference_registry import (  # noqa: E402
 )
 from engineering_units import parse_engineering_value  # noqa: E402
 from inventory_location_recommender import recommend_location  # noqa: E402
+from pagination import DEFAULT_PAGE_SIZE, clamp_page, paginate, result_signature, total_pages_for  # noqa: E402
 from partsbox_client import PartsBoxClient  # noqa: E402
+from partsbox_inventory import get_snapshot as get_partsbox_snapshot  # noqa: E402
+from partsbox_inventory import invalidate as invalidate_partsbox_snapshot  # noqa: E402
+from partsbox_inventory import peek_snapshot as peek_partsbox_snapshot  # noqa: E402
 from partsbox_project_builder import PRODUCTION_STORAGE_TAG, storage_has_tag  # noqa: E402
 from record_filter import generate_facets, search_and_filter  # noqa: E402
 from review_actions import apply_replacement, retry_exact_sourcing  # noqa: E402
 from run_workspace import build_run_workspace, save_uploaded_file  # noqa: E402
+from search_events import search_event_input  # noqa: E402
 from workflow_runner import (  # noqa: E402
     build_purchasing_summary,
     refresh_response_snapshot,
@@ -126,8 +131,6 @@ def init_session_state():
     """
     st.session_state.setdefault("current_run", None)
     st.session_state.setdefault("replacement_lookup_sources", frozenset({"mouser", "digikey"}))
-    st.session_state.setdefault("lookup_results", [])
-    st.session_state.setdefault("inventory_results", [])
     st.session_state.setdefault("inventory_storage_locations", None)
     # Shared Configuration section defaults -- set here (not just via each
     # widget's own value=) so Upload's button handler can safely read them
@@ -149,7 +152,7 @@ def reset_run_scoped_session_state():
     search results, and the results search/filters. Called whenever a
     new run replaces current_run.
 
-    General Component Search (lookup_results) is deliberately left
+    Main Search's own state (component_search_*) is deliberately left
     alone: it is a global entry point independent of any specific BOM
     run, not a per-run cache that needs clearing.
     """
@@ -163,6 +166,26 @@ def reset_run_scoped_session_state():
     ]
     for key in stale_keys:
         del st.session_state[key]
+
+
+def _authoritative_sources():
+    """
+    The Sources checkboxes beside Search (component_search_partsbox/
+    _mouser/_digikey) are authoritative for every later seam that can
+    query a supplier -- Main Search, uploaded-part sourcing, Add to BOM,
+    Retry Exact, and replacement re-sourcing alike (the architecture
+    audit's precondition D). An unchecked supplier here must mean no
+    later seam unexpectedly queries it; this is the one place that
+    reads those checkboxes into the {"mouser", "digikey"}-shaped
+    `sources` set review_actions.py's _lookup_functions() expects.
+    Defaults to both enabled before the widgets have rendered/been set
+    (mirrors their own default=True).
+    """
+    return {
+        source
+        for source, key in (("mouser", "component_search_mouser"), ("digikey", "component_search_digikey"))
+        if st.session_state.get(key, True)
+    }
 
 
 def show_download(label, file_path, disabled=False):
@@ -208,35 +231,125 @@ def render_add_parts_section():
         render_run_messages(current_run)
 
 
+def _pagination_controls(total_items, key_prefix, signature):
+    """
+    Shared 20-per-page pagination (src/pagination.py) for every
+    paginated result table in this app (Main Search's PartsBox side,
+    Main Search's combined supplier side, PartsBox Inventory, Needs
+    Review's replacement lookup) -- one paginator, not a per-page
+    reimplementation. `signature` is a pagination.result_signature(...)
+    of everything that defines the CURRENT result set (query text,
+    selected sources, active filters, snapshot generation, ...); when it
+    changes from the previous render, the page resets to 1 -- but a
+    signature that only depends on those things, never on quantity/row-
+    selection state, means selecting a row or adjusting a quantity
+    stepper elsewhere on the page never resets pagination.
+    """
+    sig_key = f"{key_prefix}_page_sig"
+    page_key = f"{key_prefix}_page_num"
+    if st.session_state.get(sig_key) != signature:
+        st.session_state[sig_key] = signature
+        st.session_state[page_key] = 1
+
+    total_pages = total_pages_for(total_items, page_size=DEFAULT_PAGE_SIZE)
+    current_page = clamp_page(st.session_state.get(page_key, 1), total_pages)
+
+    if total_pages > 1:
+        nav_cols = st.columns([1, 3, 1])
+        with nav_cols[0]:
+            if st.button("< Prev", key=f"{key_prefix}_prev_page", disabled=current_page <= 1):
+                current_page -= 1
+        with nav_cols[1]:
+            st.caption(f"Page {current_page} of {total_pages} · {total_items} result(s)")
+        with nav_cols[2]:
+            if st.button("Next >", key=f"{key_prefix}_next_page", disabled=current_page >= total_pages):
+                current_page += 1
+        current_page = clamp_page(current_page, total_pages)
+
+    st.session_state[page_key] = current_page
+    return current_page
+
+
+def _render_paginated_table(records, key_prefix, columns_map, signature):
+    """
+    Filter-before-paginate: `records` must already be the fully
+    filtered/sorted result set. Renders pagination controls, then a
+    selectable st.dataframe scoped to just the current page's rows, and
+    returns whichever row is selected on THIS page (or None) -- the
+    single seam every result table in this app uses to populate the
+    shared Selected Part Details panel instead of a per-row Add button.
+    """
+    current_page = _pagination_controls(len(records), key_prefix, signature)
+    page = paginate(records, page=current_page, page_size=DEFAULT_PAGE_SIZE)
+
+    if not page.items:
+        st.info("No results match the current search/filters.")
+        return None
+
+    table_df = pd.DataFrame(page.items)
+    available_columns = [col for col in columns_map if col in table_df.columns]
+    display_df = table_df[available_columns].rename(columns=columns_map)
+
+    event = st.dataframe(
+        display_df,
+        width="stretch",
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"{key_prefix}_table",
+    )
+    selected_positions = event.selection.rows if event is not None and event.selection else []
+    if selected_positions:
+        return page.items[selected_positions[0]]
+    return None
+
+
+def _membership_facet_filters(results, fields, key_prefix):
+    """
+    Multiselect filters for list-valued PartsBox fields (Storage Space /
+    Location / Project -- a part can sit in several at once, see
+    partsbox_inventory.InventoryPart) -- built only for fields that
+    actually have data in the current result set
+    (record_filter.generate_facets), same "don't offer an empty filter"
+    rule render_dynamic_facet_filters() follows for its facets. Returns
+    a filters dict of field -> list, ready for record_filter's
+    membership-filter kind.
+    """
+    filters = {}
+    facets = generate_facets(results, fields)
+    for field, values in facets.items():
+        selection = st.multiselect(
+            field.replace("_", " ").title(), values, key=f"{key_prefix}_membership_{field}"
+        )
+        if selection:
+            filters[field] = selection
+    return filters
+
+
 def render_component_search_intake():
     """
-    The PRIMARY way to add parts to the working BOM. Reuses the exact
-    same component_lookup.search_components()/LookupQuery/record_filter
-    machinery Needs Review's Find Replacement and PartsBox Inventory's
-    browse both use -- one search/filter implementation in this app, not
-    a second one for intake. Preserves PartsBox-by-default / optional
-    Mouser/DigiKey / manufacturer filter / dynamic facets from the
-    general Component Search this replaces.
+    The PRIMARY way to add parts to the working BOM. PartsBox filters
+    live over the shared snapshot (partsbox_inventory.get_snapshot(),
+    the same snapshot PartsBox Inventory/Needs Review/the location
+    recommender use) as the operator types -- no Search button, no
+    PartsBox API call per keystroke. Mouser/DigiKey are only ever
+    queried when the operator presses Enter in the search box (see
+    search_events.search_event_input() -- its `.submitted` is a one-shot
+    trigger that is None on every rerun except the one where Enter was
+    just pressed), never from typing, filter changes, pagination, or row
+    selection -- this is the audit's core "Enter vs. live typing"
+    boundary. Sources checkboxes here are authoritative for this search
+    AND for later seams (see _authoritative_sources()); unchecking
+    Mouser/DigiKey mid-session does not retroactively clear an already-
+    fetched supplier result set, but no NEW call is made while unchecked.
 
-    Nothing is added automatically just by searching -- each result gets
-    its own quantity input and an explicit "Add to BOM" button (see
-    render_add_to_bom_results()).
+    Nothing is added just by searching or selecting a row -- there is
+    one shared Selected Part Details panel (render_selected_part_details())
+    with the quantity input and the single "Add to BOM" button, not a
+    per-row quantity/button pair.
     """
     st.markdown("#### Search")
 
-    search_cols = st.columns([3, 1])
-    with search_cols[0]:
-        search_text = st.text_input("MPN, manufacturer, or keywords", key="component_search_text")
-    with search_cols[1]:
-        manufacturer_filter = st.text_input("Manufacturer (optional)", key="component_search_manufacturer")
-
-    st.caption(
-        "Sources -- these determine which databases/suppliers AutoBOM consults, both for "
-        "this search and for sourcing the whole working BOM (uploaded parts included; see "
-        "Configuration below). Default all three on so a fresh upload gets sourced against "
-        "Mouser and DigiKey without an extra step -- uncheck Mouser/DigiKey here first if you "
-        "only want a quick PartsBox-only search."
-    )
     source_cols = st.columns(3)
     with source_cols[0]:
         use_partsbox = st.checkbox("PartsBox", value=True, key="component_search_partsbox")
@@ -244,92 +357,214 @@ def render_component_search_intake():
         use_mouser = st.checkbox("Mouser", value=True, key="component_search_mouser")
     with source_cols[2]:
         use_digikey = st.checkbox("DigiKey", value=True, key="component_search_digikey")
+    st.caption(
+        "PartsBox filters as you type. Mouser/DigiKey are only queried when you press Enter "
+        "in the search box. These same checkboxes govern sourcing for uploaded parts, Add to "
+        "BOM, Retry Exact, and Find Replacement -- uncheck a supplier here first to keep it "
+        "out of all of them."
+    )
 
-    if st.button("Search", key="component_search_button"):
-        sources = {
-            source
-            for source, enabled in (
-                ("partsbox", use_partsbox),
-                ("mouser", use_mouser),
-                ("digikey", use_digikey),
-            )
-            if enabled
+    search_cols = st.columns([3, 1])
+    with search_cols[0]:
+        search_result = search_event_input(
+            key="component_search_event",
+            value=st.session_state.get("component_search_text", ""),
+            placeholder="MPN, manufacturer, or keywords",
+            debounce_ms=350,
+        )
+    with search_cols[1]:
+        manufacturer_filter = st.text_input("Manufacturer (optional)", key="component_search_manufacturer")
+
+    live_text = search_result.value if search_result.value is not None else ""
+    st.session_state["component_search_text"] = live_text
+
+    if search_result.submitted is not None:
+        enter_sources = {
+            source for source, enabled in (("mouser", use_mouser), ("digikey", use_digikey)) if enabled
         }
-        if not sources:
-            # An explicitly empty source set must stay empty -- never
-            # silently fall back to PartsBox just because every checkbox
-            # is off.
-            st.warning("Select at least one source.")
-            st.session_state.lookup_results = []
-        else:
+        if enter_sources:
             query = LookupQuery(
-                mpn=search_text,
-                keywords=search_text,
+                mpn=search_result.submitted,
+                keywords=search_result.submitted,
                 manufacturer=manufacturer_filter,
-                sources=frozenset(sources),
+                sources=frozenset(enter_sources),
             )
-            with st.spinner("Searching..."):
-                st.session_state.lookup_results = search_components(query)
+            with st.spinner("Searching suppliers..."):
+                st.session_state["component_search_supplier_results"] = search_components(query)
+        else:
+            st.session_state["component_search_supplier_results"] = []
+        # Tracked separately from the live `.submitted` trigger value
+        # itself (which resets to None on every subsequent rerun) so the
+        # supplier table's pagination signature below still reflects
+        # "what was last actually searched" on reruns that aren't
+        # themselves an Enter press (e.g. adjusting a filter).
+        st.session_state["component_search_last_submitted"] = (search_result.submitted, tuple(sorted(enter_sources)))
 
-    results = st.session_state.lookup_results
-    if not results:
-        st.info("No results yet. Enter a search and click Search.")
-        return
+    partsbox_records = []
+    partsbox_snapshot_generation = 0
+    if use_partsbox:
+        # Gated, not unconditional: a completely blank/cold AutoBOM
+        # startup (empty search box, nothing cached yet from any earlier
+        # PartsBox Inventory visit this process) must not itself trigger
+        # a full-catalog PartsBox fetch just because this section
+        # rendered -- the audit's "blank startup doesn't load the full
+        # PartsBox catalog" requirement. The FIRST keystroke (or an
+        # already-warm cache, e.g. from a prior PartsBox Inventory visit
+        # this process) is what actually loads it; once warm, every
+        # further keystroke/rerun reuses the shared cached snapshot.
+        should_load_partsbox = bool(live_text.strip()) or peek_partsbox_snapshot() is not None
+        if should_load_partsbox:
+            try:
+                snapshot = get_partsbox_snapshot()
+            except Exception as exc:
+                st.error(f"Could not load PartsBox inventory: {exc}")
+                snapshot = None
+            if snapshot is not None:
+                partsbox_snapshot_generation = snapshot.generation
+                all_partsbox_records = [part.to_dict() for part in snapshot.parts]
+                manufacturer_filters = {"manufacturer": manufacturer_filter} if manufacturer_filter else {}
+                partsbox_records = search_and_filter(
+                    all_partsbox_records,
+                    query_text=live_text,
+                    search_fields=["mpn", "manufacturer", "description"],
+                    filters=manufacturer_filters,
+                )
+        else:
+            st.caption(
+                "Type to search PartsBox inventory, or open PartsBox Inventory in the "
+                "sidebar to browse the full catalog immediately."
+            )
 
-    filter_cols = st.columns(2)
-    with filter_cols[0]:
-        st.selectbox("Filter by source", _options(results, "source"), key="component_search_source_filter")
-    with filter_cols[1]:
-        st.selectbox(
-            "Stock", ["All", "In Stock", "Out of Stock", "Unknown"], key="component_search_stock_filter"
+    supplier_records = st.session_state.get("component_search_supplier_results", [])
+    if supplier_records and manufacturer_filter:
+        supplier_records = search_and_filter(supplier_records, filters={"manufacturer": manufacturer_filter})
+
+    combined_for_facets = partsbox_records + supplier_records
+    dynamic_filters = render_dynamic_facet_filters(combined_for_facets, key_prefix="component_search")
+    membership_filters = {}
+    if use_partsbox and partsbox_records:
+        membership_filters = _membership_facet_filters(
+            partsbox_records, ["storage_space", "location", "project"], key_prefix="component_search"
         )
 
-    dynamic_filters = render_dynamic_facet_filters(results, key_prefix="component_search")
-    filters = {
-        "source": st.session_state.component_search_source_filter,
-        "stock": st.session_state.component_search_stock_filter,
-        **dynamic_filters,
-    }
+    stock_filter = st.selectbox(
+        "Stock", ["All", "In Stock", "Out of Stock", "Unknown"], key="component_search_stock_filter"
+    )
+    filters = {"stock": stock_filter, **dynamic_filters}
 
-    filtered = search_and_filter(results, filters=filters)
-    render_add_to_bom_results(filtered)
+    if partsbox_records:
+        partsbox_records = search_and_filter(partsbox_records, filters={**filters, **membership_filters})
+    if supplier_records:
+        supplier_records = search_and_filter(supplier_records, filters=filters)
+
+    selected_part = None
+
+    if use_partsbox and not (use_mouser or use_digikey):
+        st.markdown("**PartsBox Inventory**")
+        selection = _render_paginated_table(
+            partsbox_records,
+            key_prefix="component_search_partsbox",
+            columns_map=LOOKUP_DISPLAY_COLUMNS,
+            signature=result_signature(live_text, manufacturer_filter, filters, membership_filters, partsbox_snapshot_generation),
+        )
+        selected_part = selected_part or selection
+    elif not use_partsbox and (use_mouser or use_digikey):
+        st.markdown("**Supplier Results**")
+        selection = _render_paginated_table(
+            supplier_records,
+            key_prefix="component_search_suppliers",
+            columns_map=LOOKUP_DISPLAY_COLUMNS,
+            signature=result_signature(st.session_state.get("component_search_last_submitted"), filters),
+        )
+        selected_part = selected_part or selection
+    elif use_partsbox and (use_mouser or use_digikey):
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**PartsBox Inventory**")
+            selection_left = _render_paginated_table(
+                partsbox_records,
+                key_prefix="component_search_partsbox",
+                columns_map=LOOKUP_DISPLAY_COLUMNS,
+                signature=result_signature(
+                    live_text, manufacturer_filter, filters, membership_filters, partsbox_snapshot_generation
+                ),
+            )
+        with right:
+            st.markdown("**Supplier Results**")
+            selection_right = _render_paginated_table(
+                supplier_records,
+                key_prefix="component_search_suppliers",
+                columns_map=LOOKUP_DISPLAY_COLUMNS,
+                signature=result_signature(st.session_state.get("component_search_last_submitted"), filters),
+            )
+        selected_part = selection_left or selection_right
+    else:
+        st.warning("Select at least one source (PartsBox, Mouser, or DigiKey).")
+
+    if selected_part is not None:
+        st.session_state["component_search_selected_part"] = selected_part
+
+    st.divider()
+    render_selected_part_details()
 
 
-def render_add_to_bom_results(results):
-    if not results:
-        st.info("No results match the current filters.")
+def render_selected_part_details():
+    """
+    The one shared detail panel every result table (PartsBox side and
+    Supplier side alike) populates by row selection -- quantity stepper
+    and the single "Add to BOM" button live only here, never duplicated
+    per table row. Shows whatever candidate dict was most recently
+    selected, persisting across reruns that aren't a new selection
+    (typing further, changing an unrelated filter, adjusting the
+    quantity itself) so picking a part and then setting its quantity
+    doesn't lose the selection.
+    """
+    candidate = st.session_state.get("component_search_selected_part")
+    st.markdown("#### Selected Part Details")
+    if candidate is None:
+        st.caption("Select a row in a results table above to see its details here.")
         return
 
-    for index, candidate in enumerate(results):
-        cols = st.columns([5, 1, 2])
-        with cols[0]:
-            stock_display = candidate.get("stock") if candidate.get("stock") is not None else "Unknown"
-            st.write(
-                f"**{candidate.get('source')}** · {candidate.get('mpn')} · "
-                f"{candidate.get('manufacturer') or 'unknown manufacturer'} · "
-                f"{candidate.get('description') or ''} · stock: {stock_display} · "
-                f"supplier P/N: {candidate.get('supplier_part_number') or '—'}"
+    stock_display = candidate.get("stock") if candidate.get("stock") is not None else "Unknown"
+    detail_cols = st.columns([3, 2])
+    with detail_cols[0]:
+        st.write(f"**{candidate.get('mpn') or '(missing MPN)'}**")
+        st.write(f"Source: {candidate.get('source')}")
+        st.write(f"Manufacturer: {candidate.get('manufacturer') or 'unknown manufacturer'}")
+        st.write(f"Description: {candidate.get('description') or '—'}")
+        st.write(f"Category: {candidate.get('category') or '—'} · Package: {candidate.get('package') or '—'}")
+        st.write(f"Stock: {stock_display}")
+        st.write(f"Supplier P/N: {candidate.get('supplier_part_number') or '—'}")
+        locations = candidate.get("locations")
+        if locations:
+            st.write("PartsBox locations:")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {"Location": loc["name"], "Type": loc["space_type"], "Quantity": loc["quantity"]}
+                        for loc in locations
+                    ]
+                ),
+                width="stretch",
+                hide_index=True,
             )
-        with cols[1]:
-            qty = st.number_input(
-                "Qty", min_value=1, value=1, step=1, key=f"add_to_bom_qty_{index}", label_visibility="collapsed"
-            )
-        with cols[2]:
-            if st.button("Add to BOM", key=f"add_to_bom_button_{index}"):
-                with st.spinner("Adding to working BOM..."):
-                    _add_search_result_to_working_bom(candidate, int(qty))
-                st.success(f"Added {candidate.get('mpn') or '(missing MPN)'} to the working BOM.")
-                # Deliberately no st.rerun() -- this button is ABOVE
-                # BOM Configuration/Results in page order, and every
-                # section below it (including render_results_workspace()'s
-                # results_search text_input) still renders normally
-                # later in this SAME script pass, reflecting the new row.
-                # An explicit rerun here would abort the script before
-                # ever reaching those widgets, which Streamlit then
-                # treats as "not present this run" and resets -- silently
-                # wiping out things like an already-typed results_search
-                # filter (confirmed via a live repro against this exact
-                # page/button ordering).
+    with detail_cols[1]:
+        qty = st.number_input("Quantity", min_value=1, value=1, step=1, key="component_search_add_qty")
+        if st.button("Add to BOM", key="component_search_add_button", type="primary"):
+            with st.spinner("Adding to working BOM..."):
+                _add_search_result_to_working_bom(candidate, int(qty))
+            st.success(f"Added {candidate.get('mpn') or '(missing MPN)'} to the working BOM.")
+            # Deliberately no st.rerun() -- this button is ABOVE
+            # BOM Configuration/Results in page order, and every
+            # section below it (including render_results_workspace()'s
+            # results_search text_input) still renders normally
+            # later in this SAME script pass, reflecting the new row.
+            # An explicit rerun here would abort the script before
+            # ever reaching those widgets, which Streamlit then
+            # treats as "not present this run" and resets -- silently
+            # wiping out things like an already-typed results_search
+            # filter (confirmed via a live repro against this exact
+            # page/button ordering).
 
 
 def _add_search_result_to_working_bom(candidate, required_qty):
@@ -354,7 +589,7 @@ def _add_search_result_to_working_bom(candidate, required_qty):
     active_bom_state = current_run["_active_bom_state"]
 
     row_id = active_bom_state.add_row({"required_qty": required_qty})
-    apply_replacement(active_bom_state, row_id, candidate)
+    apply_replacement(active_bom_state, row_id, candidate, sources=_authoritative_sources())
     refresh_response_snapshot(current_run)
 
 
@@ -383,6 +618,14 @@ def render_upload_intake():
     MyList" option -- those are Purchasing Handoff actions now (see
     render_purchasing_handoff_section()), not something that should
     happen merely from an intake upload.
+
+    Automatic, not a "Process Upload" button: processes exactly once per
+    distinct dropped/selected file, tracked by Streamlit's own stable
+    per-upload UploadedFile.file_id (changes each time a NEW file is
+    picked, even a same-named re-drop; stays the same across every
+    unrelated rerun of THIS file, e.g. typing in an unrelated widget) in
+    upload_intake_processed_file_id below -- an unrelated rerun sees the
+    same file_id already recorded and returns without reprocessing.
     """
     st.markdown("#### Upload")
     uploaded_file = st.file_uploader(
@@ -391,67 +634,81 @@ def render_upload_intake():
         key="upload_intake_file",
     )
 
-    if st.button("Process Upload", key="process_upload_button"):
-        if uploaded_file is None:
-            st.error("Choose a CSV or XLSX BOM file before processing.")
-        else:
-            build_quantity = st.session_state.cfg_build_quantity
-            project_name = st.session_state.cfg_project_name
-            project_description = st.session_state.cfg_project_description
-            run_partsbox = st.session_state.cfg_update_partsbox_project
-            # The Sources checkboxes beside Search are authoritative for
-            # the whole sourcing job -- no separate "use Mouser/DigiKey
-            # sourcing" toggle for uploads (see render_component_search_intake()).
-            use_mouser_sourcing = st.session_state.get("component_search_mouser", True)
-            use_digikey_sourcing = st.session_state.get("component_search_digikey", True)
-            run_sourcing = use_mouser_sourcing or use_digikey_sourcing
+    if uploaded_file is None:
+        return
 
-            workspace = build_run_workspace()
-            source_path = save_uploaded_file(
-                workspace["input_dir"], uploaded_file.name, uploaded_file.getbuffer()
-            )
+    if st.session_state.get("upload_intake_processed_file_id") == uploaded_file.file_id:
+        st.caption(f"'{uploaded_file.name}' already processed into the working BOM below.")
+        return
 
-            with st.spinner("Processing uploaded BOM..."):
-                result = run_bom_workflow(
-                    source_file_path=source_path,
-                    build_quantity=int(build_quantity),
-                    project_name=project_name,
-                    project_description=project_description,
-                    run_partsbox=run_partsbox,
-                    run_sourcing=run_sourcing,
-                    run_digikey_mylist=False,
-                    use_mouser_sourcing=use_mouser_sourcing,
-                    use_digikey_sourcing=use_digikey_sourcing,
-                    run_id=workspace["run_id"],
-                    output_folder=str(workspace["output_dir"]),
-                )
+    build_quantity = st.session_state.cfg_build_quantity
+    project_name = st.session_state.cfg_project_name
+    project_description = st.session_state.cfg_project_description
+    run_partsbox = st.session_state.cfg_update_partsbox_project
+    # The Sources checkboxes beside Search are authoritative for
+    # the whole sourcing job -- no separate "use Mouser/DigiKey
+    # sourcing" toggle for uploads (see render_component_search_intake()).
+    authoritative_sources = _authoritative_sources()
+    use_mouser_sourcing = "mouser" in authoritative_sources
+    use_digikey_sourcing = "digikey" in authoritative_sources
+    run_sourcing = use_mouser_sourcing or use_digikey_sourcing
 
-            existing_run = st.session_state.current_run
-            existing_state = existing_run.get("_active_bom_state") if existing_run else None
-            new_state = result.get("_active_bom_state")
+    workspace = build_run_workspace()
+    source_path = save_uploaded_file(workspace["input_dir"], uploaded_file.name, uploaded_file.getbuffer())
 
-            if existing_state is not None and new_state is not None:
-                # A working BOM already exists -- merge this file's
-                # rows into it rather than replacing current_run, so
-                # parts added via Search (or a previous upload) survive.
-                existing_state.add_rows(new_state.dataframe)
-                existing_run["messages"] = existing_run.get("messages", []) + result.get("messages", [])
-                existing_run["warnings"] = existing_run.get("warnings", []) + result.get("warnings", [])
-                existing_run["errors"] = existing_run.get("errors", []) + result.get("errors", [])
-                refresh_response_snapshot(existing_run)
-            else:
-                # Nothing to merge into -- this becomes the run, exactly
-                # as a plain upload always has.
-                st.session_state.current_run = result
-                reset_run_scoped_session_state()
+    with st.spinner(f"Processing '{uploaded_file.name}'..."):
+        result = run_bom_workflow(
+            source_file_path=source_path,
+            build_quantity=int(build_quantity),
+            project_name=project_name,
+            project_description=project_description,
+            run_partsbox=run_partsbox,
+            run_sourcing=run_sourcing,
+            run_digikey_mylist=False,
+            use_mouser_sourcing=use_mouser_sourcing,
+            use_digikey_sourcing=use_digikey_sourcing,
+            run_id=workspace["run_id"],
+            output_folder=str(workspace["output_dir"]),
+        )
 
-            # Deliberately no st.rerun() -- see the matching comment in
-            # render_add_to_bom_results(). Everything below this point in
-            # the page (BOM Configuration, Results, Purchasing Handoff)
-            # still renders normally later in this SAME script pass and
-            # reflects the merged/replaced state; an explicit rerun here
-            # would abort the script before reaching those widgets and
-            # reset them.
+    st.session_state["upload_intake_processed_file_id"] = uploaded_file.file_id
+
+    if run_partsbox:
+        # A confirmed AutoBOM PartsBox write (project/storage creation +
+        # BOM-entry sync) just happened -- the shared snapshot
+        # (partsbox_inventory.get_snapshot(), used by Main Search/
+        # PartsBox Inventory/Needs Review/the location recommender) can
+        # no longer be trusted as current, so drop it; the next read
+        # re-fetches instead of quietly serving pre-write data for up to
+        # its 5-minute TTL.
+        invalidate_partsbox_snapshot()
+
+    existing_run = st.session_state.current_run
+    existing_state = existing_run.get("_active_bom_state") if existing_run else None
+    new_state = result.get("_active_bom_state")
+
+    if existing_state is not None and new_state is not None:
+        # A working BOM already exists -- merge this file's
+        # rows into it rather than replacing current_run, so
+        # parts added via Search (or a previous upload) survive.
+        existing_state.add_rows(new_state.dataframe)
+        existing_run["messages"] = existing_run.get("messages", []) + result.get("messages", [])
+        existing_run["warnings"] = existing_run.get("warnings", []) + result.get("warnings", [])
+        existing_run["errors"] = existing_run.get("errors", []) + result.get("errors", [])
+        refresh_response_snapshot(existing_run)
+    else:
+        # Nothing to merge into -- this becomes the run, exactly
+        # as a plain upload always has.
+        st.session_state.current_run = result
+        reset_run_scoped_session_state()
+
+        # Deliberately no st.rerun() -- see the matching comment in
+        # render_selected_part_details(). Everything below this point in
+        # the page (BOM Configuration, Results, Purchasing Handoff)
+        # still renders normally later in this SAME script pass and
+        # reflects the merged/replaced state; an explicit rerun here
+        # would abort the script before reaching those widgets and
+        # reset them.
 
 
 def render_run_messages(current_run):
@@ -601,7 +858,7 @@ def render_needs_review(current_run, active_bom_state, review_rows):
 
             if action_cols[0].button("Retry Exact Part", key=f"retry_{row_id}"):
                 with st.spinner("Retrying exact part lookup..."):
-                    retry_exact_sourcing(active_bom_state, row_id)
+                    retry_exact_sourcing(active_bom_state, row_id, sources=_authoritative_sources())
                 refresh_response_snapshot(current_run)
                 st.rerun()
 
@@ -619,11 +876,19 @@ def render_needs_review(current_run, active_bom_state, review_rows):
 
 def render_replacement_lookup(current_run, active_bom_state, row_id):
     """
-    Find Replacement / Check PartsBox share this exact function. Both
-    prepopulate a LookupQuery from what AutoBOM already knows about the
-    row (component_lookup.build_query_from_bom_row) and call the same
-    search_components() the general Component Search page calls -- no
-    replacement-specific search engine.
+    Find Replacement / Check PartsBox share this exact function, and
+    both prepopulate a LookupQuery from what AutoBOM already knows about
+    the row (component_lookup.build_query_from_bom_row). Check PartsBox
+    (sources == {"partsbox"}) filters the same shared snapshot
+    (partsbox_inventory.get_snapshot()) Main Search/PartsBox Inventory/
+    the location recommender use -- the audit's "one shared PartsBox
+    snapshot" precondition applies here too, not just to Main Search --
+    rather than a second live-per-search PartsBox read. Find Replacement
+    (Mouser/DigiKey) still calls search_components(), the same lookup
+    Main Search's Enter-triggered supplier query uses; there is still
+    only one Mouser/DigiKey lookup implementation, just not the shared
+    snapshot (Mouser/DigiKey have no such snapshot -- they're queried
+    live, on this explicit Search click, same as always).
     """
     row = active_bom_state.get_row(row_id)
     sources = st.session_state.replacement_lookup_sources
@@ -651,44 +916,72 @@ def render_replacement_lookup(current_run, active_bom_state, row_id):
     search_value = st.text_input("MPN / keywords (loosen or tighten as needed)", key=search_key)
 
     if st.button("Search", key=f"do_replacement_search_{row_id}"):
-        query.mpn = search_value
-        query.keywords = search_value
-        with st.spinner("Searching..."):
-            st.session_state[f"replacement_results_{row_id}"] = search_components(query)
+        if sources == frozenset({"partsbox"}):
+            try:
+                snapshot = get_partsbox_snapshot()
+            except Exception as exc:
+                st.error(f"Could not load PartsBox inventory: {exc}")
+            else:
+                all_partsbox_records = [part.to_dict() for part in snapshot.parts]
+                manufacturer_filters = {"manufacturer": query.manufacturer} if query.manufacturer else {}
+                results = search_and_filter(
+                    all_partsbox_records,
+                    query_text=search_value,
+                    search_fields=["mpn", "manufacturer", "description"],
+                    filters=manufacturer_filters,
+                )
+                required_qty = parse_engineering_value(row.get("required_qty"))
+                for candidate in results:
+                    stock = candidate.get("stock")
+                    if required_qty is None or stock is None:
+                        candidate["stock_sufficient"] = None
+                    else:
+                        candidate["stock_sufficient"] = float(stock) >= required_qty
+                st.session_state[f"replacement_results_{row_id}"] = results
+        else:
+            query.mpn = search_value
+            query.keywords = search_value
+            with st.spinner("Searching..."):
+                st.session_state[f"replacement_results_{row_id}"] = search_components(query)
 
     results = st.session_state.get(f"replacement_results_{row_id}", [])
     if not results:
         st.info("No candidates yet. Adjust the query above and click Search.")
         return
 
-    row_required_qty = row.get("required_qty")
+    # Same paginated/selectable table Main Search and PartsBox Inventory
+    # use (_render_paginated_table), namespaced by row_id so each open
+    # Needs Review row keeps its own page/selection state independent of
+    # every other row's replacement search -- not a second presentation.
+    columns_map = dict(LOOKUP_DISPLAY_COLUMNS)
+    if any(candidate.get("stock_sufficient") is not None for candidate in results):
+        columns_map = {**columns_map, "stock_sufficient": "Covers Required Qty?"}
 
-    for index, candidate in enumerate(results):
-        candidate_cols = st.columns([5, 1])
-        with candidate_cols[0]:
-            stock_display = candidate.get("stock") if candidate.get("stock") is not None else "Unknown"
-            coverage = ""
-            if row_required_qty:
-                sufficient = candidate.get("stock_sufficient")
-                if sufficient is True:
-                    coverage = f" · ✓ covers required qty ({row_required_qty})"
-                elif sufficient is False:
-                    coverage = f" · ✗ short of required qty ({row_required_qty})"
-            st.write(
-                f"**{candidate.get('source')}** · {candidate.get('mpn')} · "
-                f"{candidate.get('manufacturer') or 'unknown manufacturer'} · "
-                f"stock: {stock_display} · "
-                f"supplier P/N: {candidate.get('supplier_part_number') or '—'}"
-                f"{coverage}"
-            )
-        with candidate_cols[1]:
-            if st.button("Select", key=f"select_replacement_{row_id}_{index}"):
-                with st.spinner("Re-sourcing replacement..."):
-                    apply_replacement(active_bom_state, row_id, candidate)
-                refresh_response_snapshot(current_run)
-                st.session_state.selected_review_row_id = None
-                st.session_state.pop(f"replacement_results_{row_id}", None)
-                st.rerun()
+    selection = _render_paginated_table(
+        results,
+        key_prefix=f"replacement_{row_id}",
+        columns_map=columns_map,
+        signature=result_signature(search_value, tuple(sorted(sources))),
+    )
+    if selection is not None:
+        st.session_state[f"replacement_selected_{row_id}"] = selection
+
+    selected_candidate = st.session_state.get(f"replacement_selected_{row_id}")
+    if selected_candidate is not None:
+        st.caption(
+            f"Selected: {selected_candidate.get('source')} · {selected_candidate.get('mpn')} · "
+            f"{selected_candidate.get('manufacturer') or 'unknown manufacturer'}"
+        )
+        if st.button("Use Selected Replacement", key=f"use_replacement_{row_id}", type="primary"):
+            with st.spinner("Re-sourcing replacement..."):
+                apply_replacement(
+                    active_bom_state, row_id, selected_candidate, sources=_authoritative_sources()
+                )
+            refresh_response_snapshot(current_run)
+            st.session_state.selected_review_row_id = None
+            st.session_state.pop(f"replacement_results_{row_id}", None)
+            st.session_state.pop(f"replacement_selected_{row_id}", None)
+            st.rerun()
 
 
 def render_dynamic_facet_filters(results, key_prefix):
@@ -738,27 +1031,14 @@ def render_dynamic_facet_filters(results, key_prefix):
     return filters
 
 
-def render_lookup_results_table(results, show_stock_sufficiency=False):
-    if not results:
-        st.info("No results match the current filters.")
-        return
-
-    table_df = pd.DataFrame(results)
-    display_columns = dict(LOOKUP_DISPLAY_COLUMNS)
-    if show_stock_sufficiency and "stock_sufficient" in table_df.columns:
-        display_columns = {**display_columns, "stock_sufficient": "Covers Required Qty?"}
-
-    available_columns = [col for col in display_columns if col in table_df.columns]
-    table_df = table_df[available_columns].rename(columns=display_columns)
-    st.dataframe(table_df, width="stretch", hide_index=True)
-
-
 def render_partsbox_inventory_page():
     """
-    Reuses component_lookup.search_components() (sources={"partsbox"},
-    which supports an empty query as "browse everything" -- confirmed
-    live against the real ~3450-part Yank catalog, not a sample) and
-    record_filter -- no second PartsBox search/filter implementation.
+    Reuses the exact same shared snapshot (partsbox_inventory.get_snapshot())
+    Main Search's PartsBox side, Needs Review's Check PartsBox, and the
+    inventory-location recommender all read -- no second PartsBox read/
+    join. Lazy-loads the COMPLETE live snapshot as soon as this page is
+    opened (not behind a Browse-All click); an empty search then shows
+    everything, exactly like Main Search's PartsBox panel.
 
     This BROWSING view is read-only by design (viewing/searching/filtering
     must never write) -- that is a property of this page, not a claim
@@ -775,15 +1055,31 @@ def render_partsbox_inventory_page():
         "searching, or filtering here never writes anything. (AutoBOM does "
         "perform PartsBox writes elsewhere -- project/storage creation and "
         "BOM-entry sync happen as part of running a BOM, in the AutoBOM "
-        "workflow's Run BOM section.) "
-        "**Confirmed** fields (Manufacturer, MPN, PartsBox part ID) are already used "
-        "elsewhere in this app. **Inferred** fields (Description, Category, Package) "
-        "are read defensively and may be blank if PartsBox's live schema differs -- "
-        "confirmed live against this account's real data that neither is currently "
-        "populated. Quantity/stock is **not exposed** as a simple number -- confirmed "
-        "live that PartsBox's stock field is a per-storage transaction ledger, not a "
-        "scalar, and this integration does not guess a current quantity from it here."
+        "workflow's Run BOM section.) Stock shown here is the real signed-"
+        "ledger net quantity per location (part/stock summed per storage-id, "
+        "positive nets only) -- the same netting used for the inventory-"
+        "location recommender, not a guess."
     )
+
+    try:
+        snapshot = get_partsbox_snapshot()
+    except Exception as exc:
+        st.error(f"Could not load PartsBox inventory: {exc}")
+        return
+
+    header_cols = st.columns([3, 1])
+    with header_cols[0]:
+        st.caption(
+            f"{snapshot.part_count} part(s) across {snapshot.storage_count} storage location(s) "
+            f"-- loaded {int(snapshot.age_seconds())}s ago."
+        )
+    with header_cols[1]:
+        if st.button("Refresh PartsBox data", key="inventory_refresh_button"):
+            with st.spinner("Refreshing from PartsBox..."):
+                try:
+                    snapshot = get_partsbox_snapshot(force_refresh=True)
+                except Exception as exc:
+                    st.error(f"Refresh failed: {exc}")
 
     search_cols = st.columns([3, 1])
     with search_cols[0]:
@@ -793,32 +1089,73 @@ def render_partsbox_inventory_page():
     with search_cols[1]:
         manufacturer_filter = st.text_input("Manufacturer (optional)", key="inventory_manufacturer")
 
-    if st.button("Search / Browse All", key="inventory_search_button"):
-        query = LookupQuery(
-            mpn=search_text,
-            keywords=search_text,
-            manufacturer=manufacturer_filter,
-            sources=frozenset({"partsbox"}),
-        )
-        with st.spinner("Loading from PartsBox..."):
-            st.session_state.inventory_results = search_components(query)
+    all_records = [part.to_dict() for part in snapshot.parts]
+    manufacturer_filters = {"manufacturer": manufacturer_filter} if manufacturer_filter else {}
+    text_filtered = search_and_filter(
+        all_records,
+        query_text=search_text,
+        search_fields=["mpn", "manufacturer", "description"],
+        filters=manufacturer_filters,
+    )
 
-    results = st.session_state.inventory_results
-    if results:
-        dynamic_filters = render_dynamic_facet_filters(results, key_prefix="inventory")
-        filtered = search_and_filter(
-            results,
-            query_text="",
-            search_fields=[],
-            filters=dynamic_filters,
-        )
-        st.write(f"{len(filtered)} of {len(results)} parts shown.")
-        render_lookup_results_table(filtered)
-    else:
-        st.info("No results yet. Search, or click Browse All with an empty query.")
+    dynamic_filters = render_dynamic_facet_filters(text_filtered, key_prefix="inventory")
+    membership_filters = _membership_facet_filters(
+        text_filtered, ["storage_space", "location", "project"], key_prefix="inventory"
+    )
+    filters = {**dynamic_filters, **membership_filters}
+    filtered = search_and_filter(text_filtered, filters=filters) if filters else text_filtered
+
+    selection = _render_paginated_table(
+        filtered,
+        key_prefix="inventory",
+        columns_map=LOOKUP_DISPLAY_COLUMNS,
+        signature=result_signature(search_text, manufacturer_filter, filters, snapshot.generation),
+    )
+    if selection is not None:
+        st.session_state["inventory_selected_part"] = selection
+
+    st.divider()
+    render_inventory_selected_part_details()
 
     st.divider()
     render_partsbox_storage_locations()
+
+
+def render_inventory_selected_part_details():
+    """
+    PartsBox Inventory's own detail panel -- separate session key from
+    Main Search's (component_search_selected_part) since the two are
+    independent browsing contexts, but otherwise the same shape: no
+    quantity/Add-to-BOM here, since Inventory is a read-only browse view
+    (see render_partsbox_inventory_page()'s docstring) -- just the full
+    multi-location breakdown for whatever row was selected.
+    """
+    candidate = st.session_state.get("inventory_selected_part")
+    st.markdown("#### Selected Part Details")
+    if candidate is None:
+        st.caption("Select a row in the table above to see its full location breakdown here.")
+        return
+
+    st.write(f"**{candidate.get('mpn') or '(missing MPN)'}**")
+    st.write(f"Manufacturer: {candidate.get('manufacturer') or 'unknown manufacturer'}")
+    st.write(f"Description: {candidate.get('description') or '—'}")
+    st.write(f"Category: {candidate.get('category') or '—'} · Package: {candidate.get('package') or '—'}")
+    st.write(f"Total quantity (net across all locations): {candidate.get('stock')}")
+
+    locations = candidate.get("locations")
+    if locations:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"Location": loc["name"], "Type": loc["space_type"], "Quantity": loc["quantity"]}
+                    for loc in locations
+                ]
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+    else:
+        st.caption("No current (positive-quantity) location for this part.")
 
 
 def render_partsbox_storage_locations():
@@ -1378,10 +1715,55 @@ def render_autobom_workflow_page():
         render_purchasing_handoff_section()
 
 
+ASSETS_FOLDER = PROJECT_ROOT / "assets"
+
+# Minimal supplementary CSS -- the light/soft-blue/navy/rounded-controls
+# palette itself comes from .streamlit/config.toml's [theme] section
+# (Streamlit's own theming, not CSS overrides), per the mockup-alignment
+# instruction to avoid brittle selectors tied to generated DOM classes.
+# This block only styles the two header text elements below, which have
+# no native Streamlit equivalent (st.title is a single fixed size).
+_HEADER_CSS = """
+<style>
+.autobom-header-title { font-size: 2rem; font-weight: 700; color: #0f172a; line-height: 1.1; }
+.autobom-header-subtitle { color: #64748b; font-size: 0.95rem; margin-top: 0.1rem; }
+</style>
+"""
+
+
+def render_app_header():
+    """
+    Title/subtitle per the mockup ("AutoBOM" / "Parts Sourcing ·
+    Inventory · BOM Management"), with the Yank/Arro ownership marks
+    small and upper-right -- assets/*_mark.png are pre-processed
+    (symbol only, wordmark text cropped out; monochrome; ~60% opacity
+    baked into the PNG alpha channel) from the original supplied
+    artwork, not redrawn -- see the Phase M implementation report for
+    the exact crop/processing. No brand text is rendered beside them.
+    """
+    st.markdown(_HEADER_CSS, unsafe_allow_html=True)
+    title_col, badge_col = st.columns([6, 1])
+    with title_col:
+        st.markdown(
+            '<div class="autobom-header-title">AutoBOM</div>'
+            '<div class="autobom-header-subtitle">Parts Sourcing · Inventory · BOM Management</div>',
+            unsafe_allow_html=True,
+        )
+    with badge_col:
+        yank_mark = ASSETS_FOLDER / "yank_mark.png"
+        arro_mark = ASSETS_FOLDER / "arro_mark.png"
+        if yank_mark.exists() and arro_mark.exists():
+            icon_cols = st.columns(2)
+            with icon_cols[0]:
+                st.image(str(yank_mark), width=28)
+            with icon_cols[1]:
+                st.image(str(arro_mark), width=28)
+
+
 st.set_page_config(page_title="AutoBOM", layout="wide")
 init_session_state()
 
-st.title("AutoBOM")
+render_app_header()
 
 for warning in collect_startup_warnings():
     st.warning(warning)

@@ -28,27 +28,50 @@ _STALE_NON_SOURCING_FIELDS = {
 }
 
 
-def retry_exact_sourcing(active_bom_state, row_id, mouser_client=None, digikey_client=None):
+def _lookup_functions(mouser_client, digikey_client, sources):
+    """
+    Builds the mouser_lookup/digikey_lookup callables source_row() takes,
+    honoring the authoritative source selection (see app.py's Sources
+    checkboxes, the single state governing Main Search, uploads, Add to
+    BOM, Retry Exact, and replacement re-sourcing alike): an unselected
+    supplier gets a lookup that always returns None, the exact same
+    no-op pattern run_bom_workflow() already uses for
+    use_mouser_sourcing=False/use_digikey_sourcing=False, so a supplier
+    the operator unchecked is never queried by this seam either.
+    `sources=None` means "not specified" and defaults to both enabled,
+    preserving every existing caller that doesn't pass it.
+    """
+    resolved_sources = frozenset({"mouser", "digikey"}) if sources is None else frozenset(sources)
+
+    mouser = mouser_client or MouserClient()
+    digikey = digikey_client or DigiKeyClient()
+
+    mouser_lookup = mouser.find_best_match_for_row if "mouser" in resolved_sources else (lambda row: None)
+    digikey_lookup = digikey.find_best_match_for_row if "digikey" in resolved_sources else (lambda row: None)
+    return mouser_lookup, digikey_lookup
+
+
+def retry_exact_sourcing(active_bom_state, row_id, mouser_client=None, digikey_client=None, sources=None):
     """
     Re-runs the exact same per-row sourcing seam
     sourcing_engine.apply_sourcing_decisions() uses for a whole BOM,
     scoped to one row, and writes the outcome back through
     ActiveBomState.update_row(). DigiKey is only queried when Mouser
     doesn't already cover the required quantity -- Retry does not
-    duplicate or diverge from that orchestration.
+    duplicate or diverge from that orchestration. `sources` restricts
+    which suppliers may be queried at all (see _lookup_functions()).
     """
     row = active_bom_state.get_row(row_id)
     if row is None:
         raise KeyError(f"Unknown row_id: {row_id}")
 
-    mouser = mouser_client or MouserClient()
-    digikey = digikey_client or DigiKeyClient()
+    mouser_lookup, digikey_lookup = _lookup_functions(mouser_client, digikey_client, sources)
 
-    decision = source_row(row, mouser.find_best_match_for_row, digikey.find_best_match_for_row)
+    decision = source_row(row, mouser_lookup, digikey_lookup)
     return active_bom_state.update_row(row_id, decision)
 
 
-def apply_replacement(active_bom_state, row_id, replacement, mouser_client=None, digikey_client=None):
+def apply_replacement(active_bom_state, row_id, replacement, mouser_client=None, digikey_client=None, sources=None):
     """
     Writes an operator-approved replacement onto the canonical BOM row
     through the one shared mutation seam, instead of a detached
@@ -77,7 +100,10 @@ def apply_replacement(active_bom_state, row_id, replacement, mouser_client=None,
        new component identity rather than copied from the discovery
        candidate. A DigiKey-discovered replacement that Mouser can also
        fully cover is purchased from Mouser, exactly as normal sourcing
-       would decide.
+       would decide. `sources` (see _lookup_functions()) restricts which
+       suppliers this re-sourcing step may query at all -- the
+       authoritative Sources selection, not just which supplier
+       originally discovered the candidate.
 
     The row is only Ready if source_row()'s decision says so -- selecting
     a candidate does not, by itself, mark anything Ready.
@@ -125,10 +151,9 @@ def apply_replacement(active_bom_state, row_id, replacement, mouser_client=None,
             },
         )
 
-    mouser = mouser_client or MouserClient()
-    digikey = digikey_client or DigiKeyClient()
+    mouser_lookup, digikey_lookup = _lookup_functions(mouser_client, digikey_client, sources)
 
     updated_row = active_bom_state.get_row(row_id)
-    decision = source_row(updated_row, mouser.find_best_match_for_row, digikey.find_best_match_for_row)
+    decision = source_row(updated_row, mouser_lookup, digikey_lookup)
 
     return active_bom_state.update_row(row_id, decision)

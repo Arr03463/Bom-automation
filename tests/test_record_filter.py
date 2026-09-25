@@ -186,6 +186,68 @@ class GenerateFacetsTests(unittest.TestCase):
         self.assertEqual(generate_facets([], ["package", "manufacturer"]), {})
 
 
+class MembershipFilterTests(unittest.TestCase):
+    """
+    Multiselect membership filters (Storage Space / Location / Project)
+    -- a list/set/tuple desired value matches either a scalar record
+    field that's IN the desired collection, or (for a PartsBox-enriched
+    part that can be in several locations/projects at once) a
+    list-valued record field that intersects the desired collection.
+    """
+
+    def test_list_desired_matches_scalar_field_membership(self):
+        records = [{"mpn": "A", "storage_space": "Development"}, {"mpn": "B", "storage_space": "Project"}]
+        result = apply_filters(records, {"storage_space": ["Development", "Mechanical"]})
+        self.assertEqual([r["mpn"] for r in result], ["A"])
+
+    def test_list_desired_matches_list_valued_field_intersection(self):
+        records = [
+            {"mpn": "A", "location": ["C1 - Resistors", "DAB Prototype"]},
+            {"mpn": "B", "location": ["C2 - Capacitors"]},
+        ]
+        result = apply_filters(records, {"location": ["DAB Prototype"]})
+        self.assertEqual([r["mpn"] for r in result], ["A"])
+
+    def test_empty_desired_list_is_treated_as_no_filter(self):
+        records = make_records()
+        result = apply_filters(records, {"source": []})
+        self.assertEqual(len(result), 3)
+
+    def test_membership_is_case_insensitive(self):
+        records = [{"mpn": "A", "project": ["dab prototype"]}]
+        result = apply_filters(records, {"project": ["DAB Prototype"]})
+        self.assertEqual([r["mpn"] for r in result], ["A"])
+
+    def test_no_intersection_excludes_record(self):
+        records = [{"mpn": "A", "location": ["C1 - Resistors"]}]
+        result = apply_filters(records, {"location": ["A12"]})
+        self.assertEqual(result, [])
+
+
+class GenerateFacetsListValuedFieldTests(unittest.TestCase):
+    def test_list_valued_field_contributes_each_entry(self):
+        records = [
+            {"mpn": "A", "location": ["C1 - Resistors", "DAB Prototype"]},
+            {"mpn": "B", "location": ["C2 - Capacitors"]},
+        ]
+        facets = generate_facets(records, ["location"])
+        self.assertEqual(facets["location"], ["C1 - Resistors", "C2 - Capacitors", "DAB Prototype"])
+
+    def test_empty_lists_contribute_nothing(self):
+        records = [{"mpn": "A", "location": []}]
+        facets = generate_facets(records, ["location"])
+        self.assertEqual(facets, {})
+
+    def test_mixed_scalar_and_list_fields_both_work(self):
+        records = [
+            {"mpn": "A", "manufacturer": "Yageo", "location": ["C1 - Resistors"]},
+            {"mpn": "B", "manufacturer": "Murata", "location": ["C2 - Capacitors", "C1 - Resistors"]},
+        ]
+        facets = generate_facets(records, ["manufacturer", "location"])
+        self.assertEqual(facets["manufacturer"], ["Murata", "Yageo"])
+        self.assertEqual(facets["location"], ["C1 - Resistors", "C2 - Capacitors"])
+
+
 class SearchAndFilterTests(unittest.TestCase):
     def test_search_then_filter_combined(self):
         records = make_records()

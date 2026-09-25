@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from component_lookup import LookupQuery, search_components
 from manufacturer_aliases import manufacturers_equivalent
 from partsbox_client import PartsBoxClient
+from partsbox_inventory import net_quantities_by_storage as _net_quantities_by_storage
+from storage_space_classifier import DEVELOPMENT, classify_storage, load_storage_space_rules
 
 CONFIDENCE_EXACT_PART = "Exact Part"
 CONFIDENCE_STRONG_SIMILARITY = "Strong Similarity"
@@ -37,44 +39,56 @@ class LocationRecommendation:
     reason: str = ""
 
 
-def _net_quantities_by_storage(stock_ledger):
+def _storage_lookup(partsbox_client):
     """
-    Confirmed live (2026-09-24): part/stock is a signed transaction
-    ledger -- [{"stock/quantity": N, "stock/storage-id": id, ...}, ...] --
-    not a simple current-location field. Summing signed quantities per
-    storage-id is the standard ledger interpretation (this is what
-    "ledger" means), not a guess: a storage-id with a positive net sum
-    currently holds stock; one with a net <= 0 has been fully
-    consumed/relocated away and must not be reported as a current
-    location.
+    Returns (name_by_id, classification_by_id) built through the exact
+    same storage-space classification Main Search/PartsBox Inventory use
+    (storage_space_classifier.classify_storage()) -- not a second
+    Development/Project rule for recommendations specifically.
     """
-    if not isinstance(stock_ledger, list):
-        return {}
-
-    totals = Counter()
-    for entry in stock_ledger:
-        if not isinstance(entry, dict):
-            continue
-        storage_id = entry.get("stock/storage-id")
-        quantity = entry.get("stock/quantity")
-        if storage_id is None or not isinstance(quantity, (int, float)):
-            continue
-        totals[storage_id] += quantity
-
-    return {storage_id: total for storage_id, total in totals.items() if total > 0}
-
-
-def _storage_name_by_id(partsbox_client):
-    response = partsbox_client.list_storage_locations()
-    data = response.get("data", []) if isinstance(response, dict) else []
-    return {
-        storage.get("storage/id"): storage.get("storage/name", "")
-        for storage in data
+    storage_response = partsbox_client.list_storage_locations()
+    storage_data = storage_response.get("data", []) if isinstance(storage_response, dict) else []
+    storage_records = {
+        storage.get("storage/id"): storage
+        for storage in storage_data
         if isinstance(storage, dict) and storage.get("storage/id")
     }
 
+    project_response = partsbox_client.list_projects()
+    project_data = (
+        project_response.get("data", project_response.get("projects", []))
+        if isinstance(project_response, dict)
+        else []
+    )
+    project_names = [
+        str(project.get("project/name") or project.get("name") or "").strip()
+        for project in project_data
+        if isinstance(project, dict) and (project.get("project/name") or project.get("name"))
+    ]
+
+    rules = load_storage_space_rules()
+    name_by_id = {
+        storage_id: storage.get("storage/name") or storage.get("name") or str(storage_id)
+        for storage_id, storage in storage_records.items()
+    }
+    classification_by_id = {
+        storage_id: classify_storage(storage, project_names, rules=rules)
+        for storage_id, storage in storage_records.items()
+    }
+    return name_by_id, classification_by_id
+
 
 def _recommend_exact_part_location(mpn, manufacturer, partsbox_client):
+    """
+    Codex/audit finding: Project storage must never outrank Development
+    storage for an ordinary INV-<LOCATION> recommendation merely because
+    it happens to hold more stock or appear more often -- a part with 10
+    units in Development storage and 100 in a Project location should
+    still recommend the Development location. Development evidence is
+    therefore considered FIRST and exclusively when any exists; Project/
+    Mechanical/Other locations are only surfaced (at a visibly lower
+    confidence) when there is no Development evidence at all.
+    """
     part = partsbox_client.find_part_by_mpn_and_manufacturer(mpn, manufacturer)
     if not part:
         return None
@@ -86,26 +100,61 @@ def _recommend_exact_part_location(mpn, manufacturer, partsbox_client):
         # -- fall through to similarity analysis rather than guessing.
         return None
 
-    if len(net_by_storage) == 1:
-        storage_id = next(iter(net_by_storage))
-        name = _storage_name_by_id(partsbox_client).get(storage_id, storage_id)
+    name_by_id, classification_by_id = _storage_lookup(partsbox_client)
+    development_storage = {
+        storage_id: qty
+        for storage_id, qty in net_by_storage.items()
+        if classification_by_id.get(storage_id) == DEVELOPMENT
+    }
+
+    if len(development_storage) == 1:
+        storage_id = next(iter(development_storage))
+        name = name_by_id.get(storage_id, storage_id)
         return LocationRecommendation(
             location=name,
             confidence=CONFIDENCE_EXACT_PART,
-            reason="Exact manufacturer part already stored here.",
+            reason="Exact manufacturer part already stored here (Development storage).",
         )
 
-    # Multiple locations currently hold stock for the same exact part --
-    # don't guess which one is "the" answer. Surface the highest-quantity
-    # one, but at a lower confidence tier so the operator double-checks.
-    storage_id, _quantity = max(net_by_storage.items(), key=lambda item: item[1])
-    name = _storage_name_by_id(partsbox_client).get(storage_id, storage_id)
+    if len(development_storage) > 1:
+        # Multiple DEVELOPMENT locations currently hold stock -- don't
+        # guess which one is "the" answer. Surface the highest-quantity
+        # one, but at a lower confidence tier so the operator double-checks.
+        storage_id, _quantity = max(development_storage.items(), key=lambda item: item[1])
+        name = name_by_id.get(storage_id, storage_id)
+        return LocationRecommendation(
+            location=name,
+            confidence=CONFIDENCE_STRONG_SIMILARITY,
+            reason=(
+                f"Exact manufacturer part is currently stocked in {len(development_storage)} "
+                "Development locations; showing the one with the most stock. Verify before accepting."
+            ),
+        )
+
+    # No Development evidence at all -- the part IS stocked somewhere
+    # (Project/Mechanical/Other), but ordinary inventory placement must
+    # not silently point there just because that's where stock happens
+    # to be.
+    if len(net_by_storage) == 1:
+        storage_id = next(iter(net_by_storage))
+        name = name_by_id.get(storage_id, storage_id)
+        space_type = classification_by_id.get(storage_id, "Other")
+        return LocationRecommendation(
+            location=name,
+            confidence=CONFIDENCE_LOW,
+            reason=(
+                f"Exact manufacturer part is only currently stocked in a {space_type} "
+                f"location ({name!r}), not general Development storage. Shown for context -- "
+                "verify before using it as an ordinary inventory location."
+            ),
+        )
+
     return LocationRecommendation(
-        location=name,
-        confidence=CONFIDENCE_STRONG_SIMILARITY,
+        confidence=CONFIDENCE_MANUAL,
         reason=(
             f"Exact manufacturer part is currently stocked in {len(net_by_storage)} "
-            "locations; showing the one with the most stock. Verify before accepting."
+            "non-Development locations (Project/Mechanical/Other); manual selection "
+            "recommended for ordinary inventory placement."
         ),
     )
 
@@ -176,13 +225,18 @@ def _recommend_similar_location(mpn, manufacturer, description, partsbox_client)
     best_tier = CONFIDENCE_STRONG_SIMILARITY if any(t == CONFIDENCE_STRONG_SIMILARITY for t, _ in tiered) else CONFIDENCE_SIMILAR_FAMILY
     tier_candidates = [c for t, c in tiered if t == best_tier]
 
-    location_counts = Counter()
+    name_by_id, classification_by_id = _storage_lookup(partsbox_client)
+
+    all_location_counts = Counter()
+    development_location_counts = Counter()
     for candidate in tier_candidates:
         raw = candidate.get("raw") or {}
         for storage_id in _net_quantities_by_storage(raw.get("part/stock")):
-            location_counts[storage_id] += 1
+            all_location_counts[storage_id] += 1
+            if classification_by_id.get(storage_id) == DEVELOPMENT:
+                development_location_counts[storage_id] += 1
 
-    if not location_counts:
+    if not all_location_counts:
         return LocationRecommendation(
             confidence=CONFIDENCE_MANUAL,
             reason=(
@@ -191,23 +245,37 @@ def _recommend_similar_location(mpn, manufacturer, description, partsbox_client)
             ),
         )
 
-    top_storage_id, top_count = location_counts.most_common(1)[0]
-    total = sum(location_counts.values())
-    name = _storage_name_by_id(partsbox_client).get(top_storage_id, top_storage_id)
-
-    if len(location_counts) > 1 and top_count / total < 0.5:
+    if not development_location_counts:
+        # Similar parts exist, but only in Project/Mechanical/Other
+        # storage -- never point ordinary inventory placement there
+        # without flagging it (Codex/audit finding: Project-only
+        # evidence must not become a high-confidence recommendation).
         return LocationRecommendation(
             confidence=CONFIDENCE_LOW,
             reason=(
-                f"Similar parts are stored across {len(location_counts)} different "
-                "locations with no clear majority; manual selection recommended."
+                f"Found {len(tier_candidates)} similar part(s), but they are only stored "
+                "in Project/Mechanical/Other locations, not general Development storage; "
+                "manual selection recommended."
+            ),
+        )
+
+    top_storage_id, top_count = development_location_counts.most_common(1)[0]
+    total = sum(development_location_counts.values())
+    name = name_by_id.get(top_storage_id, top_storage_id)
+
+    if len(development_location_counts) > 1 and top_count / total < 0.5:
+        return LocationRecommendation(
+            confidence=CONFIDENCE_LOW,
+            reason=(
+                f"Similar parts are stored across {len(development_location_counts)} different "
+                "Development locations with no clear majority; manual selection recommended."
             ),
         )
 
     return LocationRecommendation(
         location=name,
         confidence=best_tier,
-        reason=f"{len(tier_candidates)} similar part(s) found; most are stored at {name!r}.",
+        reason=f"{len(tier_candidates)} similar part(s) found; most are stored in Development at {name!r}.",
     )
 
 

@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "classifications": ["Development", "Project", "Mechanical", "Other"],
+  "default_classification": "Development",
+  "mechanical_tags": [],
+  "development_tags": [],
+  "notes": "Only the Project rule (storage tagged 'production' whose name matches an existing PartsBox project name -- see src/partsbox_project_builder.py's PRODUCTION_STORAGE_TAG/storage_has_tag) is backed by a confirmed live PartsBox convention as of 2026-09; no 'Development' or 'Mechanical' tag has been confirmed live against the real account, so those lists start empty rather than guessing tag names. default_classification applies to every storage that doesn't match a Project or a configured mechanical_tags/development_tags entry -- set to 'Development' because most of Yank's ~1888 storage locations are ordinary general storage, not project-specific, matching the operator's mental model that project storage is the exception. Add tag strings to mechanical_tags/development_tags (or change default_classification to 'Other') here, without touching any filtering/classification code, once a real tagging convention is adopted for those categories."
+}

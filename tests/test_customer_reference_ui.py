@@ -20,8 +20,9 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from streamlit.testing.v1 import AppTest
+from _apptest_helpers import fresh_app_test
 
 from run_workspace import build_run_workspace, save_uploaded_file
 from workflow_runner import run_bom_workflow
@@ -70,7 +71,7 @@ class CustomerReferenceUITests(unittest.TestCase):
         tabs -- the default "AutoBOM" page already renders them once
         current_run is set, so there is nothing left to navigate to.
         """
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
         return at

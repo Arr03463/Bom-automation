@@ -14,6 +14,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -21,9 +22,11 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from streamlit.testing.v1 import AppTest
+from _apptest_helpers import fresh_app_test
 
+from partsbox_inventory import InventoryPart, PartsBoxInventorySnapshot
 from run_workspace import build_run_workspace, save_uploaded_file
 from sourcing_engine import SupplierResult
 from workflow_runner import run_bom_workflow
@@ -73,7 +76,7 @@ class AppSmokeTests(unittest.TestCase):
         )
 
     def test_app_loads_without_exceptions(self):
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
         self.assertEqual(len(at.exception), 0)
 
@@ -82,19 +85,26 @@ class AppSmokeTests(unittest.TestCase):
         Search is the default/primary way to add parts, always visible
         at the top of the main AutoBOM page (not a separate top-level
         nav destination, tab, or expander) -- simply loading the default
-        "AutoBOM" page is enough to exercise it.
+        "AutoBOM" page is enough to exercise it. The MPN search box
+        itself is a custom component (search_events.search_event_input(),
+        needed to distinguish live typing from Enter -- see
+        src/search_events.py), not a plain st.text_input, so it isn't
+        visible via at.text_input; the Sources checkboxes beside it are
+        still plain st.checkbox widgets and are what this asserts on.
         """
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
 
         self.assertEqual(len(at.exception), 0)
-        text_input_labels = [t.label for t in at.text_input]
-        self.assertIn("MPN, manufacturer, or keywords", text_input_labels)
+        checkbox_labels = [c.label for c in at.checkbox]
+        self.assertIn("PartsBox", checkbox_labels)
+        self.assertIn("Mouser", checkbox_labels)
+        self.assertIn("DigiKey", checkbox_labels)
 
     def test_injected_run_result_renders_results_workspace(self):
         result = self._run_with_review_row()
 
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -107,7 +117,7 @@ class AppSmokeTests(unittest.TestCase):
     def test_needs_review_actions_render_without_being_invoked(self):
         result = self._run_with_review_row()
 
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -119,7 +129,7 @@ class AppSmokeTests(unittest.TestCase):
     def test_find_replacement_click_renders_prefilled_search_without_calling_it(self):
         result = self._run_with_review_row()
 
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -130,47 +140,99 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(len(at.exception), 0)
         self.assertIn("Search", [button.label for button in at.button])
 
+    def test_check_partsbox_search_uses_the_shared_snapshot_not_a_live_search(self):
+        """
+        Check PartsBox (sources == {"partsbox"}) must filter the same
+        shared snapshot (partsbox_inventory.get_snapshot()) Main Search/
+        PartsBox Inventory/the location recommender use, not a second
+        live-per-search PartsBox read via component_lookup.search_components()
+        -- the audit's "one shared PartsBox snapshot" precondition
+        applies to Needs Review too. Patched at partsbox_inventory.get_snapshot
+        (the defining module, not app.get_partsbox_snapshot -- see
+        PartsBoxInventorySmokeTests' docstring for why).
+        """
+        result = self._run_with_review_row()
+        row_id = result["_active_bom_state"].rows()[0]["row_id"]
+
+        at = fresh_app_test()
+        at.session_state["current_run"] = result
+        at.run()
+
+        next(b for b in at.button if b.label == "Check PartsBox").click()
+        at.run()
+
+        # manufacturer matches the row's known manufacturer
+        # (STMicroelectronics, from REVIEW_BOM_CSV) -- Check PartsBox
+        # prefilters candidates by the row's already-known manufacturer,
+        # same as Find Replacement's LookupQuery does.
+        snapshot = _fake_snapshot(
+            [_fake_inventory_part(part_id="p1", mpn="MATCHPART", manufacturer="STMicroelectronics")]
+        )
+        with patch("partsbox_inventory.get_snapshot", return_value=snapshot) as mock_get_snapshot, patch(
+            "component_lookup.search_components"
+        ) as mock_search_components:
+            next(t for t in at.text_input if t.key == f"replacement_query_{row_id}").set_value("MATCHPART")
+            at.run()
+            next(b for b in at.button if b.key == f"do_replacement_search_{row_id}").click()
+            at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        mock_get_snapshot.assert_called_once()
+        mock_search_components.assert_not_called()
+        results = at.session_state[f"replacement_results_{row_id}"]
+        self.assertEqual([r["mpn"] for r in results], ["MATCHPART"])
+        self.assertEqual(results[0]["source"], "PartsBox")
+
     def test_selecting_a_replacement_updates_canonical_state_via_ui(self):
         """
         apply_replacement() re-sources the replacement through the real
         MouserClient/DigiKeyClient (no injection point from the Needs
         Review UI), so this test mocks those two classes at their
-        review_actions import site -- otherwise clicking "Select" would
-        make live vendor API calls. The mocked Mouser lookup returns full
-        stock, so the assertions below prove the row was genuinely
-        re-sourced by the real sourcing decision (result_status/
-        selected_supplier/supplier_order_qty all correct), not manually
-        stamped from the discovery candidate.
+        review_actions import site -- otherwise clicking "Use Selected
+        Replacement" would make live vendor API calls. The mocked Mouser
+        lookup returns full stock, so the assertions below prove the row
+        was genuinely re-sourced by the real sourcing decision
+        (result_status/selected_supplier/supplier_order_qty all correct),
+        not manually stamped from the discovery candidate.
+
+        Row selection itself happens through st.dataframe(on_select=...),
+        which AppTest cannot simulate (see streamlit's own testing.md:
+        "selections on st.dataframe ... can't be triggered through
+        AppTest"). This test instead injects replacement_selected_{row_id}
+        directly, exactly as it already injects replacement_results_{row_id}
+        below -- both stand in for real UI interaction AppTest can't drive.
         """
         result = self._run_with_review_row()
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
 
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
         next(b for b in at.button if b.label == "Find Replacement").click()
         at.run()
 
-        # Simulate a completed search by injecting its result directly --
-        # never calls search_components()/live vendor APIs in this test.
-        at.session_state[f"replacement_results_{row_id}"] = [
-            {
-                "source": "DigiKey",
-                "mpn": "REPLACEMENT123",
-                "manufacturer": "STMicroelectronics",
-                "supplier_part_number": "511-REPL123-DIGIKEY",
-                "unit_price": "0.5",
-                "stock": 900,
-                "description": "",
-                "category": "",
-                "package": "",
-                "lifecycle_status": "",
-                "characteristics": {},
-                "raw": {},
-            }
-        ]
+        # Simulate a completed search and an operator's row selection by
+        # injecting both directly -- never calls search_components()/
+        # live vendor APIs in this test, and never drives the real
+        # dataframe row-selection UI (see the docstring above).
+        replacement_candidate = {
+            "source": "DigiKey",
+            "mpn": "REPLACEMENT123",
+            "manufacturer": "STMicroelectronics",
+            "supplier_part_number": "511-REPL123-DIGIKEY",
+            "unit_price": "0.5",
+            "stock": 900,
+            "description": "",
+            "category": "",
+            "package": "",
+            "lifecycle_status": "",
+            "characteristics": {},
+            "raw": {},
+        }
+        at.session_state[f"replacement_results_{row_id}"] = [replacement_candidate]
+        at.session_state[f"replacement_selected_{row_id}"] = replacement_candidate
         at.run()
 
         mouser_match = SupplierResult(
@@ -186,7 +248,7 @@ class AppSmokeTests(unittest.TestCase):
             mock_mouser_cls.return_value.find_best_match_for_row.return_value = mouser_match
             mock_digikey_cls.return_value.find_best_match_for_row.return_value = None
 
-            next(b for b in at.button if b.label == "Select").click()
+            next(b for b in at.button if b.label == "Use Selected Replacement").click()
             at.run()
 
         self.assertEqual(len(at.exception), 0)
@@ -208,7 +270,7 @@ class AppSmokeTests(unittest.TestCase):
         result = self._run_with_review_row()
         row_id = result["_active_bom_state"].rows()[0]["row_id"]
 
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -238,18 +300,18 @@ class AppSmokeTests(unittest.TestCase):
         exists yet (fresh session, or Search never added anything) still
         creates a new run exactly as before -- run_bom_workflow() itself
         is unchanged; only how app.py decides replace-vs-merge is new
-        (see render_upload_intake()).
+        (see render_upload_intake()). Upload is automatic now -- no
+        "Process Upload" button -- so selecting the file and rerunning
+        is the whole interaction (see render_upload_intake()'s
+        file_id-based exactly-once fingerprint).
         """
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
 
         for checkbox in at.checkbox:
-            if checkbox.label in ("Run PartsBox", "Run supplier sourcing"):
+            if checkbox.label in ("Mouser", "DigiKey"):
                 checkbox.set_value(False)
         at.file_uploader[0].upload("bom.csv", REVIEW_BOM_CSV.encode("utf-8"), "text/csv")
-        at.run()
-
-        next(b for b in at.button if b.label == "Process Upload").click()
         at.run()
 
         self.assertEqual(len(at.exception), 0)
@@ -272,7 +334,7 @@ class AppSmokeTests(unittest.TestCase):
         row_id_a = result_a["_active_bom_state"].rows()[0]["row_id"]
         original_run_id = result_a["run"]["run_id"]
 
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result_a
         at.run()
 
@@ -287,12 +349,9 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(at.session_state["selected_review_row_id"], row_id_a)
 
         for checkbox in at.checkbox:
-            if checkbox.label in ("Run PartsBox", "Run supplier sourcing"):
+            if checkbox.label in ("Mouser", "DigiKey"):
                 checkbox.set_value(False)
         at.file_uploader[0].upload("bom2.csv", CLEAN_BOM_CSV.encode("utf-8"), "text/csv")
-        at.run()
-
-        next(b for b in at.button if b.label == "Process Upload").click()
         at.run()
 
         self.assertEqual(len(at.exception), 0)
@@ -329,9 +388,51 @@ def _lookup_result(**overrides):
     return result
 
 
+def _fake_inventory_part(**overrides):
+    fields = {
+        "part_id": "p1",
+        "mpn": "ABC123",
+        "manufacturer": "Yageo",
+        "description": "10k Resistor",
+        "category": "Resistor",
+        "package": "0603",
+        "characteristics": {},
+        "raw": {"part/id": "p1"},
+        "locations": [],
+        "total_quantity": 0,
+    }
+    fields.update(overrides)
+    return InventoryPart(**fields)
+
+
+def _fake_snapshot(parts):
+    return PartsBoxInventorySnapshot(
+        generation=1,
+        loaded_at=time.time(),
+        parts=parts,
+        storage_by_id={},
+        project_names=[],
+    )
+
+
 class PartsBoxInventorySmokeTests(unittest.TestCase):
-    def _navigate_to_inventory(self):
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+    """
+    PartsBox Inventory lazy-loads the shared snapshot
+    (partsbox_inventory.get_snapshot()) as soon as the page renders --
+    every test here patches it before navigating so none make a live
+    PartsBox call. Patched at partsbox_inventory.get_snapshot (the
+    module that DEFINES it), not app.get_partsbox_snapshot -- AppTest
+    re-execs app.py's `from partsbox_inventory import get_snapshot as
+    get_partsbox_snapshot` fresh on every .run(), so only a patch on the
+    defining module is picked up (see tests/test_app_smoke.py's module
+    docstring for the same gotcha elsewhere in this file). Patches are
+    entered via self.enterContext so they stay active across every
+    .run() in a test, not just the first.
+    """
+
+    def _navigate_to_inventory(self, snapshot=None):
+        self.enterContext(patch("partsbox_inventory.get_snapshot", return_value=snapshot or _fake_snapshot([])))
+        at = fresh_app_test()
         at.run()
         at.sidebar.radio[0].set_value("PartsBox Inventory")
         at.run()
@@ -341,33 +442,21 @@ class PartsBoxInventorySmokeTests(unittest.TestCase):
         at = self._navigate_to_inventory()
         self.assertEqual(len(at.exception), 0)
 
-    def test_search_reuses_shared_lookup_service(self):
-        at = self._navigate_to_inventory()
+    def test_search_reuses_shared_snapshot(self):
+        at = self._navigate_to_inventory(_fake_snapshot([_fake_inventory_part()]))
 
-        with patch("component_lookup.search_components") as mock_search:
-            mock_search.return_value = [_lookup_result()]
-            next(b for b in at.button if b.label == "Search / Browse All").click()
-            at.run()
-
-        mock_search.assert_called_once()
-        called_query = mock_search.call_args[0][0]
-        # PartsBox Inventory only ever searches PartsBox, through the
-        # exact same LookupQuery/search_components() Component Search and
-        # Find Replacement use -- not a second PartsBox search path.
-        self.assertEqual(called_query.sources, frozenset({"partsbox"}))
         self.assertEqual(len(at.exception), 0)
         self.assertEqual(len(at.dataframe), 1)
 
     def test_filters_use_shared_filtering_layer(self):
-        at = self._navigate_to_inventory()
-
-        with patch("component_lookup.search_components") as mock_search:
-            mock_search.return_value = [
-                _lookup_result(mpn="A", package="0603"),
-                _lookup_result(mpn="B", package="0805"),
-            ]
-            next(b for b in at.button if b.label == "Search / Browse All").click()
-            at.run()
+        at = self._navigate_to_inventory(
+            _fake_snapshot(
+                [
+                    _fake_inventory_part(part_id="p1", mpn="A", package="0603"),
+                    _fake_inventory_part(part_id="p2", mpn="B", package="0805"),
+                ]
+            )
+        )
 
         selectbox_labels = [s.label for s in at.selectbox]
         self.assertIn("Package", selectbox_labels)
@@ -408,9 +497,18 @@ class PartsBoxInventorySmokeTests(unittest.TestCase):
 
 class DynamicFacetSmokeTests(unittest.TestCase):
     def test_component_search_shows_facets_present_in_results(self):
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
-        at.run()
-
+        """
+        Mouser/DigiKey results only ever populate
+        component_search_supplier_results on a real Enter press in the
+        search box, which is driven by search_events.py's frontend JS --
+        something AppTest cannot simulate (no real browser executes
+        custom-component JS in this test harness). This injects the
+        post-Enter state directly, the same stand-in pattern used for
+        replacement_results_{row_id} in AppSmokeTests, to exercise the
+        real facet-rendering code (render_dynamic_facet_filters()) that
+        runs once results exist, decoupled from the untestable Enter
+        trigger itself.
+        """
         fake_results = [
             _lookup_result(mpn="A", package="0603", manufacturer="Yageo"),
             _lookup_result(mpn="B", package="0805", manufacturer="Murata"),
@@ -418,10 +516,9 @@ class DynamicFacetSmokeTests(unittest.TestCase):
         fake_results[0]["voltage"] = "25V"
         fake_results[1]["voltage"] = "50V"
 
-        with patch("component_lookup.search_components") as mock_search:
-            mock_search.return_value = fake_results
-            next(b for b in at.button if b.label == "Search").click()
-            at.run()
+        at = fresh_app_test()
+        at.session_state["component_search_supplier_results"] = fake_results
+        at.run()
 
         self.assertEqual(len(at.exception), 0)
         selectbox_labels = [s.label for s in at.selectbox]
@@ -456,7 +553,7 @@ class PurchasingPageSmokeTests(unittest.TestCase):
         "AutoBOM" page already renders it once current_run is set, so
         there is nothing left to navigate to.
         """
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
         return at

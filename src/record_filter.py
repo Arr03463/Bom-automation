@@ -33,7 +33,7 @@ def apply_filters(records, filters):
     """
     filters: dict of field name -> desired value. A filter is skipped when
     its value is empty/None or the sentinel "All" (the usual "no
-    selection" state for a UI dropdown). Three kinds of desired value are
+    selection" state for a UI dropdown). Four kinds of desired value are
     recognized:
 
     - a plain string -> case-insensitive exact match against the
@@ -48,6 +48,14 @@ def apply_filters(records, filters):
       parsed via engineering_units.parse_engineering_value() and must
       fall within the given bounds. A record whose value can't be parsed
       never matches a bounded range.
+    - a list/set/tuple -> a multiselect membership filter (Storage
+      Space, Location, Project, ...): matches when the record's value
+      for that field is IN the desired collection (scalar field, e.g.
+      Storage Space), OR -- when the record's field value is itself a
+      list (e.g. a PartsBox-enriched part's `locations`/`projects`,
+      since one part can be in several locations at once) -- when the
+      two collections intersect at all. An empty desired collection is
+      treated as "no filter" (nothing selected), same as "All".
     """
     if not filters:
         return list(records)
@@ -69,18 +77,27 @@ def generate_facets(records, candidate_fields):
     Shared by every page that needs "show the filters that actually
     apply to what's on screen right now" instead of a fixed, often-empty
     filter list.
+
+    A field whose value is itself a list (e.g. an enriched PartsBox
+    part's `location`/`project`/`storage_space`, since one part can
+    currently sit in several locations/projects at once) contributes
+    every one of its non-empty entries to that field's facet values,
+    rather than being skipped or stringified as a whole list -- matches
+    _matches_membership_filter()'s membership semantics in apply_filters().
     """
     facets = {}
     for field in candidate_fields:
-        values = sorted(
-            {
-                str(record.get(field)).strip()
-                for record in records
-                if record.get(field) not in (None, "", [], {})
-            }
-        )
+        values = set()
+        for record in records:
+            value = record.get(field)
+            if isinstance(value, (list, tuple, set)):
+                for item in value:
+                    if item not in (None, "", [], {}):
+                        values.add(str(item).strip())
+            elif value not in (None, "", [], {}):
+                values.add(str(value).strip())
         if values:
-            facets[field] = values
+            facets[field] = sorted(values)
 
     return facets
 
@@ -100,11 +117,29 @@ def _matches_filters(record, filters):
                 return False
             continue
 
+        if isinstance(desired, (list, set, tuple, frozenset)):
+            if not desired:
+                continue
+            if not _matches_membership_filter(record, field, desired):
+                return False
+            continue
+
         actual = str(record.get(field, "") or "").strip().lower()
         if actual != str(desired).strip().lower():
             return False
 
     return True
+
+
+def _matches_membership_filter(record, field, desired_values):
+    desired_normalized = {str(value).strip().lower() for value in desired_values}
+    actual = record.get(field)
+
+    if isinstance(actual, (list, set, tuple)):
+        actual_normalized = {str(value).strip().lower() for value in actual}
+        return bool(actual_normalized & desired_normalized)
+
+    return str(actual or "").strip().lower() in desired_normalized
 
 
 def _matches_range_filter(record, field, desired_range):

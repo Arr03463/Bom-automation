@@ -463,5 +463,128 @@ class ApplyReplacementPartsBoxTests(unittest.TestCase):
         self.assertEqual(updated["result_status"], "Ready")
 
 
+class SourceSelectionGatingTests(unittest.TestCase):
+    """
+    The authoritative Sources selection (the same state governing Main
+    Search and uploads) must also govern Retry Exact and replacement
+    re-sourcing -- an unchecked supplier must never be queried by either
+    seam, not merely excluded from the purchasing decision. Confirmed
+    directly against FakeSupplierClient.calls, not just the resulting
+    sourcing_status.
+    """
+
+    def test_retry_exact_with_mouser_only_never_calls_digikey(self):
+        state = make_state(
+            [
+                {
+                    "mpn": "ABC123",
+                    "manufacturer": "Yageo",
+                    "status": "clean",
+                    "sourcing_status": "check_wall_inventory",
+                    "required_qty": "10",
+                    "qty_per_board": "10",
+                    "build_quantity": "1",
+                }
+            ]
+        )
+        mouser = FakeSupplierClient(
+            SupplierResult(supplier="Mouser", manufacturer="Yageo", mpn="ABC123", stock=50, supplier_part_number="603-ABC")
+        )
+        digikey = FakeSupplierClient(None)
+
+        retry_exact_sourcing(
+            state, "run-1:0", mouser_client=mouser, digikey_client=digikey, sources=frozenset({"mouser"})
+        )
+
+        self.assertEqual(len(mouser.calls), 1)
+        self.assertEqual(len(digikey.calls), 0)
+
+    def test_retry_exact_with_digikey_only_never_calls_mouser(self):
+        state = make_state(
+            [
+                {
+                    "mpn": "ABC123",
+                    "manufacturer": "Yageo",
+                    "status": "clean",
+                    "sourcing_status": "check_wall_inventory",
+                    "required_qty": "10",
+                    "qty_per_board": "10",
+                    "build_quantity": "1",
+                }
+            ]
+        )
+        mouser = FakeSupplierClient(None)
+        digikey = FakeSupplierClient(
+            SupplierResult(supplier="DigiKey", manufacturer="Yageo", mpn="ABC123", stock=50, supplier_part_number="296-ABC")
+        )
+
+        retry_exact_sourcing(
+            state, "run-1:0", mouser_client=mouser, digikey_client=digikey, sources=frozenset({"digikey"})
+        )
+
+        self.assertEqual(len(mouser.calls), 0)
+        self.assertEqual(len(digikey.calls), 1)
+
+    def test_retry_exact_with_neither_supplier_selected_calls_neither(self):
+        state = make_state(
+            [
+                {
+                    "mpn": "ABC123",
+                    "manufacturer": "Yageo",
+                    "status": "clean",
+                    "sourcing_status": "check_wall_inventory",
+                    "required_qty": "10",
+                    "qty_per_board": "10",
+                    "build_quantity": "1",
+                }
+            ]
+        )
+        mouser = FakeSupplierClient(None)
+        digikey = FakeSupplierClient(None)
+
+        result = retry_exact_sourcing(
+            state, "run-1:0", mouser_client=mouser, digikey_client=digikey, sources=frozenset()
+        )
+
+        self.assertEqual(len(mouser.calls), 0)
+        self.assertEqual(len(digikey.calls), 0)
+        self.assertEqual(result["sourcing_status"], "check_wall_inventory")
+
+    def test_apply_replacement_with_mouser_only_never_calls_digikey(self):
+        state = make_state([base_row()])
+        candidate = replacement_candidate("DigiKey", mpn="NEWPART")
+        mouser = FakeSupplierClient(
+            SupplierResult(supplier="Mouser", manufacturer="Yageo", mpn="NEWPART", stock=50, supplier_part_number="603-NEWPART")
+        )
+        digikey = FakeSupplierClient(None)
+
+        apply_replacement(
+            state, "run-1:0", candidate, mouser_client=mouser, digikey_client=digikey, sources=frozenset({"mouser"})
+        )
+
+        self.assertEqual(len(mouser.calls), 1)
+        self.assertEqual(len(digikey.calls), 0)
+
+    def test_apply_replacement_default_sources_is_backward_compatible(self):
+        """
+        Omitting `sources` entirely (every pre-existing caller) must
+        still query both suppliers, exactly as before this parameter
+        was added.
+        """
+        state = make_state([base_row()])  # required_qty="10"
+        candidate = replacement_candidate("Mouser", mpn="NEWPART")
+        # Mouser stock (2) is short of required_qty (10) -- DigiKey must
+        # still be consulted as a fallback when sources isn't restricted.
+        mouser = FakeSupplierClient(
+            SupplierResult(supplier="Mouser", manufacturer="Yageo", mpn="NEWPART", stock=2, supplier_part_number="603-NEWPART")
+        )
+        digikey = FakeSupplierClient(None)
+
+        apply_replacement(state, "run-1:0", candidate, mouser_client=mouser, digikey_client=digikey)
+
+        self.assertEqual(len(mouser.calls), 1)
+        self.assertEqual(len(digikey.calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

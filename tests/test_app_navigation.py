@@ -15,6 +15,7 @@ docstring for the patch-target gotcha this file follows).
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -22,9 +23,11 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from streamlit.testing.v1 import AppTest
+from _apptest_helpers import fresh_app_test
 
+from partsbox_inventory import InventoryPart, PartsBoxInventorySnapshot
 from run_workspace import build_run_workspace, save_uploaded_file
 from workflow_runner import run_bom_workflow, start_manual_bom_workflow
 
@@ -34,16 +37,39 @@ CLEAN_BOM_CSV = (
 )
 
 
+def _fake_inventory_part(**overrides):
+    fields = {
+        "part_id": "p1",
+        "mpn": "ABC123",
+        "manufacturer": "Yageo",
+        "description": "10k Resistor",
+        "category": "Resistor",
+        "package": "0603",
+        "characteristics": {},
+        "raw": {"part/id": "p1"},
+        "locations": [],
+        "total_quantity": 0,
+    }
+    fields.update(overrides)
+    return InventoryPart(**fields)
+
+
+def _fake_snapshot(parts):
+    return PartsBoxInventorySnapshot(
+        generation=1, loaded_at=time.time(), parts=parts, storage_by_id={}, project_names=[]
+    )
+
+
 class TopLevelNavigationTests(unittest.TestCase):
     def test_top_level_navigation_has_exactly_autobom_and_partsbox_inventory(self):
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
 
         options = at.sidebar.radio[0].options
         self.assertEqual(list(options), ["AutoBOM", "PartsBox Inventory"])
 
     def test_run_bom_and_component_search_and_purchasing_are_not_top_level_options(self):
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
 
         options = list(at.sidebar.radio[0].options)
@@ -81,7 +107,7 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         table itself.
         """
         result = self._run()
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -103,7 +129,7 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         present and functional, just no longer the dominant first thing
         on the page (see render_upload_intake()).
         """
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
 
         self.assertEqual(len(at.file_uploader), 1)
@@ -114,20 +140,25 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         even when current_run is None, directly on the page (not gated
         behind Upload having produced a result, and not hidden inside an
         expander the way the old standalone "Component Search" tool
-        was).
+        was). The MPN search box is a custom component
+        (search_events.search_event_input()), not a plain st.text_input
+        -- see tests/test_app_smoke.py's matching assertion -- so this
+        checks for the Sources checkboxes beside it instead.
         """
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
 
         self.assertEqual(len(at.exception), 0)
         subheaders = [el.value for el in at.subheader]
         self.assertIn("Add Parts", subheaders)
-        text_input_labels = [t.label for t in at.text_input]
-        self.assertIn("MPN, manufacturer, or keywords", text_input_labels)
+        checkbox_labels = [c.label for c in at.checkbox]
+        self.assertIn("PartsBox", checkbox_labels)
+        self.assertIn("Mouser", checkbox_labels)
+        self.assertIn("DigiKey", checkbox_labels)
 
     def test_customer_reference_is_reachable_without_a_separate_top_level_page(self):
         result = self._run()
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -136,7 +167,7 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
 
     def test_purchasing_handoff_is_reachable_without_a_separate_top_level_page(self):
         result = self._run()
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -146,7 +177,7 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
 
     def test_results_needs_review_is_reachable_without_a_separate_top_level_page(self):
         result = self._run()
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -166,7 +197,7 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
 
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
         at.run()
@@ -189,7 +220,7 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         for row in active_bom_state.rows():
             active_bom_state.update_row(row["row_id"], {"customer_reference": "PRJ-ATH-DAB"})
 
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -207,7 +238,7 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         a BOM, not an arbitrary order.
         """
         result = self._run()
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -255,12 +286,20 @@ class UnifiedIntakeTests(unittest.TestCase):
         }
 
     def _search_and_add(self, at, candidate, qty=3):
-        with patch("component_lookup.search_components") as mock_search:
-            mock_search.return_value = [candidate]
-            next(b for b in at.button if b.key == "component_search_button").click()
-            at.run()
+        """
+        Row selection happens through st.dataframe(on_select=...), which
+        AppTest cannot simulate (see tests/test_app_smoke.py's docstring
+        on the same limitation). This injects the selection directly
+        into component_search_selected_part -- the same session-state
+        seam the real dataframe selection writes to (see
+        render_component_search_intake()) -- then drives the real
+        shared Selected Part Details panel (quantity input + Add to BOM
+        button) exactly as an operator would after picking a row.
+        """
+        at.session_state["component_search_selected_part"] = candidate
+        at.run()
 
-        next(n for n in at.number_input if n.key == "add_to_bom_qty_0").set_value(qty)
+        next(n for n in at.number_input if n.key == "component_search_add_qty").set_value(qty)
         at.run()
 
         with patch("review_actions.MouserClient") as mock_mouser_cls, patch(
@@ -268,23 +307,22 @@ class UnifiedIntakeTests(unittest.TestCase):
         ) as mock_digikey_cls:
             mock_mouser_cls.return_value.find_best_match_for_row.return_value = None
             mock_digikey_cls.return_value.find_best_match_for_row.return_value = None
-            next(b for b in at.button if b.key == "add_to_bom_button_0").click()
+            next(b for b in at.button if b.key == "component_search_add_button").click()
             at.run()
 
         return at
 
     def _upload(self, at, csv_text, filename="bom.csv"):
+        """Upload is automatic now -- no "Process Upload" button to click."""
         for checkbox in at.checkbox:
-            if checkbox.label in ("Run PartsBox", "Run supplier sourcing"):
+            if checkbox.label in ("Mouser", "DigiKey"):
                 checkbox.set_value(False)
         at.file_uploader[0].upload(filename, csv_text.encode("utf-8"), "text/csv")
-        at.run()
-        next(b for b in at.button if b.label == "Process Upload").click()
         at.run()
         return at
 
     def test_search_add_creates_a_line_in_the_working_bom_with_no_prior_upload(self):
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
         self.assertIsNone(at.session_state["current_run"])
 
@@ -314,7 +352,7 @@ class UnifiedIntakeTests(unittest.TestCase):
         active_bom_state = result["_active_bom_state"]
         self.assertEqual(len(active_bom_state.rows()), 1)
 
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -327,7 +365,7 @@ class UnifiedIntakeTests(unittest.TestCase):
         self.assertEqual(mpns, {"RC0603FR-0710KL", "EXTRACONN"})
 
     def test_upload_can_add_parts_after_manual_search_additions(self):
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
 
         self._search_and_add(at, self._search_result(mpn="MANUALPART"))
@@ -346,7 +384,7 @@ class UnifiedIntakeTests(unittest.TestCase):
         self.assertEqual(mpns, {"MANUALPART", "RC0603FR-0710KL"})
 
     def test_customer_reference_configurable_from_bom_configuration_area(self):
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
         self._search_and_add(at, self._search_result())
 
@@ -371,7 +409,7 @@ class UnifiedIntakeTests(unittest.TestCase):
         export (see mouser_export.py), not a vendor side effect.
         """
         with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
-            at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+            at = fresh_app_test()
             at.run()
             self._search_and_add(at, self._search_result())
             self._upload(at, CLEAN_BOM_CSV)
@@ -387,7 +425,7 @@ class UnifiedIntakeTests(unittest.TestCase):
         and the redundant sourcing toggles (section 6/7) are gone
         entirely, replaced by the Sources checkboxes next to Search.
         """
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
 
         self.assertEqual(len(at.exception), 0)
@@ -406,7 +444,7 @@ class UnifiedIntakeTests(unittest.TestCase):
 
     def test_project_name_field_is_operator_friendly_not_partsbox_labeled(self):
         """Section 4: "PartsBox project name" -> "Project Name"."""
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
 
         text_input_labels = [t.label for t in at.text_input]
@@ -421,7 +459,7 @@ class UnifiedIntakeTests(unittest.TestCase):
         toggle for Upload. Unchecking Mouser here must turn off Mouser
         sourcing for an upload too.
         """
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.run()
 
         next(cb for cb in at.checkbox if cb.key == "component_search_mouser").set_value(False)
@@ -430,8 +468,6 @@ class UnifiedIntakeTests(unittest.TestCase):
         with patch("workflow_runner.run_bom_workflow") as mock_run:
             mock_run.return_value = start_manual_bom_workflow()
             at.file_uploader[0].upload("bom.csv", CLEAN_BOM_CSV.encode("utf-8"), "text/csv")
-            at.run()
-            next(b for b in at.button if b.label == "Process Upload").click()
             at.run()
 
         self.assertEqual(len(at.exception), 0)
@@ -476,7 +512,7 @@ class UnifiedIntakeTests(unittest.TestCase):
             },
         )
 
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
@@ -490,8 +526,20 @@ class UnifiedIntakeTests(unittest.TestCase):
 
 
 class PartsBoxInventoryTopLevelTests(unittest.TestCase):
-    def _navigate_to_inventory(self):
-        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+    """
+    PartsBox Inventory lazy-loads the shared snapshot
+    (partsbox_inventory.get_snapshot()) as soon as the page renders --
+    see tests/test_app_smoke.py's PartsBoxInventorySmokeTests docstring
+    for why the patch target must be partsbox_inventory.get_snapshot
+    (the defining module), not app.get_partsbox_snapshot, and why it's
+    entered via self.enterContext.
+    """
+
+    def _navigate_to_inventory(self, snapshot=None):
+        self.enterContext(
+            patch("partsbox_inventory.get_snapshot", return_value=snapshot or _fake_snapshot([]))
+        )
+        at = fresh_app_test()
         at.run()
         at.sidebar.radio[0].set_value("PartsBox Inventory")
         at.run()
@@ -503,45 +551,39 @@ class PartsBoxInventoryTopLevelTests(unittest.TestCase):
         subheaders = [el.value for el in at.subheader]
         self.assertIn("PartsBox Inventory", subheaders)
 
-    def test_browse_all_with_empty_query_requests_the_full_inventory_not_a_bom_subset(self):
+    def test_empty_search_shows_the_full_inventory_not_a_bom_subset(self):
         """
-        "Browse All" must query search_components() with an empty
-        query/no BOM-derived filter -- i.e. it asks for the WHOLE
-        accessible PartsBox catalog, not just parts referenced by the
-        current/any BOM run.
+        The page lazy-loads the COMPLETE shared snapshot on entry (no
+        query parameter at the fetch level at all -- get_snapshot()
+        takes none) and an empty search text shows every part in it, not
+        just parts referenced by the current/any BOM run.
         """
-        at = self._navigate_to_inventory()
+        snapshot = _fake_snapshot(
+            [
+                _fake_inventory_part(part_id="p1", mpn="A"),
+                _fake_inventory_part(part_id="p2", mpn="B"),
+                _fake_inventory_part(part_id="p3", mpn="C"),
+            ]
+        )
+        at = self._navigate_to_inventory(snapshot)
 
-        with patch("component_lookup.search_components") as mock_search:
-            mock_search.return_value = []
-            next(b for b in at.button if b.label == "Search / Browse All").click()
-            at.run()
-
-        called_query = mock_search.call_args[0][0]
-        self.assertEqual(called_query.mpn, "")
-        self.assertEqual(called_query.keywords, "")
-        self.assertEqual(called_query.sources, frozenset({"partsbox"}))
+        self.assertEqual(len(at.exception), 0)
+        self.assertEqual(len(at.dataframe[0].value), 3)
 
     def test_opening_and_browsing_partsbox_inventory_performs_zero_write_calls(self):
         """
-        Loading the page, clicking Browse All, and loading storage
-        locations are all real PartsBoxClient-backed operations here --
-        this proves none of them ever calls PartsBoxClient.call() with a
-        write operation (project/create, storage/create,
-        project/add-entries). Patches component_lookup.search_components
-        (as the other PartsBox Inventory tests do) plus PartsBoxClient's
-        underlying call() so this test also protects against a future
-        change accidentally introducing a write from this page.
+        Loading the page and loading storage locations are both real
+        PartsBoxClient-backed operations here -- this proves neither
+        ever calls PartsBoxClient.call() with a write operation
+        (project/create, storage/create, project/add-entries). Patches
+        PartsBoxClient's underlying call() so this test also protects
+        against a future change accidentally introducing a write from
+        this page.
         """
         at = self._navigate_to_inventory()
 
-        with patch("component_lookup.search_components") as mock_search, patch(
-            "partsbox_client.PartsBoxClient.call"
-        ) as mock_call:
-            mock_search.return_value = []
+        with patch("partsbox_client.PartsBoxClient.call") as mock_call:
             mock_call.return_value = {"data": []}
-            next(b for b in at.button if b.label == "Search / Browse All").click()
-            at.run()
             next(b for b in at.button if b.label == "Load storage locations").click()
             at.run()
 
