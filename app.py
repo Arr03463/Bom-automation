@@ -129,6 +129,15 @@ def init_session_state():
     st.session_state.setdefault("lookup_results", [])
     st.session_state.setdefault("inventory_results", [])
     st.session_state.setdefault("inventory_storage_locations", None)
+    # Shared Configuration section defaults -- set here (not just via each
+    # widget's own value=) so Upload's button handler can safely read them
+    # via st.session_state even on the very first page load, before the
+    # Configuration section (which renders after Add Parts) has been
+    # instantiated in this pass yet.
+    st.session_state.setdefault("cfg_build_quantity", 1)
+    st.session_state.setdefault("cfg_project_name", "")
+    st.session_state.setdefault("cfg_project_description", "")
+    st.session_state.setdefault("cfg_update_partsbox_project", True)
     for key, default in RUN_SCOPED_STATE_DEFAULTS.items():
         st.session_state.setdefault(key, default)
 
@@ -214,7 +223,6 @@ def render_component_search_intake():
     render_add_to_bom_results()).
     """
     st.markdown("#### Search")
-    st.caption("PartsBox is searched by default. Enable Mouser/DigiKey to include live supplier results.")
 
     search_cols = st.columns([3, 1])
     with search_cols[0]:
@@ -222,13 +230,20 @@ def render_component_search_intake():
     with search_cols[1]:
         manufacturer_filter = st.text_input("Manufacturer (optional)", key="component_search_manufacturer")
 
+    st.caption(
+        "Sources -- these determine which databases/suppliers AutoBOM consults, both for "
+        "this search and for sourcing the whole working BOM (uploaded parts included; see "
+        "Configuration below). Default all three on so a fresh upload gets sourced against "
+        "Mouser and DigiKey without an extra step -- uncheck Mouser/DigiKey here first if you "
+        "only want a quick PartsBox-only search."
+    )
     source_cols = st.columns(3)
     with source_cols[0]:
         use_partsbox = st.checkbox("PartsBox", value=True, key="component_search_partsbox")
     with source_cols[1]:
-        use_mouser = st.checkbox("Mouser", value=False, key="component_search_mouser")
+        use_mouser = st.checkbox("Mouser", value=True, key="component_search_mouser")
     with source_cols[2]:
-        use_digikey = st.checkbox("DigiKey", value=False, key="component_search_digikey")
+        use_digikey = st.checkbox("DigiKey", value=True, key="component_search_digikey")
 
     if st.button("Search", key="component_search_button"):
         sources = {
@@ -354,37 +369,43 @@ def render_upload_intake():
     exactly as before -- run_bom_workflow() itself is unchanged either
     way.
 
+    Has no settings of its own -- build quantity, project name/
+    description, and whether to update the PartsBox project all live in
+    the one shared Configuration section (render_configuration_section()),
+    read here via st.session_state rather than duplicated as local
+    widgets (see section 16: one sourcing configuration, not
+    upload_settings + search_settings). Which suppliers to source
+    against is likewise read from the Sources checkboxes next to Search
+    (component_search_mouser/component_search_digikey), not a second
+    "use Mouser/DigiKey sourcing" toggle.
+
     Deliberately offers no "Create Mouser cart" / "Create DigiKey
     MyList" option -- those are Purchasing Handoff actions now (see
     render_purchasing_handoff_section()), not something that should
-    happen merely from configuring an intake upload.
+    happen merely from an intake upload.
     """
-    st.markdown("#### Or upload a BOM file")
+    st.markdown("#### Upload")
     uploaded_file = st.file_uploader(
         "CSV or XLSX -- click to browse or drag and drop",
         type=["csv", "xlsx"],
         key="upload_intake_file",
     )
 
-    with st.expander("Upload settings"):
-        build_quantity = st.number_input(
-            "Build quantity", min_value=1, value=1, step=1, key="upload_build_quantity"
-        )
-        project_name = st.text_input("PartsBox project name", key="upload_project_name")
-        project_description = st.text_input("Project description", key="upload_project_description")
-        run_partsbox = st.checkbox("Run PartsBox", value=True, key="upload_run_partsbox")
-        run_sourcing = st.checkbox("Run supplier sourcing", value=True, key="upload_run_sourcing")
-        use_mouser_sourcing = st.checkbox(
-            "Use Mouser sourcing", value=True, disabled=not run_sourcing, key="upload_use_mouser_sourcing"
-        )
-        use_digikey_sourcing = st.checkbox(
-            "Use DigiKey sourcing", value=True, disabled=not run_sourcing, key="upload_use_digikey_sourcing"
-        )
-
     if st.button("Process Upload", key="process_upload_button"):
         if uploaded_file is None:
             st.error("Choose a CSV or XLSX BOM file before processing.")
         else:
+            build_quantity = st.session_state.cfg_build_quantity
+            project_name = st.session_state.cfg_project_name
+            project_description = st.session_state.cfg_project_description
+            run_partsbox = st.session_state.cfg_update_partsbox_project
+            # The Sources checkboxes beside Search are authoritative for
+            # the whole sourcing job -- no separate "use Mouser/DigiKey
+            # sourcing" toggle for uploads (see render_component_search_intake()).
+            use_mouser_sourcing = st.session_state.get("component_search_mouser", True)
+            use_digikey_sourcing = st.session_state.get("component_search_digikey", True)
+            run_sourcing = use_mouser_sourcing or use_digikey_sourcing
+
             workspace = build_run_workspace()
             source_path = save_uploaded_file(
                 workspace["input_dir"], uploaded_file.name, uploaded_file.getbuffer()
@@ -398,10 +419,9 @@ def render_upload_intake():
                     project_description=project_description,
                     run_partsbox=run_partsbox,
                     run_sourcing=run_sourcing,
-                    run_mouser_cart=False,
                     run_digikey_mylist=False,
-                    use_mouser_sourcing=run_sourcing and use_mouser_sourcing,
-                    use_digikey_sourcing=run_sourcing and use_digikey_sourcing,
+                    use_mouser_sourcing=use_mouser_sourcing,
+                    use_digikey_sourcing=use_digikey_sourcing,
                     run_id=workspace["run_id"],
                     output_folder=str(workspace["output_dir"]),
                 )
@@ -462,8 +482,8 @@ def render_downloads(current_run):
             "A Needs Review action changed the BOM since some of these files were "
             "generated. Files marked stale below are disabled until they're "
             "regenerated so nobody hands purchasing a BOM file that doesn't match "
-            "what Results now shows. Go to the Purchasing page and click "
-            "Regenerate Purchasing, or re-run BOM Automation, to update them."
+            "what Results now shows. Click Regenerate Purchasing in Purchasing "
+            "Handoff to update them."
         )
 
     outputs = current_run.get("outputs", {})
@@ -472,6 +492,7 @@ def render_downloads(current_run):
         "cleaned_csv": "Download cleaned CSV",
         "sourcing_report": "Download sourcing report",
         "digikey_list_csv": "Download DigiKey list CSV",
+        "mouser_export_csv": "Download Mouser export",
         "partsbox_import_csv": "Download PartsBox import CSV",
         "partsbox_unmatched_csv": "Download PartsBox unmatched CSV",
         "run_summary": "Download run summary",
@@ -865,10 +886,10 @@ def _render_customer_reference_preview_and_apply(current_run, active_bom_state, 
     if st.button("Apply to All BOM Lines", key=f"{key_prefix}_apply_all", disabled=not result.valid):
         _apply_customer_reference_to_all(current_run, active_bom_state, result.value)
         st.success(f"Applied {result.value} to every BOM line.")
-        # Deliberately no st.rerun() -- Customer Reference is now BOM
-        # Configuration, positioned before Results in page order (see
-        # render_bom_configuration_section()). Results (including its
-        # results_search text_input) still renders normally later in
+        # Deliberately no st.rerun() -- Customer Reference is nested in
+        # the shared Configuration section, positioned before Results in
+        # page order (see render_configuration_section()). Results
+        # (including its results_search text_input) still renders normally later in
         # this SAME script pass, showing the newly applied reference; an
         # explicit rerun here would abort the script before reaching it
         # and reset it (see the matching comment in
@@ -1110,10 +1131,11 @@ def _render_add_approved_code():
 def render_customer_reference_section(current_run, active_bom_state):
     """
     Customer Reference / Customer Part Number assignment (Yank naming
-    convention, YT-SOP-00-01-A) -- feeds Mouser cart / DigiKey MyList /
-    export handoff, never an order. This is BOM configuration, not a
-    disconnected page -- called from within render_bom_configuration_section()
-    below, alongside build quantity and PartsBox project information.
+    convention, YT-SOP-00-01-A) -- feeds the Mouser export / DigiKey
+    MyList / export handoff, never an order. This is shared
+    Configuration, not a disconnected page -- called from within
+    render_configuration_section() above, alongside build quantity and
+    project information.
     """
     st.subheader("Customer Reference")
     st.caption(
@@ -1178,46 +1200,50 @@ def _apply_build_quantity(current_run, active_bom_state, new_build_quantity):
     refresh_response_snapshot(current_run)
 
 
-def render_bom_configuration_section(current_run, active_bom_state):
+def render_configuration_section():
     """
-    Build quantity, PartsBox project information, and Customer Reference
-    are settings for the parts already in the working BOM -- configured
-    after/beside the working parts list (see render_add_parts_section(),
-    which comes first), not before the operator has added anything.
+    One shared configuration for the whole parts-sourcing job -- applies
+    regardless of whether parts came from Search or Upload (there is no
+    separate upload_settings/search_settings split; see
+    render_upload_intake()'s docstring). Always visible, not gated
+    behind a working BOM existing, since Upload's very first click reads
+    these same st.session_state values before any working BOM exists
+    yet -- Customer Reference is the only part of this section that
+    needs an actual working BOM to apply to, so only it is guarded
+    below.
     """
-    st.subheader("BOM Configuration")
+    st.subheader("Configuration")
 
-    run_info = current_run.get("run", {})
     cols = st.columns(2)
     with cols[0]:
-        new_build_quantity = st.number_input(
-            "Build quantity",
-            min_value=1,
-            value=int(run_info.get("build_quantity") or 1),
-            step=1,
-            key="bomcfg_build_quantity",
-        )
-        if st.button("Apply Build Quantity", key="bomcfg_apply_build_quantity"):
-            _apply_build_quantity(current_run, active_bom_state, new_build_quantity)
-            st.success(f"Applied build quantity {new_build_quantity} to uploaded lines.")
-            # Deliberately no st.rerun() -- same reasoning as "Apply to
-            # All BOM Lines" above: Results still renders normally later
-            # in this SAME pass, reflecting the recomputed required_qty.
+        st.number_input("Build quantity", min_value=1, step=1, key="cfg_build_quantity")
+        st.text_input("Project Name", key="cfg_project_name")
     with cols[1]:
-        project_name = run_info.get("project_name") or ""
-        st.text_input(
-            "PartsBox project", value=project_name, disabled=True, key="bomcfg_project_name_display"
+        st.text_input("Project Description", key="cfg_project_description")
+        st.checkbox(
+            "Update PartsBox Project",
+            key="cfg_update_partsbox_project",
+            help=(
+                "Creates/reuses the PartsBox project and same-name storage "
+                "(tagged production) and adds matched BOM entries. Distinct "
+                "from the PartsBox Source checkbox next to Search above, "
+                "which only searches PartsBox and never writes."
+            ),
         )
-        if project_name:
-            st.caption("PartsBox project used for this working BOM's uploaded parts.")
-        else:
-            st.caption(
-                "Set from Upload's settings when a BOM file is processed. Parts "
-                "added via Search alone are not synced to PartsBox."
-            )
 
-    st.divider()
-    render_customer_reference_section(current_run, active_bom_state)
+    current_run = st.session_state.current_run
+    active_bom_state = current_run.get("_active_bom_state") if current_run else None
+    if current_run is not None and active_bom_state is not None:
+        build_quantity = st.session_state.cfg_build_quantity
+        if st.button("Apply Build Quantity to Uploaded Lines", key="cfg_apply_build_quantity"):
+            _apply_build_quantity(current_run, active_bom_state, build_quantity)
+            st.success(f"Applied build quantity {build_quantity} to uploaded lines.")
+            # Deliberately no st.rerun() -- same reasoning as "Apply to
+            # All BOM Lines" below: Results still renders normally later
+            # in this SAME pass, reflecting the recomputed required_qty.
+
+        st.divider()
+        render_customer_reference_section(current_run, active_bom_state)
 
 
 def render_purchasing_handoff_section():
@@ -1271,20 +1297,18 @@ def render_purchasing_handoff_section():
         st.write(f"Status: {artifact_status_labels.get(summary['mouser']['artifact_status'], 'Unknown')}")
         st.write(f"Items: {summary['mouser']['item_count']}")
         st.write(f"Total quantity: {summary['mouser']['total_quantity']}")
-        st.write(f"Cart created: {'Yes' if summary['mouser']['cart_created'] else 'No'}")
-        if summary["mouser"]["cart_key"]:
-            st.write("CartKey:")
-            st.code(summary["mouser"]["cart_key"], language=None)
-        else:
-            st.write("CartKey: Not available")
+        mouser_export_status = current_run.get("artifact_status", {}).get("mouser_export_csv")
+        show_download(
+            "Download Mouser Export",
+            current_run.get("outputs", {}).get("mouser_export_csv"),
+            disabled=mouser_export_status in ("stale", "failed"),
+        )
         st.caption(
-            "Sharing is manual for now: complete the Share action in Mouser directly "
-            "and hand the resulting Access ID to purchasing. No need to paste it back "
-            "into AutoBOM. Confirmed with Mouser (2026-09-24): the Cart Sharing "
-            "Access ID is derived internally from the CartKey, but that derivation "
-            "is not currently exposed through a supported public or Automation "
-            "Services API -- this is the current supported workflow, with a clean "
-            "extension point for a future supported sharing API/integration."
+            "Current workflow: download this file and upload it to Mouser yourself to "
+            "source/order the Mouser-selected parts -- AutoBOM does not create a Mouser "
+            "cart or place an order as part of this normal flow. (The Mouser Cart API "
+            "integration is preserved in mouser_cart_client.py for a possible future "
+            "supported sharing capability, not used here.)"
         )
 
     with cols[1]:
@@ -1312,7 +1336,7 @@ def render_purchasing_handoff_section():
     can_regenerate = summary["needs_review_count"] == 0
     if st.button("Regenerate Purchasing", disabled=not can_regenerate, type="primary"):
         with st.spinner("Regenerating purchasing artifacts from the current BOM..."):
-            regenerate_purchasing(current_run, run_mouser_cart=True, run_digikey_mylist=True)
+            regenerate_purchasing(current_run, run_digikey_mylist=True)
         st.rerun()
 
     if not can_regenerate:
@@ -1324,26 +1348,29 @@ def render_purchasing_handoff_section():
 
 def render_autobom_workflow_page():
     """
-    One continuous AutoBOM workspace -- NOT separate pages/tabs, and NOT
-    Upload-then-Search-then-everything-else. Search and Upload
+    One continuous AutoBOM parts-sourcer workspace -- NOT separate pages/
+    tabs, and NOT "Search mode" vs. "Upload mode". Search and Upload
     (render_add_parts_section()) are two intake methods for the SAME
     canonical working BOM -- Search is the default/primary one and needs
-    no upload first. BOM Configuration, the working BOM/results (with
-    Needs Review actioned inline via expanders), and Purchasing Handoff
-    then apply to whatever is currently in that working BOM, however it
-    got there. Every section reads/writes the same
-    st.session_state.current_run and its _active_bom_state, so scrolling
-    between sections never loses canonical BOM state.
+    no upload first. Configuration (render_configuration_section()) is
+    the one shared sourcing configuration for the whole job, always
+    visible right below Add Parts since Upload's very first click reads
+    it. The working BOM/results (with Needs Review actioned inline via
+    expanders) and Purchasing Handoff then apply to whatever is
+    currently in that working BOM, however it got there. Every section
+    reads/writes the same st.session_state.current_run and its
+    _active_bom_state, so scrolling between sections never loses
+    canonical BOM state.
     """
     render_add_parts_section()
+
+    st.divider()
+    render_configuration_section()
 
     current_run = st.session_state.current_run
     active_bom_state = current_run.get("_active_bom_state") if current_run else None
 
     if current_run is not None and active_bom_state is not None:
-        st.divider()
-        render_bom_configuration_section(current_run, active_bom_state)
-
         st.divider()
         render_results_workspace(current_run)
 

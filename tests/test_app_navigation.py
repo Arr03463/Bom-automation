@@ -2,7 +2,7 @@
 Streamlit UI tests for the AutoBOM/PartsBox Inventory information
 architecture (see render_autobom_workflow_page() in app.py): top-level
 navigation is just ["AutoBOM", "PartsBox Inventory"] -- Search+Upload
-(the unified "Add Parts" intake), BOM Configuration (Customer Reference
+(the unified "Add Parts" intake), Configuration (Customer Reference
 nested inside), Results/Needs Review, and Purchasing Handoff are
 sections of one continuous, vertically-flowing AutoBOM page, NOT tabs
 and NOT "Upload page, then Search page, then Customer Reference page".
@@ -26,7 +26,7 @@ sys.path.insert(0, str(SRC_FOLDER))
 from streamlit.testing.v1 import AppTest
 
 from run_workspace import build_run_workspace, save_uploaded_file
-from workflow_runner import run_bom_workflow
+from workflow_runner import run_bom_workflow, start_manual_bom_workflow
 
 CLEAN_BOM_CSV = (
     "Designator,Quantity,Manufacturer,Part Number,Description\n"
@@ -65,7 +65,6 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
             project_name="NavTest",
             run_partsbox=False,
             run_sourcing=False,
-            run_mouser_cart=False,
             run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
@@ -308,7 +307,6 @@ class UnifiedIntakeTests(unittest.TestCase):
             project_name="",
             run_partsbox=False,
             run_sourcing=False,
-            run_mouser_cart=False,
             run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
@@ -353,26 +351,26 @@ class UnifiedIntakeTests(unittest.TestCase):
         self._search_and_add(at, self._search_result())
 
         subheaders = [el.value for el in at.subheader]
-        bomcfg_index = subheaders.index("BOM Configuration")
+        cfg_index = subheaders.index("Configuration")
         cref_index = subheaders.index("Customer Reference")
-        self.assertLess(bomcfg_index, cref_index)
-        # Appears exactly once, inside BOM Configuration -- not a second,
+        self.assertLess(cfg_index, cref_index)
+        # Appears exactly once, inside Configuration -- not a second,
         # independent section elsewhere on the page.
         self.assertEqual(subheaders.count("Customer Reference"), 1)
 
     def test_no_vendor_artifact_created_by_search_or_upload(self):
         """
         Section 17's critical side-effect rule -- adding parts via Search
-        and uploading a file must never themselves create a Mouser cart
-        or DigiKey MyList. Only an explicit Regenerate Purchasing click
-        may (see tests/test_app_smoke.py's PurchasingPageSmokeTests for
-        that boundary, and test_customer_reference_ui.py's
+        and uploading a file must never themselves create a DigiKey
+        MyList. Only an explicit Regenerate Purchasing click may (see
+        tests/test_app_smoke.py's PurchasingPageSmokeTests for that
+        boundary, and test_customer_reference_ui.py's
         test_assigning_reference_creates_no_vendor_calls for the same
-        guarantee around editing a Customer Reference).
+        guarantee around editing a Customer Reference). Mouser has no
+        vendor call to guard here at all anymore -- it's a plain file
+        export (see mouser_export.py), not a vendor side effect.
         """
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
-            "workflow_runner.create_digikey_mylist_from_bom"
-        ) as mock_digikey:
+        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
             at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
             at.run()
             self._search_and_add(at, self._search_result())
@@ -380,8 +378,115 @@ class UnifiedIntakeTests(unittest.TestCase):
 
             self.assertEqual(len(at.exception), 0)
 
-        mock_mouser.assert_not_called()
         mock_digikey.assert_not_called()
+
+    def test_configuration_section_is_shared_and_has_no_upload_specific_settings(self):
+        """
+        Sections 2/3/13: Configuration is one shared section below Add
+        Parts, not an "Upload settings" expander attached to Upload --
+        and the redundant sourcing toggles (section 6/7) are gone
+        entirely, replaced by the Sources checkboxes next to Search.
+        """
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        subheaders = [el.value for el in at.subheader]
+        add_parts_index = subheaders.index("Add Parts")
+        cfg_index = subheaders.index("Configuration")
+        self.assertLess(add_parts_index, cfg_index)
+
+        expander_labels = [exp.label for exp in at.expander]
+        self.assertNotIn("Upload settings", expander_labels)
+
+        checkbox_labels = {cb.label for cb in at.checkbox}
+        for stale_label in ("Run supplier sourcing", "Use Mouser sourcing", "Use DigiKey sourcing", "Run PartsBox"):
+            self.assertNotIn(stale_label, checkbox_labels)
+        self.assertIn("Update PartsBox Project", checkbox_labels)
+
+    def test_project_name_field_is_operator_friendly_not_partsbox_labeled(self):
+        """Section 4: "PartsBox project name" -> "Project Name"."""
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.run()
+
+        text_input_labels = [t.label for t in at.text_input]
+        self.assertIn("Project Name", text_input_labels)
+        self.assertNotIn("PartsBox project name", text_input_labels)
+
+    def test_source_checkboxes_control_upload_sourcing_too(self):
+        """
+        Sections 6/7/15: the Sources checkboxes beside Search are
+        authoritative for the whole sourcing job, including uploaded
+        parts -- there is no separate "use Mouser/DigiKey sourcing"
+        toggle for Upload. Unchecking Mouser here must turn off Mouser
+        sourcing for an upload too.
+        """
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.run()
+
+        next(cb for cb in at.checkbox if cb.key == "component_search_mouser").set_value(False)
+        at.run()
+
+        with patch("workflow_runner.run_bom_workflow") as mock_run:
+            mock_run.return_value = start_manual_bom_workflow()
+            at.file_uploader[0].upload("bom.csv", CLEAN_BOM_CSV.encode("utf-8"), "text/csv")
+            at.run()
+            next(b for b in at.button if b.label == "Process Upload").click()
+            at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        mock_run.assert_called_once()
+        _, kwargs = mock_run.call_args
+        self.assertFalse(kwargs["use_mouser_sourcing"])
+        self.assertTrue(kwargs["use_digikey_sourcing"])
+        # DigiKey alone still selected -- sourcing must still run.
+        self.assertTrue(kwargs["run_sourcing"])
+
+    def test_mouser_purchasing_handoff_exposes_downloadable_export(self):
+        """
+        Section 12: Mouser's current-workflow output is a downloadable
+        export, not a cart-creation status -- confirmed by regenerating
+        purchasing (DigiKey disabled so this makes no live vendor call)
+        and checking the resulting Mouser export file is offered as a
+        download.
+        """
+        result = run_bom_workflow(
+            source_file_path=save_uploaded_file(
+                build_run_workspace(runs_root=self.temp_root)["input_dir"],
+                "bom.csv",
+                CLEAN_BOM_CSV.encode("utf-8"),
+            ),
+            build_quantity=5,
+            project_name="",
+            run_partsbox=False,
+            run_sourcing=False,
+            run_digikey_mylist=False,
+            run_id="mouser-export-test",
+            output_folder=str(self.temp_root / "out"),
+        )
+        active_bom_state = result["_active_bom_state"]
+        row_id = active_bom_state.rows()[0]["row_id"]
+        active_bom_state.update_row(
+            row_id,
+            {
+                "selected_supplier": "Mouser",
+                "supplier_part_number": "603-ABC123",
+                "sourcing_status": "sourced_mouser",
+                "supplier_order_qty": "15",
+            },
+        )
+
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.session_state["current_run"] = result
+        at.run()
+
+        regenerate_button = next(b for b in at.button if b.label == "Regenerate Purchasing")
+        regenerate_button.click()
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        download_labels = {b.label for b in at.download_button}
+        self.assertTrue(any("Download Mouser Export" in label for label in download_labels))
 
 
 class PartsBoxInventoryTopLevelTests(unittest.TestCase):

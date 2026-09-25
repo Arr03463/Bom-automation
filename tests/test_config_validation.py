@@ -135,17 +135,24 @@ class PartsBoxConfigStatusTests(ConfigValidationTestCase):
 class CollectStartupWarningsTests(ConfigValidationTestCase):
     def test_clean_config_produces_no_warnings(self):
         os.environ["PARTSBOX_API_KEY"] = "key"
-        # DigiKey and Mouser cart automation both left disabled.
+        # DigiKey MyLists automation left disabled.
 
         self.assertEqual(collect_startup_warnings(), [])
 
     def test_multiple_problems_all_surface(self):
+        """
+        MOUSER_CART_ENABLED is deliberately set here too, to prove it
+        does NOT add a warning -- collect_startup_warnings() no longer
+        calls mouser_cart_config_status() at all, since the app's normal
+        purchasing workflow doesn't use the Mouser Cart API (see
+        src/mouser_export.py); only the separate CLI tool does.
+        """
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
         os.environ["MOUSER_CART_ENABLED"] = "true"
 
         warnings = collect_startup_warnings()
 
-        self.assertEqual(len(warnings), 3)  # DigiKey creds, Mouser creds, PartsBox creds
+        self.assertEqual(len(warnings), 2)  # DigiKey creds, PartsBox creds
 
 
 if __name__ == "__main__":

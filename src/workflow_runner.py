@@ -23,8 +23,9 @@ from config import (
 from digikey_client import DigiKeyClient
 from digikey_list_export import export_digikey_list
 from digikey_mylists_client import build_digikey_mylists_parts, create_digikey_mylist_from_bom
-from mouser_cart_client import build_mouser_cart_items, create_mouser_cart_from_bom
+from mouser_cart_client import build_mouser_cart_items
 from mouser_client import MouserClient
+from mouser_export import export_mouser_list
 from partsbox_project_builder import (
     add_bom_entries_to_project,
     create_partsbox_project_and_storage,
@@ -51,11 +52,17 @@ load_dotenv(PROJECT_ROOT / ".env", override=True)
 #
 # Plain re-exportable file artifacts: regenerate_purchasing() always
 # re-attempts these independently of each other and of the supplier
-# artifacts.
+# artifacts. mouser_export_csv lives here, not in SUPPLIER_ARTIFACT_KEYS
+# below -- the current operator-facing Mouser workflow is "download this
+# file and upload it to Mouser yourself", a plain export like
+# sourcing_report/digikey_list_csv, not a live vendor call (see
+# mouser_export.py; the Mouser Cart API client in mouser_cart_client.py
+# is preserved but no longer invoked from this normal path).
 FILE_ARTIFACT_KEYS = [
     "cleaned_csv",
     "sourcing_report",
     "digikey_list_csv",
+    "mouser_export_csv",
     "partsbox_import_csv",
     "run_summary",
 ]
@@ -71,12 +78,12 @@ PERMANENT_ARTIFACT_KEYS = [
     "partsbox_unmatched_csv",
 ]
 
-# External, side-effecting artifacts (create a live Mouser cart / DigiKey
-# MyList). regenerate_purchasing() skips re-invoking one of these entirely
-# when it is already STATUS_CURRENT, so a retry needed only for the other
-# supplier never creates a duplicate cart/list.
+# External, side-effecting artifacts (create a live DigiKey MyList).
+# regenerate_purchasing() skips re-invoking one of these entirely when it
+# is already STATUS_CURRENT, so a retry never creates a duplicate list.
+# Mouser is NOT here -- it is a plain file export now (FILE_ARTIFACT_KEYS
+# above), not a vendor call.
 SUPPLIER_ARTIFACT_KEYS = [
-    "mouser_cart",
     "digikey_mylist",
 ]
 
@@ -95,14 +102,16 @@ def _initial_artifact_status():
 
 def _supplier_requirement(dataframe):
     """
-    A supplier artifact is only "required" when build_mouser_cart_items()/
-    build_digikey_mylists_parts() -- the exact same selection logic used to
-    actually build the cart/MyList -- finds at least one item for it. A
-    supplier with zero required items needs no artifact and must never
-    block "Ready for Handoff".
+    A SUPPLIER artifact (see SUPPLIER_ARTIFACT_KEYS -- just DigiKey now)
+    is only "required" when build_digikey_mylists_parts() -- the exact
+    same selection logic used to actually build the MyList -- finds at
+    least one item for it. A supplier with zero required items needs no
+    artifact and must never block "Ready for Handoff". Mouser has no
+    equivalent entry here: it's a plain file export
+    (FILE_ARTIFACT_KEYS), always attempted regardless of item count,
+    like sourcing_report/digikey_list_csv.
     """
     return {
-        "mouser_cart": len(build_mouser_cart_items(dataframe)) > 0,
         "digikey_mylist": len(build_digikey_mylists_parts(dataframe)) > 0,
     }
 
@@ -147,7 +156,7 @@ def _empty_result():
             "mouser_sourced": 0,
             "digikey_sourced": 0,
             "manual_review": 0,
-            "mouser_cart_items": 0,
+            "mouser_export_items": 0,
             "digikey_list_items": 0,
             "partsbox_entries_added": 0,
             "review_items": 0,
@@ -158,6 +167,7 @@ def _empty_result():
             "cleaned_csv": "",
             "sourcing_report": "",
             "digikey_list_csv": "",
+            "mouser_export_csv": "",
             "partsbox_import_csv": "",
             "partsbox_unmatched_csv": "",
             "run_summary": "",
@@ -275,9 +285,14 @@ def build_purchasing_summary(response):
     """
     Purchasing summary for the Purchasing Handoff workspace. Item counts
     are read from the existing, unmodified build_mouser_cart_items()/
-    build_digikey_mylists_parts() selection logic -- the same functions
-    the actual cart/MyList creation calls use -- so this never recomputes
-    a second sourcing/selection decision of its own.
+    build_digikey_mylists_parts() selection logic -- the same selection
+    export_mouser_list()/the DigiKey MyList creation call use -- so this
+    never recomputes a second sourcing/selection decision of its own.
+
+    Mouser has no "created"/vendor-attempt tracking here -- it's a plain
+    file export (see mouser_export_csv in FILE_ARTIFACT_KEYS), so its
+    only state is whether that export is current/stale/failed, exactly
+    like sourcing_report or digikey_list_csv.
     """
     active_bom_state = response.get("_active_bom_state")
     if active_bom_state is None:
@@ -286,7 +301,6 @@ def build_purchasing_summary(response):
     mouser_items = build_mouser_cart_items(active_bom_state.dataframe)
     digikey_items = build_digikey_mylists_parts(active_bom_state.dataframe)
     purchasing = response.get("purchasing") or {}
-    mouser = purchasing.get("mouser") or {}
     digikey = purchasing.get("digikey") or {}
     artifact_status = response.get("artifact_status") or {}
     requirement = _supplier_requirement(active_bom_state.dataframe)
@@ -296,10 +310,7 @@ def build_purchasing_summary(response):
         "mouser": {
             "item_count": len(mouser_items),
             "total_quantity": sum(int(item.get("Quantity", 0)) for item in mouser_items),
-            "cart_created": bool(mouser.get("created")),
-            "cart_key": mouser.get("cart_key"),
-            "required": requirement.get("mouser_cart", False),
-            "artifact_status": artifact_status.get("mouser_cart", STATUS_NOT_GENERATED),
+            "artifact_status": artifact_status.get("mouser_export_csv", STATUS_NOT_GENERATED),
         },
         "digikey": {
             "item_count": len(digikey_items),
@@ -318,35 +329,36 @@ def build_purchasing_summary(response):
     }
 
 
-def regenerate_purchasing(response, run_mouser_cart=True, run_digikey_mylist=True):
+def regenerate_purchasing(response, run_digikey_mylist=True):
     """
     Explicit, operator-triggered regeneration of purchasing artifacts
-    from the CURRENT canonical BOM state. Reuses create_mouser_cart_from_bom()/
-    create_digikey_mylist_from_bom() -- the exact calls run_bom_workflow()
-    makes during a normal run -- and _build_mouser_purchasing()/
+    from the CURRENT canonical BOM state. Reuses create_digikey_mylist_from_bom()
+    -- the exact call run_bom_workflow() makes during a normal run -- and
     _build_digikey_purchasing() to build the same structured shape. Not a
     second purchasing implementation.
 
     Also re-exports the plain CSV artifacts (cleaned BOM, sourcing
-    report, DigiKey list, PartsBox import CSV) from the current state
-    using the existing exporters, and rewrites run_summary.json, so
-    downloads stop reflecting the pre-mutation BOM. The multi-sheet
-    cleaned workbook and the PartsBox unmatched CSV are NOT regenerated
-    here -- see PERMANENT_ARTIFACT_KEYS -- and are left exactly as their
-    current artifact_status says.
+    report, DigiKey list, Mouser export, PartsBox import CSV) from the
+    current state using the existing exporters, and rewrites
+    run_summary.json, so downloads stop reflecting the pre-mutation BOM.
+    The multi-sheet cleaned workbook and the PartsBox unmatched CSV are
+    NOT regenerated here -- see PERMANENT_ARTIFACT_KEYS -- and are left
+    exactly as their current artifact_status says.
 
     Every stage below is wrapped in its own try/except and records its
     OWN artifact_status entry: one export failing must never crash this
     function, never mark an unrelated artifact current, and never touch
-    canonical BOM state. An already-STATUS_CURRENT supplier artifact is
-    skipped entirely (not re-invoked) so a retry needed only for one
-    supplier can never create a duplicate cart/list for the other, and a
-    plain rerun that doesn't call this function creates nothing at all.
+    canonical BOM state. An already-STATUS_CURRENT DigiKey MyList is
+    skipped entirely (not re-invoked) so a retry can never create a
+    duplicate list, and a plain rerun that doesn't call this function
+    creates nothing at all.
 
     Must only be called in response to an explicit operator action (a
     "Regenerate Purchasing" button), never automatically on a Streamlit
-    rerun -- both cart/MyList calls can hit live vendor APIs and create a
-    new cart/list every time they run.
+    rerun -- the DigiKey MyList call hits a live vendor API and creates a
+    new list every time it runs. The Mouser export is a plain local file
+    write, not a vendor call -- it's always re-attempted below alongside
+    the other plain exports, with no enable flag.
     """
     active_bom_state = response.get("_active_bom_state")
     if active_bom_state is None:
@@ -414,31 +426,17 @@ def regenerate_purchasing(response, run_mouser_cart=True, run_digikey_mylist=Tru
     else:
         artifact_status["partsbox_import_csv"] = STATUS_NOT_REQUIRED
 
-    requirement = _supplier_requirement(dataframe)
+    try:
+        mouser_export_path, _ = export_mouser_list(
+            dataframe, output_folder, file_stem=f"{source_stem}_mouser_export"
+        )
+        response["outputs"]["mouser_export_csv"] = mouser_export_path
+        artifact_status["mouser_export_csv"] = STATUS_CURRENT
+    except Exception as exc:
+        artifact_status["mouser_export_csv"] = STATUS_FAILED
+        errors.append(f"Mouser export regeneration failed: {exc}")
 
-    if not requirement["mouser_cart"]:
-        artifact_status["mouser_cart"] = STATUS_NOT_REQUIRED
-    elif artifact_status.get("mouser_cart") == STATUS_CURRENT:
-        messages.append("Mouser cart already current for this BOM state; not recreated.")
-    elif not run_mouser_cart:
-        pass
-    elif os.getenv("MOUSER_CART_ENABLED", "false").lower() != "true":
-        messages.append("Mouser cart regeneration skipped: MOUSER_CART_ENABLED is not true.")
-    else:
-        try:
-            mouser_cart_result = create_mouser_cart_from_bom(dataframe)
-            built = _build_mouser_purchasing(True, mouser_cart_result)
-            purchasing_raw["mouser"] = mouser_cart_result.get("result") if mouser_cart_result else None
-            purchasing["mouser"] = built
-            if built["created"]:
-                artifact_status["mouser_cart"] = STATUS_CURRENT
-                messages.append("Mouser cart regenerated from the current BOM state.")
-            else:
-                artifact_status["mouser_cart"] = STATUS_FAILED
-                errors.append(f"Mouser cart regeneration did not create a cart: {built.get('message')}")
-        except Exception as exc:
-            artifact_status["mouser_cart"] = STATUS_FAILED
-            errors.append(f"Mouser cart regeneration failed: {exc}")
+    requirement = _supplier_requirement(dataframe)
 
     if not requirement["digikey_mylist"]:
         artifact_status["digikey_mylist"] = STATUS_NOT_REQUIRED
@@ -531,64 +529,13 @@ def _count_sourcing(clean_bom):
     return mouser_sourced, digikey_sourced, manual_review
 
 
-def _extract_mouser_cart_key(raw_result):
-    """
-    Confirmed live (2026-09-24, one real disposable test cart via
-    MouserCartClient.add_items_to_cart()): CartKey is returned at the TOP
-    LEVEL of the response (alongside CartItems/CurrencyCode/Errors/
-    MerchandiseTotal/TotalItemCount), with no "Cart" sub-object present in
-    that response at all. The Cart.CartKey branch below is kept as a
-    defensive fallback for a response shape variant referenced in
-    Mouser's published docs but never observed against this account --
-    not removed, since it costs nothing to keep and protects against a
-    shape change.
-    """
-    if not isinstance(raw_result, dict):
-        return None
-
-    if raw_result.get("CartKey"):
-        return raw_result["CartKey"]
-
-    cart = raw_result.get("Cart")
-    if isinstance(cart, dict) and cart.get("CartKey"):
-        return cart["CartKey"]
-
-    return None
-
-
-def _build_mouser_purchasing(attempted, mouser_cart_result):
+def _build_digikey_purchasing(attempted, digikey_mylist_result):
     """
     Retains only the structured fields the app actually needs. The full
     vendor response (which may carry more than AutoBOM needs to persist)
     is kept separately in-memory, in response["_purchasing_raw"] -- a key
     starting with "_", so _write_run_summary() already excludes it from
     the JSON written to disk -- rather than embedded here.
-    """
-    if not attempted or mouser_cart_result is None:
-        return {
-            "attempted": bool(attempted),
-            "created": False,
-            "items_count": 0,
-            "cart_key": None,
-            "message": None,
-        }
-
-    raw_result = mouser_cart_result.get("result")
-
-    return {
-        "attempted": True,
-        "created": bool(mouser_cart_result.get("created")),
-        "items_count": int(mouser_cart_result.get("items_count", 0)),
-        "cart_key": _extract_mouser_cart_key(raw_result),
-        "message": mouser_cart_result.get("message"),
-    }
-
-
-def _build_digikey_purchasing(attempted, digikey_mylist_result):
-    """
-    Same structured-fields-only retention as _build_mouser_purchasing();
-    raw create/add responses belong in response["_purchasing_raw"], not
-    here.
     """
     if not attempted or digikey_mylist_result is None:
         return {
@@ -676,7 +623,6 @@ def run_bom_workflow(
     project_description="",
     run_partsbox=True,
     run_sourcing=True,
-    run_mouser_cart=False,
     run_digikey_mylist=False,
     use_mouser_sourcing=True,
     use_digikey_sourcing=True,
@@ -717,7 +663,6 @@ def run_bom_workflow(
         source_stem = Path(source_file_path).stem
         list_name_base = project_name or source_stem
 
-        mouser_cart_result = None
         digikey_mylist_result = None
 
         if run_sourcing and (use_mouser_sourcing or use_digikey_sourcing):
@@ -764,27 +709,14 @@ def run_bom_workflow(
             response["outputs"]["sourcing_report"] = sourcing_report_path
             response["messages"].append(f"Sourcing report exported to: {sourcing_report_path}")
 
-            if run_mouser_cart:
-                if os.getenv("MOUSER_CART_ENABLED", "false").lower() == "true":
-                    try:
-                        mouser_cart_result = create_mouser_cart_from_bom(result.clean_bom)
-                        response["summary"]["mouser_cart_items"] = int(
-                            mouser_cart_result.get("items_count", 0)
-                        )
-                        if mouser_cart_result.get("created"):
-                            response["messages"].append(
-                                f"Mouser cart items prepared: {response['summary']['mouser_cart_items']}"
-                            )
-                        else:
-                            response["messages"].append(
-                                f"Mouser cart skipped: {mouser_cart_result.get('message')}"
-                            )
-                    except Exception as exc:
-                        response["errors"].append(f"Mouser cart step failed: {exc}")
-                else:
-                    response["messages"].append("Mouser cart skipped: MOUSER_CART_ENABLED is not true.")
-            else:
-                response["messages"].append("Mouser cart creation skipped.")
+            mouser_export_path, mouser_export_count = export_mouser_list(
+                result.clean_bom,
+                output_folder,
+                file_stem=f"{source_stem}_mouser_export",
+            )
+            response["outputs"]["mouser_export_csv"] = mouser_export_path
+            response["summary"]["mouser_export_items"] = int(mouser_export_count)
+            response["messages"].append(f"Mouser export exported to: {mouser_export_path}")
 
             digikey_list_path, digikey_count = export_digikey_list(
                 result.clean_bom,
@@ -972,11 +904,11 @@ def run_bom_workflow(
         response["bom_rows"] = active_bom_state.rows()
         response["review_items"] = active_bom_state.to_records(review_items_df)
         response["purchasing"] = {
-            "mouser": _build_mouser_purchasing(run_mouser_cart, mouser_cart_result),
+            "mouser": None,
             "digikey": _build_digikey_purchasing(run_digikey_mylist, digikey_mylist_result),
         }
         response["_purchasing_raw"] = {
-            "mouser": mouser_cart_result.get("result") if mouser_cart_result else None,
+            "mouser": None,
             "digikey": {
                 "create_result": digikey_mylist_result.get("create_result") if digikey_mylist_result else None,
                 "add_result": digikey_mylist_result.get("add_result") if digikey_mylist_result else None,
@@ -998,17 +930,15 @@ def run_bom_workflow(
         sourcing_ran = bool(run_sourcing and (use_mouser_sourcing or use_digikey_sourcing))
         artifact_status["sourcing_report"] = STATUS_CURRENT if sourcing_ran else STATUS_NOT_REQUIRED
         artifact_status["digikey_list_csv"] = STATUS_CURRENT if sourcing_ran else STATUS_NOT_REQUIRED
+        # Mouser export runs alongside the DigiKey list export above (a
+        # plain file write, not gated behind a vendor-enabled flag) --
+        # current whenever sourcing ran, regardless of whether it found
+        # any Mouser items (an empty CSV is not a failure, same as
+        # digikey_list_csv with zero DigiKey rows); not required at all
+        # if sourcing never ran, since nothing was ever written.
+        artifact_status["mouser_export_csv"] = STATUS_CURRENT if sourcing_ran else STATUS_NOT_REQUIRED
 
         requirement = _supplier_requirement(active_bom_state.dataframe)
-        if not requirement["mouser_cart"]:
-            artifact_status["mouser_cart"] = STATUS_NOT_REQUIRED
-        elif run_mouser_cart and os.getenv("MOUSER_CART_ENABLED", "false").lower() == "true":
-            artifact_status["mouser_cart"] = (
-                STATUS_CURRENT if mouser_cart_result and mouser_cart_result.get("created") else STATUS_FAILED
-            )
-        else:
-            artifact_status["mouser_cart"] = STATUS_NOT_GENERATED
-
         if not requirement["digikey_mylist"]:
             artifact_status["digikey_mylist"] = STATUS_NOT_REQUIRED
         elif run_digikey_mylist and os.getenv("DIGIKEY_MYLISTS_ENABLED", "false").lower() == "true":

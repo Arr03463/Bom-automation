@@ -67,7 +67,6 @@ class AppSmokeTests(unittest.TestCase):
             project_name="SmokeTest",
             run_partsbox=False,
             run_sourcing=False,
-            run_mouser_cart=False,
             run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
@@ -445,7 +444,6 @@ class PurchasingPageSmokeTests(unittest.TestCase):
             project_name="PurchasingSmoke",
             run_partsbox=False,
             run_sourcing=False,
-            run_mouser_cart=False,
             run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
@@ -488,9 +486,9 @@ class PurchasingPageSmokeTests(unittest.TestCase):
 
     def test_rerun_alone_never_triggers_regeneration(self):
         """
-        Regeneration can create a live Mouser cart / DigiKey MyList --
-        it must only happen on an explicit button click, never merely
-        because Streamlit reran the script (e.g. a filter widget change).
+        Regeneration can create a live DigiKey MyList -- it must only
+        happen on an explicit button click, never merely because
+        Streamlit reran the script (e.g. a filter widget change).
         """
         at = self._navigate_to_purchasing(self._run(CLEAN_BOM_CSV))
 
@@ -508,16 +506,13 @@ class PurchasingPageSmokeTests(unittest.TestCase):
         back current -- the multi-sheet workbook has no regeneration path
         here and must stay disabled even after other downloads recover.
         """
-        saved_env = {
-            key: os.environ.get(key) for key in ("MOUSER_CART_ENABLED", "DIGIKEY_MYLISTS_ENABLED")
-        }
+        saved_env = {key: os.environ.get(key) for key in ("DIGIKEY_MYLISTS_ENABLED",)}
         self.addCleanup(
             lambda: [
                 os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
                 for k, v in saved_env.items()
             ]
         )
-        os.environ["MOUSER_CART_ENABLED"] = "false"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
 
         result = self._run(CLEAN_BOM_CSV)

@@ -40,7 +40,6 @@ def run_isolated_workflow(runs_root, project_name="Widget", bom_csv=SAMPLE_BOM_C
         project_name=project_name,
         run_partsbox=False,
         run_sourcing=False,
-        run_mouser_cart=False,
         run_digikey_mylist=False,
         run_id=workspace["run_id"],
         output_folder=str(workspace["output_dir"]),
@@ -95,9 +94,16 @@ class WorkflowRunnerContractTests(unittest.TestCase):
             self.assertEqual(row["customer_reference"], "")
 
     def test_purchasing_and_partsbox_default_when_not_attempted(self):
+        """
+        Mouser has no "attempted" vendor-call tracking anymore -- it's a
+        plain file export (see mouser_export.py), so response["purchasing"]["mouser"]
+        stays None always (the export's own state lives in
+        artifact_status["mouser_export_csv"]/outputs["mouser_export_csv"]
+        instead).
+        """
         _, result = run_isolated_workflow(self.temp_root)
 
-        self.assertFalse(result["purchasing"]["mouser"]["attempted"])
+        self.assertIsNone(result["purchasing"]["mouser"])
         self.assertFalse(result["purchasing"]["digikey"]["attempted"])
         self.assertIsNone(result["partsbox"])
 

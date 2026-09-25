@@ -4,12 +4,14 @@ derive_purchasing_status, build_purchasing_summary, regenerate_purchasing,
 and the per-artifact freshness/state model (artifact_status) that backs
 them.
 
-Every test explicitly controls MOUSER_CART_ENABLED/DIGIKEY_MYLISTS_ENABLED
-rather than relying on the real .env (which has both set to "true" in
-this environment) -- and mocks create_mouser_cart_from_bom()/
-create_digikey_mylist_from_bom() at the workflow_runner import site
-whenever a test needs those flags "true", so no test in this file ever
-makes a live vendor API call.
+Mouser is a plain file export now (mouser_export_csv, in
+FILE_ARTIFACT_KEYS) -- a local CSV write, not a vendor call, so it needs
+no enable flag and no mocking to run safely in tests. DigiKey MyList
+creation remains a real vendor call (SUPPLIER_ARTIFACT_KEYS): every test
+explicitly controls DIGIKEY_MYLISTS_ENABLED rather than relying on the
+real .env, and mocks create_digikey_mylist_from_bom() at the
+workflow_runner import site whenever a test needs that flag "true", so
+no test in this file ever makes a live vendor API call.
 """
 
 import os
@@ -54,7 +56,7 @@ class PurchasingStateTestCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.temp_root, ignore_errors=True)
 
         self._saved_env = {}
-        for key in ("MOUSER_CART_ENABLED", "DIGIKEY_MYLISTS_ENABLED", "SUPPLIER_LOOKUP_CACHE_ENABLED"):
+        for key in ("DIGIKEY_MYLISTS_ENABLED", "SUPPLIER_LOOKUP_CACHE_ENABLED"):
             self._saved_env[key] = os.environ.get(key)
         os.environ["SUPPLIER_LOOKUP_CACHE_ENABLED"] = "false"
         self.addCleanup(self._restore_env)
@@ -75,7 +77,6 @@ class PurchasingStateTestCase(unittest.TestCase):
             project_name=project_name,
             run_partsbox=False,
             run_sourcing=False,
-            run_mouser_cart=False,
             run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
@@ -132,11 +133,11 @@ class DerivePurchasingStatusTests(PurchasingStateTestCase):
 
     def test_zero_required_items_after_regeneration_is_ready_for_handoff(self):
         # Nothing ever attempted (fresh run) reports "Not Yet Generated";
-        # once an explicit regeneration has actually run and there was
-        # nothing required from either supplier, there is nothing left to
-        # do -- that must read as ready, not stuck at "not yet".
+        # once an explicit regeneration has actually run and DigiKey (the
+        # only SUPPLIER_ARTIFACT_KEYS member now) had nothing required,
+        # there is nothing left to do -- that must read as ready, not
+        # stuck at "not yet".
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
-        os.environ["MOUSER_CART_ENABLED"] = "false"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
 
         regenerate_purchasing(result)
@@ -144,56 +145,76 @@ class DerivePurchasingStatusTests(PurchasingStateTestCase):
         self.assertEqual(derive_purchasing_status(result), "Ready for Handoff")
 
     def test_required_supplier_with_created_false_is_not_ready(self):
+        """
+        DigiKey is the only SUPPLIER_ARTIFACT_KEYS member now -- Mouser
+        moved to a plain file export (see test_mouser_export_failure_does_not_block_ready_for_handoff_status
+        for its equivalent behavior).
+        """
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
-        self.make_mouser_sourced(active_bom_state, row_id)
-        os.environ["MOUSER_CART_ENABLED"] = "true"
-        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
+        self.make_digikey_sourced(active_bom_state, row_id)
+        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser:
-            mock_mouser.return_value = {"created": False, "items_count": 0, "message": "rejected"}
+        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
+            mock_digikey.return_value = {"created": False, "message": "rejected"}
             regenerate_purchasing(result)
 
-        self.assertEqual(result["artifact_status"]["mouser_cart"], "failed")
+        self.assertEqual(result["artifact_status"]["digikey_mylist"], "failed")
         self.assertNotEqual(derive_purchasing_status(result), "Ready for Handoff")
         self.assertEqual(derive_purchasing_status(result), "Generation Failed")
 
-    def test_supplier_with_zero_required_items_does_not_require_artifact(self):
+    def test_mouser_sourced_items_never_block_readiness(self):
+        """
+        Mouser is a plain file export (mouser_export_csv) with no
+        "required"/vendor-attempt concept participating in readiness --
+        having Mouser-sourced items and zero DigiKey-required items must
+        still read as Ready for Handoff, with no Mouser mocking needed
+        since the export is just a local CSV write.
+        """
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
         self.make_mouser_sourced(active_bom_state, row_id)
-        os.environ["MOUSER_CART_ENABLED"] = "true"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser:
-            mock_mouser.return_value = {
-                "created": True,
-                "items_count": 1,
-                "result": {"CartKey": "abc"},
-            }
-            regenerate_purchasing(result)
+        regenerate_purchasing(result)
 
+        self.assertEqual(result["artifact_status"]["mouser_export_csv"], "current")
         self.assertEqual(result["artifact_status"]["digikey_mylist"], "not_required")
         self.assertEqual(derive_purchasing_status(result), "Ready for Handoff")
 
-    def test_both_required_suppliers_created_successfully_is_ready_for_handoff(self):
+    def test_mouser_export_failure_does_not_block_ready_for_handoff_status(self):
+        """
+        A failed Mouser export disables that one download (see the
+        artifact_status assertion) but must not itself block "Ready for
+        Handoff" -- readiness is judged only against SUPPLIER_ARTIFACT_KEYS
+        (DigiKey), matching how a failed sourcing_report/cleaned_csv
+        export already doesn't block it either.
+        """
+        result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
+        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
+
+        with patch("workflow_runner.export_mouser_list") as mock_export:
+            mock_export.side_effect = RuntimeError("disk full")
+            regenerate_purchasing(result)
+
+        self.assertEqual(result["artifact_status"]["mouser_export_csv"], "failed")
+        self.assertEqual(derive_purchasing_status(result), "Ready for Handoff")
+
+    def test_digikey_created_successfully_is_ready_for_handoff(self):
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
         active_bom_state = result["_active_bom_state"]
         rows = active_bom_state.rows()
         self.make_mouser_sourced(active_bom_state, rows[0]["row_id"])
         self.make_digikey_sourced(active_bom_state, rows[1]["row_id"])
-        os.environ["MOUSER_CART_ENABLED"] = "true"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
-            "workflow_runner.create_digikey_mylist_from_bom"
-        ) as mock_digikey:
-            mock_mouser.return_value = {"created": True, "items_count": 1, "result": {"CartKey": "abc"}}
+        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
             mock_digikey.return_value = {"created": True, "list_id": "list-1", "parts_count": 1}
             regenerate_purchasing(result)
 
+        self.assertEqual(result["artifact_status"]["mouser_export_csv"], "current")
         self.assertEqual(derive_purchasing_status(result), "Ready for Handoff")
 
 
@@ -272,71 +293,73 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
         response = {"_active_bom_state": None}
         self.assertIs(regenerate_purchasing(response), response)
 
-    def test_disabled_flags_are_skipped_without_any_vendor_call(self):
+    def test_digikey_disabled_flag_is_skipped_without_any_vendor_call(self):
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
-        self.make_mouser_sourced(active_bom_state, row_id)
-        os.environ["MOUSER_CART_ENABLED"] = "false"
+        self.make_digikey_sourced(active_bom_state, row_id)
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
-            "workflow_runner.create_digikey_mylist_from_bom"
-        ) as mock_digikey:
+        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
             regenerate_purchasing(result)
 
-        mock_mouser.assert_not_called()
         mock_digikey.assert_not_called()
-        self.assertFalse(result["purchasing"]["mouser"]["created"])
         self.assertEqual(result["purchasing_regeneration_errors"], [])
+        # The Mouser export is a plain file write, not gated behind any
+        # enable flag -- it still runs regardless of DigiKey's flag.
+        self.assertEqual(result["artifact_status"]["mouser_export_csv"], "current")
 
-    def test_enabled_flags_call_existing_cart_and_mylist_functions_exactly_once(self):
+    def test_digikey_enabled_flag_calls_existing_mylist_function_exactly_once(self):
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
         active_bom_state = result["_active_bom_state"]
         rows = active_bom_state.rows()
         self.make_mouser_sourced(active_bom_state, rows[0]["row_id"])
         self.make_digikey_sourced(active_bom_state, rows[1]["row_id"])
-        os.environ["MOUSER_CART_ENABLED"] = "true"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
-            "workflow_runner.create_digikey_mylist_from_bom"
-        ) as mock_digikey:
-            mock_mouser.return_value = {"created": True, "items_count": 1, "result": {"CartKey": "abc"}}
+        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
             mock_digikey.return_value = {"created": True, "list_id": "list-1", "parts_count": 1}
 
             regenerate_purchasing(result)
 
-        mock_mouser.assert_called_once()
         mock_digikey.assert_called_once()
-        self.assertTrue(result["purchasing"]["mouser"]["created"])
-        self.assertEqual(result["purchasing"]["mouser"]["cart_key"], "abc")
         self.assertTrue(result["purchasing"]["digikey"]["created"])
         self.assertEqual(result["purchasing"]["digikey"]["list_id"], "list-1")
-        self.assertEqual(result["artifact_status"]["mouser_cart"], "current")
+        self.assertEqual(result["artifact_status"]["mouser_export_csv"], "current")
         self.assertEqual(result["artifact_status"]["digikey_mylist"], "current")
 
-    def test_regeneration_records_failure_without_raising(self):
+    def test_digikey_regeneration_records_failure_without_raising(self):
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
-        self.make_mouser_sourced(active_bom_state, row_id)
-        os.environ["MOUSER_CART_ENABLED"] = "true"
-        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
+        self.make_digikey_sourced(active_bom_state, row_id)
+        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser:
-            mock_mouser.side_effect = RuntimeError("Mouser API down")
+        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
+            mock_digikey.side_effect = RuntimeError("DigiKey API down")
             regenerate_purchasing(result)
 
         self.assertIn(
-            "Mouser cart regeneration failed", " ".join(result["purchasing_regeneration_errors"])
+            "DigiKey MyList regeneration failed", " ".join(result["purchasing_regeneration_errors"])
         )
-        self.assertEqual(result["artifact_status"]["mouser_cart"], "failed")
+        self.assertEqual(result["artifact_status"]["digikey_mylist"], "failed")
         self.assertEqual(derive_purchasing_status(result), "Generation Failed")
+
+    def test_mouser_export_regeneration_records_failure_without_raising(self):
+        result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
+        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
+
+        with patch("workflow_runner.export_mouser_list") as mock_export:
+            mock_export.side_effect = RuntimeError("disk full")
+            regenerate_purchasing(result)
+
+        self.assertIn(
+            "Mouser export regeneration failed", " ".join(result["purchasing_regeneration_errors"])
+        )
+        self.assertEqual(result["artifact_status"]["mouser_export_csv"], "failed")
 
     def test_regeneration_reexports_current_csv_outputs(self):
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
-        os.environ["MOUSER_CART_ENABLED"] = "false"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
@@ -350,7 +373,6 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
 
     def test_replacement_then_regeneration_produces_updated_purchasing_items(self):
         result = self.run_workflow(csv_text=REVIEW_BOM_CSV)
-        os.environ["MOUSER_CART_ENABLED"] = "true"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
@@ -372,37 +394,13 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
             digikey_client=_FakeSupplierClient(None),
         )
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser:
-            mock_mouser.return_value = {"created": True, "items_count": 1, "result": {"CartKey": "abc"}}
-            regenerate_purchasing(result)
+        regenerate_purchasing(result)
 
         summary = build_purchasing_summary(result)
         self.assertEqual(summary["mouser"]["item_count"], 1)
         self.assertEqual(summary["status"], "Ready for Handoff")
 
     # --- Per-artifact freshness / failure-isolation tests (Phase 4 fix pass) ---
-
-    def test_partial_regeneration_mouser_success_digikey_failure(self):
-        result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
-        active_bom_state = result["_active_bom_state"]
-        rows = active_bom_state.rows()
-        self.make_mouser_sourced(active_bom_state, rows[0]["row_id"])
-        self.make_digikey_sourced(active_bom_state, rows[1]["row_id"])
-        os.environ["MOUSER_CART_ENABLED"] = "true"
-        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
-
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
-            "workflow_runner.create_digikey_mylist_from_bom"
-        ) as mock_digikey:
-            mock_mouser.return_value = {"created": True, "items_count": 1, "result": {"CartKey": "abc"}}
-            mock_digikey.side_effect = RuntimeError("DigiKey API down")
-            regenerate_purchasing(result)
-
-        self.assertEqual(result["artifact_status"]["mouser_cart"], "current")
-        self.assertEqual(result["artifact_status"]["digikey_mylist"], "failed")
-        self.assertTrue(result["purchasing"]["mouser"]["created"])
-        self.assertEqual(result["purchasing"]["mouser"]["cart_key"], "abc")
-        self.assertEqual(derive_purchasing_status(result), "Partial — Generation Failed")
 
     def test_digikey_mylist_created_but_token_persistence_failed_is_reported_as_failed(self):
         """
@@ -416,7 +414,6 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
         self.make_digikey_sourced(active_bom_state, row_id)
-        os.environ["MOUSER_CART_ENABLED"] = "false"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
 
         with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
@@ -441,74 +438,61 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
         )
         self.assertNotEqual(derive_purchasing_status(result), "Ready for Handoff")
 
-    def test_partial_regeneration_digikey_success_mouser_failure(self):
+    def test_retry_after_digikey_failure_does_not_recreate_it_once_current(self):
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
         active_bom_state = result["_active_bom_state"]
-        rows = active_bom_state.rows()
-        self.make_mouser_sourced(active_bom_state, rows[0]["row_id"])
-        self.make_digikey_sourced(active_bom_state, rows[1]["row_id"])
-        os.environ["MOUSER_CART_ENABLED"] = "true"
+        row_id = active_bom_state.rows()[0]["row_id"]
+        self.make_digikey_sourced(active_bom_state, row_id)
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
-            "workflow_runner.create_digikey_mylist_from_bom"
-        ) as mock_digikey:
-            mock_mouser.side_effect = RuntimeError("Mouser API down")
-            mock_digikey.return_value = {"created": True, "list_id": "list-1", "parts_count": 1}
-            regenerate_purchasing(result)
-
-        self.assertEqual(result["artifact_status"]["digikey_mylist"], "current")
-        self.assertEqual(result["artifact_status"]["mouser_cart"], "failed")
-        self.assertTrue(result["purchasing"]["digikey"]["created"])
-        self.assertEqual(derive_purchasing_status(result), "Partial — Generation Failed")
-
-    def test_retry_after_partial_failure_does_not_recreate_successful_supplier_artifact(self):
-        result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
-        active_bom_state = result["_active_bom_state"]
-        rows = active_bom_state.rows()
-        self.make_mouser_sourced(active_bom_state, rows[0]["row_id"])
-        self.make_digikey_sourced(active_bom_state, rows[1]["row_id"])
-        os.environ["MOUSER_CART_ENABLED"] = "true"
-        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
-
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
-            "workflow_runner.create_digikey_mylist_from_bom"
-        ) as mock_digikey:
-            mock_mouser.return_value = {"created": True, "items_count": 1, "result": {"CartKey": "abc"}}
+        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
             mock_digikey.side_effect = RuntimeError("DigiKey API down")
             regenerate_purchasing(result)
 
-            # Retry: DigiKey now succeeds. Mouser must not be re-invoked --
-            # it is already STATUS_CURRENT for this unchanged BOM state.
+            # Retry: DigiKey now succeeds.
             mock_digikey.side_effect = None
             mock_digikey.return_value = {"created": True, "list_id": "list-1", "parts_count": 1}
             regenerate_purchasing(result)
 
-        mock_mouser.assert_called_once()
+            # A further regenerate must not re-invoke it -- it is already
+            # STATUS_CURRENT for this unchanged BOM state.
+            regenerate_purchasing(result)
+
         self.assertEqual(mock_digikey.call_count, 2)
-        self.assertEqual(result["artifact_status"]["mouser_cart"], "current")
         self.assertEqual(result["artifact_status"]["digikey_mylist"], "current")
-        # The CartKey from the original successful attempt survives.
-        self.assertEqual(result["purchasing"]["mouser"]["cart_key"], "abc")
         self.assertEqual(derive_purchasing_status(result), "Ready for Handoff")
 
-    def test_one_explicit_regeneration_click_creates_each_required_artifact_at_most_once(self):
+    def test_mouser_export_reruns_on_every_regeneration_unlike_digikey(self):
+        """
+        Unlike DigiKey's skip-if-current protection (it's a live vendor
+        call that must never silently duplicate), the Mouser export is a
+        plain, idempotent local file write -- it re-exports every time
+        regenerate_purchasing() runs, exactly like sourcing_report/
+        digikey_list_csv already do.
+        """
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
         active_bom_state = result["_active_bom_state"]
-        rows = active_bom_state.rows()
-        self.make_mouser_sourced(active_bom_state, rows[0]["row_id"])
-        self.make_digikey_sourced(active_bom_state, rows[1]["row_id"])
-        os.environ["MOUSER_CART_ENABLED"] = "true"
+        row_id = active_bom_state.rows()[0]["row_id"]
+        self.make_mouser_sourced(active_bom_state, row_id)
+
+        with patch("workflow_runner.export_mouser_list") as mock_export:
+            mock_export.return_value = ("/tmp/mouser_export.csv", 1)
+            regenerate_purchasing(result)
+            regenerate_purchasing(result)
+
+        self.assertEqual(mock_export.call_count, 2)
+
+    def test_one_explicit_regeneration_click_creates_digikey_mylist_at_most_once(self):
+        result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
+        active_bom_state = result["_active_bom_state"]
+        row_id = active_bom_state.rows()[0]["row_id"]
+        self.make_digikey_sourced(active_bom_state, row_id)
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
-            "workflow_runner.create_digikey_mylist_from_bom"
-        ) as mock_digikey:
-            mock_mouser.return_value = {"created": True, "items_count": 1, "result": {"CartKey": "abc"}}
+        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
             mock_digikey.return_value = {"created": True, "list_id": "list-1", "parts_count": 1}
             regenerate_purchasing(result)
 
-        self.assertEqual(mock_mouser.call_count, 1)
         self.assertEqual(mock_digikey.call_count, 1)
 
     def test_plain_rerun_creates_no_vendor_artifact(self):
@@ -522,22 +506,20 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
         self.make_mouser_sourced(active_bom_state, row_id)
-        os.environ["MOUSER_CART_ENABLED"] = "true"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
+        with patch("workflow_runner.export_mouser_list") as mock_export_mouser, patch(
             "workflow_runner.create_digikey_mylist_from_bom"
         ) as mock_digikey:
             for _ in range(3):
                 build_purchasing_summary(result)
                 derive_purchasing_status(result)
 
-        mock_mouser.assert_not_called()
+        mock_export_mouser.assert_not_called()
         mock_digikey.assert_not_called()
 
     def test_cleaned_csv_failure_is_caught_and_reported(self):
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
-        os.environ["MOUSER_CART_ENABLED"] = "false"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
 
         with patch("workflow_runner.export_clean_bom") as mock_export:
@@ -552,7 +534,6 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
 
     def test_one_export_failure_keeps_only_that_artifact_stale_or_failed(self):
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
-        os.environ["MOUSER_CART_ENABLED"] = "false"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
 
         with patch("workflow_runner.export_digikey_list") as mock_export:
@@ -573,7 +554,6 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
         refresh_response_snapshot(result)
         self.assertEqual(result["artifact_status"]["cleaned_workbook"], "stale")
 
-        os.environ["MOUSER_CART_ENABLED"] = "false"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
         regenerate_purchasing(result)
 
@@ -593,7 +573,6 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
         refresh_response_snapshot(result)
         self.assertEqual(result["artifact_status"]["partsbox_unmatched_csv"], "stale")
 
-        os.environ["MOUSER_CART_ENABLED"] = "false"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
         regenerate_purchasing(result)
 
@@ -609,7 +588,6 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
         active_bom_state.update_row(row_id, {"mpn": "CHANGED123"})
         refresh_response_snapshot(result)
 
-        os.environ["MOUSER_CART_ENABLED"] = "false"
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
         with patch("workflow_runner.export_sourcing_report") as mock_export:
             mock_export.side_effect = RuntimeError("boom")

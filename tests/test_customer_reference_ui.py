@@ -58,7 +58,6 @@ class CustomerReferenceUITests(unittest.TestCase):
             project_name="CrefSmoke",
             run_partsbox=False,
             run_sourcing=False,
-            run_mouser_cart=False,
             run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
@@ -177,12 +176,14 @@ class CustomerReferenceUITests(unittest.TestCase):
         self.assertTrue(result.get("stale_after_mutation"))
 
     def test_assigning_reference_creates_no_vendor_calls(self):
+        """
+        Mouser has no vendor call to guard here anymore -- it's a plain
+        file export (see mouser_export.py), not a vendor side effect.
+        """
         result = self._run()
         at = self._navigate_to_purchasing(result)
 
-        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
-            "workflow_runner.create_digikey_mylist_from_bom"
-        ) as mock_digikey:
+        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
             self._select(at, at.selectbox, "cref_project", "ATH")
             at.run()
             self._select(at, at.multiselect, "cref_pcb_codes", "DAB")
@@ -191,7 +192,6 @@ class CustomerReferenceUITests(unittest.TestCase):
             apply_button.click()
             at.run()
 
-        mock_mouser.assert_not_called()
         mock_digikey.assert_not_called()
 
     def test_invalid_reference_disables_apply_button(self):

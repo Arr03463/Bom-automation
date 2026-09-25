@@ -55,6 +55,13 @@ def mouser_cart_config_status():
     Mirrors digikey_mylists_config_status() for Mouser cart automation --
     if MOUSER_CART_ENABLED is true, purchasing reflects a clean state only
     when the credentials it depends on are actually present.
+
+    Deliberately NOT called from collect_startup_warnings() -- the
+    AutoBOM Streamlit app's normal purchasing workflow doesn't use the
+    Mouser Cart API at all anymore (see src/mouser_export.py); only the
+    separate src/main.py CLI tool does, so a startup warning about it in
+    the app would be about a feature the app never invokes. Kept here,
+    tested, and still usable directly for that CLI path.
     """
     enabled = os.getenv("MOUSER_CART_ENABLED", "false").strip().lower() == "true"
     if not enabled:
@@ -101,7 +108,6 @@ def collect_startup_warnings():
 
     for status in (
         digikey_mylists_config_status(),
-        mouser_cart_config_status(),
         partsbox_config_status(),
     ):
         if status.get("warning"):
