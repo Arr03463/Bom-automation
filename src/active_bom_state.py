@@ -178,6 +178,57 @@ class ActiveBomState:
 
         return next((row for row in self.rows() if row["row_id"] == row_id), None)
 
+    def add_row(self, overrides=None):
+        """
+        Appends one new, blank row (every existing column defaulted to
+        "", then `overrides` applied on top) and returns its row_id.
+        Used by the unified Search/Add-to-BOM intake to start a brand new
+        BOM line from a search result -- add_row() itself knows nothing
+        about components or sourcing; the caller (see
+        review_actions.apply_replacement(), reused unchanged) fills in
+        the actual identity and re-sources it through the exact same
+        seam Find Replacement uses, via update_row(). Columns that don't
+        exist on this row yet but get set later via update_row() are
+        auto-created by pandas' .at[] enlargement -- confirmed this is
+        safe even for a row added to a brand-new, sourcing-column-free
+        working BOM.
+        """
+        new_index = 0 if self.dataframe.empty else int(self.dataframe.index.max()) + 1
+        blank_row = {column: "" for column in self.dataframe.columns}
+        blank_row.update(overrides or {})
+        self.dataframe.loc[new_index] = blank_row
+        return self.row_id_for_index(new_index)
+
+    def add_rows(self, other_dataframe):
+        """
+        Bulk-appends every row of `other_dataframe` (typically another
+        fully cleaned/sourced BOM, e.g. from uploading a second file
+        while a working BOM already exists) onto this canonical
+        DataFrame, reindexed so the new rows never collide with existing
+        row_ids. Columns are unioned (via pandas reindex), so this
+        tolerates the two DataFrames not having identical column sets
+        (e.g. one has sourcing columns from a completed run, the other
+        doesn't) rather than requiring an exact schema match. Returns the
+        new rows' row_ids.
+
+        Unlike update_row()/add_row(), this necessarily replaces
+        self.dataframe with a new object (pandas has no in-place bulk
+        append) -- safe here because every reader in this codebase reads
+        active_bom_state.dataframe fresh at call time rather than caching
+        a separate reference to the old object.
+        """
+        if other_dataframe is None or other_dataframe.empty:
+            return []
+
+        start = 0 if self.dataframe.empty else int(self.dataframe.index.max()) + 1
+        all_columns = self.dataframe.columns.union(other_dataframe.columns, sort=False)
+        aligned_new = other_dataframe.reindex(columns=all_columns, fill_value="")
+        aligned_new.index = range(start, start + len(aligned_new))
+        aligned_existing = self.dataframe.reindex(columns=all_columns, fill_value="")
+
+        self.dataframe = pd.concat([aligned_existing, aligned_new])
+        return [self.row_id_for_index(index) for index in aligned_new.index]
+
     def update_row(self, row_id, updates):
         """
         The one shared operation through which a row in the canonical

@@ -10,8 +10,9 @@ SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
 
 from active_bom_state import ActiveBomState
+from bom_cleaner import STANDARD_COLUMNS
 from run_workspace import build_run_workspace, save_uploaded_file
-from workflow_runner import refresh_response_snapshot, run_bom_workflow
+from workflow_runner import refresh_response_snapshot, run_bom_workflow, start_manual_bom_workflow
 
 
 SAMPLE_BOM_CSV = (
@@ -186,6 +187,56 @@ class WorkflowRunnerContractTests(unittest.TestCase):
 
         self.assertEqual(response["bom_rows"], ["untouched"])
         self.assertNotIn("stale_after_mutation", response)
+
+
+class StartManualBomWorkflowTests(unittest.TestCase):
+    """
+    workflow_runner.start_manual_bom_workflow() -- lets Search start the
+    working BOM itself, with no upload required first (Search is the
+    default/primary intake method -- see app.py's
+    _add_search_result_to_working_bom()).
+    """
+
+    def test_creates_an_empty_but_valid_response_shape(self):
+        response = start_manual_bom_workflow()
+
+        self.assertTrue(response["success"])
+        self.assertIsInstance(response["_active_bom_state"], ActiveBomState)
+        self.assertEqual(response["_active_bom_state"].rows(), [])
+        self.assertEqual(response["bom_rows"], [])
+        self.assertEqual(response["review_items"], [])
+        self.assertEqual(response["results_summary"]["total_parts"], 0)
+        self.assertIn("run_id", response["run"])
+
+    def test_schema_matches_an_uploaded_runs_column_set_for_merging(self):
+        """
+        A manually-started working BOM and an uploaded one must share
+        identical DataFrame columns so ActiveBomState.add_rows() can
+        freely merge either direction (see
+        app.py's render_upload_intake()).
+        """
+        response = start_manual_bom_workflow()
+
+        active_bom_state = response["_active_bom_state"]
+        for column in STANDARD_COLUMNS:
+            self.assertIn(column, active_bom_state.dataframe.columns)
+        self.assertIn("customer_reference", active_bom_state.dataframe.columns)
+
+    def test_each_call_gets_a_distinct_run_id(self):
+        first = start_manual_bom_workflow()
+        second = start_manual_bom_workflow()
+
+        self.assertNotEqual(first["run"]["run_id"], second["run"]["run_id"])
+
+    def test_does_not_create_any_output_files(self):
+        """
+        Nothing to process yet -- no cleaned CSV/workbook/sourcing report
+        should be written merely by starting an empty working BOM.
+        """
+        response = start_manual_bom_workflow()
+
+        self.assertEqual(response["outputs"]["cleaned_csv"], "")
+        self.assertEqual(response["outputs"]["cleaned_workbook"], "")
 
 
 if __name__ == "__main__":

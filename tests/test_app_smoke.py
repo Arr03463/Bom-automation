@@ -80,16 +80,17 @@ class AppSmokeTests(unittest.TestCase):
 
     def test_navigating_to_component_search_has_no_exceptions(self):
         """
-        Component Search is an embedded expander on the main AutoBOM page
-        (not a separate top-level nav destination or a tab) -- simply
-        loading the default "AutoBOM" page is enough to exercise it.
+        Search is the default/primary way to add parts, always visible
+        at the top of the main AutoBOM page (not a separate top-level
+        nav destination, tab, or expander) -- simply loading the default
+        "AutoBOM" page is enough to exercise it.
         """
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
         at.run()
 
         self.assertEqual(len(at.exception), 0)
-        expander_labels = [exp.label for exp in at.expander]
-        self.assertIn("🔍 Search Components", expander_labels)
+        text_input_labels = [t.label for t in at.text_input]
+        self.assertIn("MPN, manufacturer, or keywords", text_input_labels)
 
     def test_injected_run_result_renders_results_workspace(self):
         result = self._run_with_review_row()
@@ -232,22 +233,52 @@ class AppSmokeTests(unittest.TestCase):
         warning_texts = [w.value for w in at.warning]
         self.assertTrue(any("regenerated" in text for text in warning_texts))
 
-    def test_new_run_resets_run_scoped_session_state(self):
+    def test_first_upload_with_no_existing_run_creates_a_fresh_run(self):
         """
-        Exercises the real "Run BOM Automation" button handler (not a
-        hand-simulated version of reset_run_scoped_session_state()) via
-        AppTest's file_uploader.upload(), with sourcing/PartsBox turned
-        off so the second run makes no live vendor calls.
+        The common/simple case: uploading a file when NO working BOM
+        exists yet (fresh session, or Search never added anything) still
+        creates a new run exactly as before -- run_bom_workflow() itself
+        is unchanged; only how app.py decides replace-vs-merge is new
+        (see render_upload_intake()).
+        """
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.run()
+
+        for checkbox in at.checkbox:
+            if checkbox.label in ("Run PartsBox", "Run supplier sourcing"):
+                checkbox.set_value(False)
+        at.file_uploader[0].upload("bom.csv", REVIEW_BOM_CSV.encode("utf-8"), "text/csv")
+        at.run()
+
+        next(b for b in at.button if b.label == "Process Upload").click()
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        current_run = at.session_state["current_run"]
+        self.assertIsNotNone(current_run)
+        self.assertEqual(len(current_run["_active_bom_state"].rows()), 1)
+
+    def test_uploading_while_a_working_bom_exists_merges_instead_of_replacing(self):
+        """
+        Per the unified Search+Upload intake correction: uploading a
+        second file while a working BOM already exists (started here via
+        a previous upload; equally applies if it had been started via
+        Search) merges its rows into the SAME canonical ActiveBomState/
+        run instead of discarding what's already there -- proven by the
+        first BOM's open review panel/filter state surviving, which
+        reset_run_scoped_session_state() would have cleared if this had
+        replaced current_run instead of merging into it.
         """
         result_a = self._run_with_review_row()
         row_id_a = result_a["_active_bom_state"].rows()[0]["row_id"]
+        original_run_id = result_a["run"]["run_id"]
 
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
         at.session_state["current_run"] = result_a
         at.run()
 
         # Open a review row's replacement panel and set a results filter,
-        # simulating mid-review state from the first run.
+        # simulating mid-review state from the first BOM.
         next(b for b in at.button if b.label == "Find Replacement").click()
         at.run()
         at.session_state[f"replacement_results_{row_id_a}"] = [{"source": "Mouser", "mpn": "X"}]
@@ -259,20 +290,24 @@ class AppSmokeTests(unittest.TestCase):
         for checkbox in at.checkbox:
             if checkbox.label in ("Run PartsBox", "Run supplier sourcing"):
                 checkbox.set_value(False)
-        at.file_uploader[0].upload("bom2.csv", REVIEW_BOM_CSV.encode("utf-8"), "text/csv")
+        at.file_uploader[0].upload("bom2.csv", CLEAN_BOM_CSV.encode("utf-8"), "text/csv")
         at.run()
 
-        next(b for b in at.button if b.label == "Run BOM Automation").click()
+        next(b for b in at.button if b.label == "Process Upload").click()
         at.run()
 
         self.assertEqual(len(at.exception), 0)
-        self.assertIsNone(at.session_state["selected_review_row_id"])
-        self.assertEqual(at.session_state["results_search"], "")
-        self.assertNotIn(f"replacement_results_{row_id_a}", at.session_state)
-        # A genuinely new run replaced current_run.
-        self.assertNotEqual(
-            at.session_state["current_run"]["run"]["run_id"], result_a["run"]["run_id"]
-        )
+        # Same run/canonical state -- merged in place, not replaced.
+        self.assertEqual(at.session_state["current_run"]["run"]["run_id"], original_run_id)
+        self.assertIs(at.session_state["current_run"]["_active_bom_state"], result_a["_active_bom_state"])
+        # Review state from the FIRST BOM survives -- proves this was a
+        # merge, not a reset_run_scoped_session_state() replacement.
+        self.assertEqual(at.session_state["selected_review_row_id"], row_id_a)
+        self.assertEqual(at.session_state["results_search"], "some search text")
+        self.assertIn(f"replacement_results_{row_id_a}", at.session_state)
+        # Both the original review row and the newly uploaded row(s) are present.
+        all_mpns = {row.get("mpn") for row in result_a["_active_bom_state"].rows()}
+        self.assertIn("RC0603FR-0710KL", all_mpns)
 
 
 def _lookup_result(**overrides):

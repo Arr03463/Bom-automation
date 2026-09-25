@@ -4,8 +4,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+import pandas as pd
+
 from active_bom_state import ActiveBomState
 from bom_cleaner import (
+    STANDARD_COLUMNS,
     apply_project_quantities,
     build_output_paths,
     export_clean_bom,
@@ -1047,5 +1050,49 @@ def run_bom_workflow(
             response["artifact_status"]["run_summary"] = STATUS_CURRENT
         except Exception:
             response["artifact_status"]["run_summary"] = STATUS_FAILED
+
+    return response
+
+
+def start_manual_bom_workflow(run_id=None):
+    """
+    Creates an empty, schema-correct working BOM for when a part is
+    added via Search before any file has been uploaded -- Search is the
+    default/primary intake method and must not require an upload first.
+    Uses bom_cleaner.STANDARD_COLUMNS (imported, not duplicated) so a BOM
+    started this way and a BOM started by uploading a file always share
+    identical DataFrame columns and can be freely merged later (see
+    ActiveBomState.add_rows(), used when a file is uploaded after parts
+    were already added manually).
+
+    Deliberately does nothing else: no PartsBox project/storage, no
+    sourcing, no exports -- there is nothing to process yet. The first
+    row (and its sourcing/PartsBox match) is added by the caller via
+    ActiveBomState.add_row() + review_actions.apply_replacement(), the
+    exact same seam Find Replacement already uses, not a second
+    "manually added row" pipeline.
+    """
+    response = _empty_result()
+    run_id = run_id or new_run_id()
+
+    response["run"] = {
+        "run_id": run_id,
+        "project_name": "",
+        "build_quantity": 1,
+        "source_file_name": "(manually added parts)",
+    }
+    response["success"] = True
+    response["messages"].append(
+        "Started a new working BOM from Search. Add parts, or upload a BOM file to add more."
+    )
+
+    empty_bom = pd.DataFrame(columns=STANDARD_COLUMNS).astype(object)
+    active_bom_state = ActiveBomState(empty_bom, run_id)
+    active_bom_state.dataframe["customer_reference"] = ""
+
+    response["_active_bom_state"] = active_bom_state
+    response["bom_rows"] = []
+    response["review_items"] = []
+    response["results_summary"] = active_bom_state.summary_counts()
 
     return response

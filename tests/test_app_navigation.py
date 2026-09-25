@@ -1,16 +1,15 @@
 """
 Streamlit UI tests for the AutoBOM/PartsBox Inventory information
 architecture (see render_autobom_workflow_page() in app.py): top-level
-navigation is just ["AutoBOM", "PartsBox Inventory"] -- Run BOM, Results/
-Needs Review, Customer Reference, and Purchasing Handoff are sections of
-one continuous, vertically-flowing AutoBOM page, NOT tabs (an earlier
-version of this page used top-level tabs for these; that still separated
-them into feeling like different destinations, so they were recomposed
-as plain vertical sections instead). Component Search is an embedded
-tool (inside a "Search Components" expander) available on the same page
-regardless of BOM state. Uses streamlit.testing.v1.AppTest (see
-tests/test_app_smoke.py's module docstring for the patch-target gotcha
-this file follows).
+navigation is just ["AutoBOM", "PartsBox Inventory"] -- Search+Upload
+(the unified "Add Parts" intake), BOM Configuration (Customer Reference
+nested inside), Results/Needs Review, and Purchasing Handoff are
+sections of one continuous, vertically-flowing AutoBOM page, NOT tabs
+and NOT "Upload page, then Search page, then Customer Reference page".
+Search and Upload are two intake methods for the SAME canonical working
+BOM -- see the UnifiedIntakeTests class below. Uses
+streamlit.testing.v1.AppTest (see tests/test_app_smoke.py's module
+docstring for the patch-target gotcha this file follows).
 """
 
 import shutil
@@ -99,28 +98,33 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
             self.assertNotIn(stale_tab_name, tab_labels)
         self.assertTrue(any(label.startswith("Needs Review") for label in tab_labels))
 
-    def test_run_bom_upload_widget_is_present_on_main_workflow_page(self):
+    def test_upload_widget_is_present_on_main_workflow_page(self):
+        """
+        Upload is the SECONDARY intake method, beside Search -- still
+        present and functional, just no longer the dominant first thing
+        on the page (see render_upload_intake()).
+        """
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
         at.run()
 
         self.assertEqual(len(at.file_uploader), 1)
-        self.assertEqual(at.file_uploader[0].label, "Upload BOM")
 
-    def test_component_search_is_embedded_and_visible_without_any_bom_run(self):
+    def test_search_is_embedded_and_visible_without_any_bom_run(self):
         """
-        Component Search is a general-purpose tool independent of any
-        BOM run (unchanged from before this pass) -- it must render even
-        when current_run is None, inside its own expander, not gated
-        behind Run BOM having produced a result.
+        Search is the PRIMARY/default way to add parts -- it must render
+        even when current_run is None, directly on the page (not gated
+        behind Upload having produced a result, and not hidden inside an
+        expander the way the old standalone "Component Search" tool
+        was).
         """
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
         at.run()
 
         self.assertEqual(len(at.exception), 0)
-        expander_labels = [exp.label for exp in at.expander]
-        self.assertIn("🔍 Search Components", expander_labels)
         subheaders = [el.value for el in at.subheader]
-        self.assertIn("Component Search", subheaders)
+        self.assertIn("Add Parts", subheaders)
+        text_input_labels = [t.label for t in at.text_input]
+        self.assertIn("MPN, manufacturer, or keywords", text_input_labels)
 
     def test_customer_reference_is_reachable_without_a_separate_top_level_page(self):
         result = self._run()
@@ -215,6 +219,169 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
 
         self.assertLess(cref_index, results_index)
         self.assertLess(results_index, purchasing_index)
+
+
+class UnifiedIntakeTests(unittest.TestCase):
+    """
+    "AutoBOM Intake + BOM Configuration UI Correction": Search is the
+    default/primary intake method and starts the working BOM itself if
+    none exists yet (workflow_runner.start_manual_bom_workflow()); Upload
+    is the secondary side option. Both feed the exact same canonical
+    ActiveBomState -- see render_add_parts_section() in app.py. Mocks
+    review_actions.MouserClient/DigiKeyClient (as
+    tests/test_app_smoke.py's module docstring explains) so Add to BOM
+    never makes a live vendor call in these tests.
+    """
+
+    def setUp(self):
+        self.temp_root = Path(tempfile.mkdtemp(prefix="autobom_intake_test_"))
+        self.addCleanup(shutil.rmtree, self.temp_root, ignore_errors=True)
+
+    @staticmethod
+    def _search_result(mpn="ABC123", source="PartsBox"):
+        return {
+            "source": source,
+            "manufacturer": "Yageo",
+            "mpn": mpn,
+            "description": "10k Resistor",
+            "category": "",
+            "package": "",
+            "stock": None,
+            "supplier_part_number": "",
+            "unit_price": "",
+            "lifecycle_status": "",
+            "characteristics": {},
+            "raw": {},
+            "stock_sufficient": None,
+        }
+
+    def _search_and_add(self, at, candidate, qty=3):
+        with patch("component_lookup.search_components") as mock_search:
+            mock_search.return_value = [candidate]
+            next(b for b in at.button if b.key == "component_search_button").click()
+            at.run()
+
+        next(n for n in at.number_input if n.key == "add_to_bom_qty_0").set_value(qty)
+        at.run()
+
+        with patch("review_actions.MouserClient") as mock_mouser_cls, patch(
+            "review_actions.DigiKeyClient"
+        ) as mock_digikey_cls:
+            mock_mouser_cls.return_value.find_best_match_for_row.return_value = None
+            mock_digikey_cls.return_value.find_best_match_for_row.return_value = None
+            next(b for b in at.button if b.key == "add_to_bom_button_0").click()
+            at.run()
+
+        return at
+
+    def _upload(self, at, csv_text, filename="bom.csv"):
+        for checkbox in at.checkbox:
+            if checkbox.label in ("Run PartsBox", "Run supplier sourcing"):
+                checkbox.set_value(False)
+        at.file_uploader[0].upload(filename, csv_text.encode("utf-8"), "text/csv")
+        at.run()
+        next(b for b in at.button if b.label == "Process Upload").click()
+        at.run()
+        return at
+
+    def test_search_add_creates_a_line_in_the_working_bom_with_no_prior_upload(self):
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.run()
+        self.assertIsNone(at.session_state["current_run"])
+
+        self._search_and_add(at, self._search_result())
+
+        self.assertEqual(len(at.exception), 0)
+        current_run = at.session_state["current_run"]
+        self.assertIsNotNone(current_run)
+        rows = current_run["_active_bom_state"].rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["mpn"], "ABC123")
+        self.assertEqual(rows[0]["required_qty"], 3)
+
+    def test_search_can_add_a_part_after_an_upload(self):
+        workspace = build_run_workspace(runs_root=self.temp_root)
+        source_path = save_uploaded_file(workspace["input_dir"], "bom.csv", CLEAN_BOM_CSV.encode("utf-8"))
+        result = run_bom_workflow(
+            source_file_path=source_path,
+            build_quantity=5,
+            project_name="",
+            run_partsbox=False,
+            run_sourcing=False,
+            run_mouser_cart=False,
+            run_digikey_mylist=False,
+            run_id=workspace["run_id"],
+            output_folder=str(workspace["output_dir"]),
+        )
+        active_bom_state = result["_active_bom_state"]
+        self.assertEqual(len(active_bom_state.rows()), 1)
+
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.session_state["current_run"] = result
+        at.run()
+
+        self._search_and_add(at, self._search_result(mpn="EXTRACONN"))
+
+        self.assertEqual(len(at.exception), 0)
+        # Same canonical state -- Search appended to it, did not replace it.
+        self.assertIs(at.session_state["current_run"]["_active_bom_state"], active_bom_state)
+        mpns = {row["mpn"] for row in active_bom_state.rows()}
+        self.assertEqual(mpns, {"RC0603FR-0710KL", "EXTRACONN"})
+
+    def test_upload_can_add_parts_after_manual_search_additions(self):
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.run()
+
+        self._search_and_add(at, self._search_result(mpn="MANUALPART"))
+        self.assertEqual(len(at.exception), 0)
+        manual_run_id = at.session_state["current_run"]["run"]["run_id"]
+        active_bom_state = at.session_state["current_run"]["_active_bom_state"]
+        self.assertEqual(len(active_bom_state.rows()), 1)
+
+        self._upload(at, CLEAN_BOM_CSV)
+
+        self.assertEqual(len(at.exception), 0)
+        # The manually-started run/state survived -- upload merged into it.
+        self.assertEqual(at.session_state["current_run"]["run"]["run_id"], manual_run_id)
+        self.assertIs(at.session_state["current_run"]["_active_bom_state"], active_bom_state)
+        mpns = {row["mpn"] for row in active_bom_state.rows()}
+        self.assertEqual(mpns, {"MANUALPART", "RC0603FR-0710KL"})
+
+    def test_customer_reference_configurable_from_bom_configuration_area(self):
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.run()
+        self._search_and_add(at, self._search_result())
+
+        subheaders = [el.value for el in at.subheader]
+        bomcfg_index = subheaders.index("BOM Configuration")
+        cref_index = subheaders.index("Customer Reference")
+        self.assertLess(bomcfg_index, cref_index)
+        # Appears exactly once, inside BOM Configuration -- not a second,
+        # independent section elsewhere on the page.
+        self.assertEqual(subheaders.count("Customer Reference"), 1)
+
+    def test_no_vendor_artifact_created_by_search_or_upload(self):
+        """
+        Section 17's critical side-effect rule -- adding parts via Search
+        and uploading a file must never themselves create a Mouser cart
+        or DigiKey MyList. Only an explicit Regenerate Purchasing click
+        may (see tests/test_app_smoke.py's PurchasingPageSmokeTests for
+        that boundary, and test_customer_reference_ui.py's
+        test_assigning_reference_creates_no_vendor_calls for the same
+        guarantee around editing a Customer Reference).
+        """
+        with patch("workflow_runner.create_mouser_cart_from_bom") as mock_mouser, patch(
+            "workflow_runner.create_digikey_mylist_from_bom"
+        ) as mock_digikey:
+            at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+            at.run()
+            self._search_and_add(at, self._search_result())
+            self._upload(at, CLEAN_BOM_CSV)
+
+            self.assertEqual(len(at.exception), 0)
+
+        mock_mouser.assert_not_called()
+        mock_digikey.assert_not_called()
 
 
 class PartsBoxInventoryTopLevelTests(unittest.TestCase):

@@ -7,33 +7,65 @@ Audience: a teammate using AutoBOM day-to-day, not the developer.
 The sidebar has exactly two top-level destinations:
 
 - **AutoBOM** -- one continuous workspace, not a set of separate
-  pages/tabs. Upload/configure your BOM at the top, then scroll down
-  through Customer Reference, the working BOM/results, an embedded
-  Component Search tool, and Purchasing Handoff -- all on the same page,
-  all reading/writing the same BOM. You never navigate away and lose
-  your place.
+  pages/tabs. Add parts at the top (via Search or Upload -- see below),
+  then scroll down through BOM Configuration (with Customer Reference),
+  the working BOM/results, and Purchasing Handoff -- all on the same
+  page, all reading/writing the same BOM. You never navigate away and
+  lose your place.
 - **PartsBox Inventory** -- a separate area for browsing/searching the
   full PartsBox catalog independent of any specific BOM run (see below).
 
-## Run BOM
+## Add Parts
 
-1. Upload your BOM as CSV or XLSX.
-2. Enter a build quantity and a PartsBox project name (project/storage
-   names are shared -- AutoBOM creates or reuses a same-name PartsBox
-   project + storage location, tagged `production`).
-3. Choose which suppliers to source against (Mouser/DigiKey) and whether
-   to create a Mouser cart / DigiKey MyList automatically as part of this
-   run, then click **Run BOM Automation**.
-4. Review the messages/warnings, then scroll down for Customer Reference,
-   Results, and Purchasing Handoff -- all on this same page.
+Two ways to add parts to your working BOM -- use either one, or both,
+in any order:
 
-## Customer Reference
+- **Search** (the default/primary way) -- reuses the same search engine
+  used everywhere else in AutoBOM. PartsBox is searched by default;
+  enable Mouser/DigiKey for live supplier results. Enter a quantity next
+  to a result and click **Add to BOM** to add that one line. Nothing is
+  added automatically just by searching. If you haven't uploaded
+  anything yet, adding your first part this way starts your working BOM.
+- **Upload** (the secondary option, beside Search) -- upload a BOM as
+  CSV or XLSX. Open **Upload settings** to set the build quantity,
+  PartsBox project name/description, and which suppliers to source
+  against, then click **Process Upload**.
+  - If you haven't added anything yet, this becomes your working BOM
+    (same behavior as before).
+  - If you already have a working BOM (from Search, or an earlier
+    upload), this **merges** the new file's lines into it instead of
+    replacing what's already there -- nothing you've already added or
+    configured is discarded.
+
+Both methods feed the exact same working BOM: quantity handling,
+PartsBox matching, supplier sourcing, Customer Reference, Needs Review,
+and purchasing all treat a part the same way regardless of whether it
+was searched-and-added or came from an uploaded file.
+
+Adding parts here never creates a Mouser cart or DigiKey MyList -- see
+Purchasing Handoff below for that.
+
+## BOM Configuration
+
+Once your working BOM has at least one part, this section appears with
+settings for it:
+
+- **Build quantity** -- edit and click **Apply Build Quantity** to
+  recompute required quantities for every line that came from an
+  uploaded file (quantity × build quantity). Lines added manually via
+  Search have their required quantity set directly when added, so this
+  does not change them.
+- **PartsBox project** -- shown for reference; it's set from Upload's
+  settings when a BOM file is processed. Parts added via Search alone
+  are not synced to PartsBox.
+- **Customer Reference** -- see below. It's part of configuring the BOM,
+  not a separate purchasing-only step.
+
+### Customer Reference
 
 Sets the Customer Reference / Customer Part Number that flows into the
-Mouser cart, DigiKey MyList, and export files for every BOM line. This
-section appears right after Run BOM, since it's part of configuring the
-BOM, not a separate purchasing-only step. Three ways to generate one, all
-from Yank's approved naming convention:
+Mouser cart, DigiKey MyList, and export files for every BOM line. Three
+ways to generate one, all from Yank's approved naming convention:
 
 - **Project / PCB** -- pick an approved Project code and one or more PCB
   codes (e.g. `PRJ-ATH-DAB`).
@@ -51,7 +83,7 @@ they'd already been generated under the old reference).
 
 ## Results / Needs Review
 
-Below Customer Reference:
+Below BOM Configuration:
 
 - Summary metrics (Total Parts / PartsBox / Mouser / DigiKey / Needs
   Review).
@@ -65,26 +97,16 @@ For each item needing review:
 
 1. **Retry Exact Part** -- re-attempts the same MPN/manufacturer lookup.
    Use this first if you suspect a transient API issue.
-2. **Find Replacement** -- opens the same shared search Component Search
-   uses, prefilled with what AutoBOM already knows about the part, right
-   there inline under that BOM line. Search Mouser/DigiKey, review
-   candidates, and select one. AutoBOM updates the BOM row and re-runs
-   sourcing for it automatically.
+2. **Find Replacement** -- opens the same shared search engine Add Parts'
+   Search uses, prefilled with what AutoBOM already knows about the
+   part, right there inline under that BOM line. Search Mouser/DigiKey,
+   review candidates, and select one. AutoBOM updates the BOM row and
+   re-runs sourcing for it automatically.
 3. **Check PartsBox** -- last-resort fallback lookup against PartsBox
    inventory, for when no purchasable replacement is available.
 
 Approving a replacement is always your decision -- AutoBOM will not
 silently substitute a part.
-
-## Component Search
-
-A general-purpose search independent of any specific BOM run, embedded on
-the same AutoBOM page inside a **Search Components** expander (it's a
-tool available at any time, not a stage that only appears after a BOM
-run). PartsBox is searched by default; enable Mouser/DigiKey to include
-live supplier results. Use the dynamic filters (only shown when the
-current results actually have that data) to narrow by category, package,
-and parametric ranges (voltage, tolerance, etc.).
 
 ## Purchasing Handoff
 
@@ -133,8 +155,9 @@ freshness. A file is disabled for download when it's stale (the BOM
 changed since it was generated) or when its last generation attempt
 failed -- **other files being current does not re-enable it**. Two files
 (the multi-sheet cleaned workbook and the PartsBox unmatched CSV) are
-never automatically regenerated after a BOM change; re-run BOM Automation
-if you need a current copy of either.
+never automatically regenerated after a BOM change; upload the BOM again
+(as a fresh working BOM, or merged into the current one) if you need a
+current copy of either.
 
 ## PartsBox Inventory
 
@@ -147,11 +170,12 @@ shows which storage locations carry the `production` tag.
 This page itself is read-only by design: opening it, searching, or
 filtering never writes anything to PartsBox. That's a property of this
 *page*, not a limitation of AutoBOM's PartsBox integration as a whole --
-AutoBOM does perform real PartsBox writes elsewhere, as part of running a
-BOM (creating/reusing the project and storage location, and syncing BOM
-entries into it -- see the Run BOM section above). Those writes only
-happen from an explicit **Run BOM Automation** click, never from viewing
-this page.
+AutoBOM does perform real PartsBox writes elsewhere, as part of
+processing an uploaded BOM file (creating/reusing the project and
+storage location, and syncing BOM entries into it -- see Add Parts
+above). Those writes only happen from an explicit **Process Upload**
+click, never from viewing this page, and never from adding parts via
+Search alone.
 
 ## What NOT to do
 
@@ -165,3 +189,8 @@ this page.
   retention policy).
 - Don't paste a Mouser or DigiKey secret/token into any AutoBOM field --
   none of AutoBOM's own UI ever asks for one.
+- Parts added via Search alone aren't synced to a PartsBox project --
+  there's no "sync to PartsBox now" action for a Search-only working
+  BOM yet. If you need PartsBox entries for those parts, include them in
+  an uploaded file (even a small one) so Upload's PartsBox step covers
+  them.

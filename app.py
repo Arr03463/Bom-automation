@@ -14,6 +14,7 @@ load_dotenv(PROJECT_ROOT / ".env", override=True)
 if str(SRC_FOLDER) not in sys.path:
     sys.path.insert(0, str(SRC_FOLDER))
 
+from bom_cleaner import apply_project_quantities  # noqa: E402
 from component_lookup import (  # noqa: E402
     LookupQuery,
     build_query_from_bom_row,
@@ -46,6 +47,7 @@ from workflow_runner import (  # noqa: E402
     refresh_response_snapshot,
     regenerate_purchasing,
     run_bom_workflow,
+    start_manual_bom_workflow,
 )
 
 
@@ -172,40 +174,223 @@ def show_download(label, file_path, disabled=False):
         )
 
 
-def render_run_bom_section():
+def render_add_parts_section():
     """
-    Top section of the single-page AutoBOM workspace: upload, options,
-    start. Deliberately stops after showing run messages -- the
-    processed results table, Customer Reference, and downloads live in
-    their own sections further down the same page (see
-    render_autobom_workflow_page()), not on a separate tab/page.
+    The unified BOM intake area: Search and Upload are two alternative
+    ways to populate the SAME canonical working BOM (ActiveBomState),
+    never two parallel BOM states -- see _add_search_result_to_working_bom()
+    and render_upload_intake()'s merge-vs-replace logic, both of which
+    write through the one shared active_bom_state, however it was
+    started. Search is shown first/larger since it's the default intake
+    method (works with no upload at all); Upload sits beside it as the
+    secondary option.
     """
-    uploaded_file = st.file_uploader("Upload BOM", type=["csv", "xlsx"])
+    st.subheader("Add Parts")
 
-    left, right = st.columns(2)
+    left, right = st.columns([2, 1])
     with left:
-        build_quantity = st.number_input("Build quantity", min_value=1, value=1, step=1)
-        project_name = st.text_input("PartsBox project name")
-        project_description = st.text_input("Project description")
-
+        render_component_search_intake()
     with right:
-        run_partsbox = st.checkbox("Run PartsBox", value=True)
-        run_sourcing = st.checkbox("Run supplier sourcing", value=True)
-        use_mouser_sourcing = st.checkbox("Use Mouser sourcing", value=True, disabled=not run_sourcing)
-        use_digikey_sourcing = st.checkbox("Use DigiKey sourcing", value=True, disabled=not run_sourcing)
-        run_mouser_cart = st.checkbox("Create Mouser cart", value=False)
-        run_digikey_mylist = st.checkbox("Create DigiKey MyList", value=False)
+        render_upload_intake()
 
-    if st.button("Run BOM Automation", type="primary"):
+    current_run = st.session_state.current_run
+    if current_run is not None:
+        st.divider()
+        render_run_messages(current_run)
+
+
+def render_component_search_intake():
+    """
+    The PRIMARY way to add parts to the working BOM. Reuses the exact
+    same component_lookup.search_components()/LookupQuery/record_filter
+    machinery Needs Review's Find Replacement and PartsBox Inventory's
+    browse both use -- one search/filter implementation in this app, not
+    a second one for intake. Preserves PartsBox-by-default / optional
+    Mouser/DigiKey / manufacturer filter / dynamic facets from the
+    general Component Search this replaces.
+
+    Nothing is added automatically just by searching -- each result gets
+    its own quantity input and an explicit "Add to BOM" button (see
+    render_add_to_bom_results()).
+    """
+    st.markdown("#### Search")
+    st.caption("PartsBox is searched by default. Enable Mouser/DigiKey to include live supplier results.")
+
+    search_cols = st.columns([3, 1])
+    with search_cols[0]:
+        search_text = st.text_input("MPN, manufacturer, or keywords", key="component_search_text")
+    with search_cols[1]:
+        manufacturer_filter = st.text_input("Manufacturer (optional)", key="component_search_manufacturer")
+
+    source_cols = st.columns(3)
+    with source_cols[0]:
+        use_partsbox = st.checkbox("PartsBox", value=True, key="component_search_partsbox")
+    with source_cols[1]:
+        use_mouser = st.checkbox("Mouser", value=False, key="component_search_mouser")
+    with source_cols[2]:
+        use_digikey = st.checkbox("DigiKey", value=False, key="component_search_digikey")
+
+    if st.button("Search", key="component_search_button"):
+        sources = {
+            source
+            for source, enabled in (
+                ("partsbox", use_partsbox),
+                ("mouser", use_mouser),
+                ("digikey", use_digikey),
+            )
+            if enabled
+        }
+        if not sources:
+            # An explicitly empty source set must stay empty -- never
+            # silently fall back to PartsBox just because every checkbox
+            # is off.
+            st.warning("Select at least one source.")
+            st.session_state.lookup_results = []
+        else:
+            query = LookupQuery(
+                mpn=search_text,
+                keywords=search_text,
+                manufacturer=manufacturer_filter,
+                sources=frozenset(sources),
+            )
+            with st.spinner("Searching..."):
+                st.session_state.lookup_results = search_components(query)
+
+    results = st.session_state.lookup_results
+    if not results:
+        st.info("No results yet. Enter a search and click Search.")
+        return
+
+    filter_cols = st.columns(2)
+    with filter_cols[0]:
+        st.selectbox("Filter by source", _options(results, "source"), key="component_search_source_filter")
+    with filter_cols[1]:
+        st.selectbox(
+            "Stock", ["All", "In Stock", "Out of Stock", "Unknown"], key="component_search_stock_filter"
+        )
+
+    dynamic_filters = render_dynamic_facet_filters(results, key_prefix="component_search")
+    filters = {
+        "source": st.session_state.component_search_source_filter,
+        "stock": st.session_state.component_search_stock_filter,
+        **dynamic_filters,
+    }
+
+    filtered = search_and_filter(results, filters=filters)
+    render_add_to_bom_results(filtered)
+
+
+def render_add_to_bom_results(results):
+    if not results:
+        st.info("No results match the current filters.")
+        return
+
+    for index, candidate in enumerate(results):
+        cols = st.columns([5, 1, 2])
+        with cols[0]:
+            stock_display = candidate.get("stock") if candidate.get("stock") is not None else "Unknown"
+            st.write(
+                f"**{candidate.get('source')}** · {candidate.get('mpn')} · "
+                f"{candidate.get('manufacturer') or 'unknown manufacturer'} · "
+                f"{candidate.get('description') or ''} · stock: {stock_display} · "
+                f"supplier P/N: {candidate.get('supplier_part_number') or '—'}"
+            )
+        with cols[1]:
+            qty = st.number_input(
+                "Qty", min_value=1, value=1, step=1, key=f"add_to_bom_qty_{index}", label_visibility="collapsed"
+            )
+        with cols[2]:
+            if st.button("Add to BOM", key=f"add_to_bom_button_{index}"):
+                with st.spinner("Adding to working BOM..."):
+                    _add_search_result_to_working_bom(candidate, int(qty))
+                st.success(f"Added {candidate.get('mpn') or '(missing MPN)'} to the working BOM.")
+                # Deliberately no st.rerun() -- this button is ABOVE
+                # BOM Configuration/Results in page order, and every
+                # section below it (including render_results_workspace()'s
+                # results_search text_input) still renders normally
+                # later in this SAME script pass, reflecting the new row.
+                # An explicit rerun here would abort the script before
+                # ever reaching those widgets, which Streamlit then
+                # treats as "not present this run" and resets -- silently
+                # wiping out things like an already-typed results_search
+                # filter (confirmed via a live repro against this exact
+                # page/button ordering).
+
+
+def _add_search_result_to_working_bom(candidate, required_qty):
+    """
+    Search is allowed to start the working BOM itself, with no upload
+    required first (workflow_runner.start_manual_bom_workflow() creates
+    an empty, schema-correct one) -- Search is the default/primary
+    intake method. Appends a blank line (ActiveBomState.add_row()) with
+    just the operator-entered quantity, then reuses
+    review_actions.apply_replacement() UNCHANGED to set the component
+    identity and run it through the exact same Mouser-first/DigiKey-
+    fallback sourcing decision (and PartsBox match recording, if
+    discovered via PartsBox) Find Replacement already uses -- there is
+    no second "manually added part" sourcing path. Never itself creates
+    a Mouser cart or DigiKey MyList.
+    """
+    if st.session_state.current_run is None:
+        st.session_state.current_run = start_manual_bom_workflow()
+        reset_run_scoped_session_state()
+
+    current_run = st.session_state.current_run
+    active_bom_state = current_run["_active_bom_state"]
+
+    row_id = active_bom_state.add_row({"required_qty": required_qty})
+    apply_replacement(active_bom_state, row_id, candidate)
+    refresh_response_snapshot(current_run)
+
+
+def render_upload_intake():
+    """
+    The SECONDARY way to add parts to the working BOM, beside Search.
+    Both feed the exact same canonical ActiveBomState. Uploading while a
+    working BOM already exists (started via Search, or a previous
+    upload) MERGES this file's cleaned/sourced rows into it
+    (ActiveBomState.add_rows()) instead of discarding what's already
+    there; uploading as the very first action still creates a new run
+    exactly as before -- run_bom_workflow() itself is unchanged either
+    way.
+
+    Deliberately offers no "Create Mouser cart" / "Create DigiKey
+    MyList" option -- those are Purchasing Handoff actions now (see
+    render_purchasing_handoff_section()), not something that should
+    happen merely from configuring an intake upload.
+    """
+    st.markdown("#### Or upload a BOM file")
+    uploaded_file = st.file_uploader(
+        "CSV or XLSX -- click to browse or drag and drop",
+        type=["csv", "xlsx"],
+        key="upload_intake_file",
+    )
+
+    with st.expander("Upload settings"):
+        build_quantity = st.number_input(
+            "Build quantity", min_value=1, value=1, step=1, key="upload_build_quantity"
+        )
+        project_name = st.text_input("PartsBox project name", key="upload_project_name")
+        project_description = st.text_input("Project description", key="upload_project_description")
+        run_partsbox = st.checkbox("Run PartsBox", value=True, key="upload_run_partsbox")
+        run_sourcing = st.checkbox("Run supplier sourcing", value=True, key="upload_run_sourcing")
+        use_mouser_sourcing = st.checkbox(
+            "Use Mouser sourcing", value=True, disabled=not run_sourcing, key="upload_use_mouser_sourcing"
+        )
+        use_digikey_sourcing = st.checkbox(
+            "Use DigiKey sourcing", value=True, disabled=not run_sourcing, key="upload_use_digikey_sourcing"
+        )
+
+    if st.button("Process Upload", key="process_upload_button"):
         if uploaded_file is None:
-            st.error("Upload a CSV or XLSX BOM before running.")
+            st.error("Choose a CSV or XLSX BOM file before processing.")
         else:
             workspace = build_run_workspace()
             source_path = save_uploaded_file(
                 workspace["input_dir"], uploaded_file.name, uploaded_file.getbuffer()
             )
 
-            with st.spinner("Running BOM automation..."):
+            with st.spinner("Processing uploaded BOM..."):
                 result = run_bom_workflow(
                     source_file_path=source_path,
                     build_quantity=int(build_quantity),
@@ -213,26 +398,40 @@ def render_run_bom_section():
                     project_description=project_description,
                     run_partsbox=run_partsbox,
                     run_sourcing=run_sourcing,
-                    run_mouser_cart=run_mouser_cart,
-                    run_digikey_mylist=run_digikey_mylist,
+                    run_mouser_cart=False,
+                    run_digikey_mylist=False,
                     use_mouser_sourcing=run_sourcing and use_mouser_sourcing,
                     use_digikey_sourcing=run_sourcing and use_digikey_sourcing,
                     run_id=workspace["run_id"],
                     output_folder=str(workspace["output_dir"]),
                 )
 
-            # A new run replaces the session's active state outright --
-            # one canonical run per session, never two held side by side.
-            st.session_state.current_run = result
-            reset_run_scoped_session_state()
+            existing_run = st.session_state.current_run
+            existing_state = existing_run.get("_active_bom_state") if existing_run else None
+            new_state = result.get("_active_bom_state")
 
-    current_run = st.session_state.current_run
-    if current_run is None:
-        return
+            if existing_state is not None and new_state is not None:
+                # A working BOM already exists -- merge this file's
+                # rows into it rather than replacing current_run, so
+                # parts added via Search (or a previous upload) survive.
+                existing_state.add_rows(new_state.dataframe)
+                existing_run["messages"] = existing_run.get("messages", []) + result.get("messages", [])
+                existing_run["warnings"] = existing_run.get("warnings", []) + result.get("warnings", [])
+                existing_run["errors"] = existing_run.get("errors", []) + result.get("errors", [])
+                refresh_response_snapshot(existing_run)
+            else:
+                # Nothing to merge into -- this becomes the run, exactly
+                # as a plain upload always has.
+                st.session_state.current_run = result
+                reset_run_scoped_session_state()
 
-    st.divider()
-    render_run_messages(current_run)
-    st.caption("See Results / Needs Review and Purchasing Handoff further down this page.")
+            # Deliberately no st.rerun() -- see the matching comment in
+            # render_add_to_bom_results(). Everything below this point in
+            # the page (BOM Configuration, Results, Purchasing Handoff)
+            # still renders normally later in this SAME script pass and
+            # reflects the merged/replaced state; an explicit rerun here
+            # would abort the script before reaching those widgets and
+            # reset them.
 
 
 def render_run_messages(current_run):
@@ -518,74 +717,6 @@ def render_dynamic_facet_filters(results, key_prefix):
     return filters
 
 
-def render_component_search_section():
-    st.subheader("Component Search")
-    st.caption("PartsBox is searched by default. Enable Mouser/DigiKey to include live supplier results.")
-
-    search_cols = st.columns([3, 1])
-    with search_cols[0]:
-        search_text = st.text_input("MPN, manufacturer, or keywords", key="component_search_text")
-    with search_cols[1]:
-        manufacturer_filter = st.text_input("Manufacturer (optional)", key="component_search_manufacturer")
-
-    source_cols = st.columns(3)
-    with source_cols[0]:
-        use_partsbox = st.checkbox("PartsBox", value=True, key="component_search_partsbox")
-    with source_cols[1]:
-        use_mouser = st.checkbox("Mouser", value=False, key="component_search_mouser")
-    with source_cols[2]:
-        use_digikey = st.checkbox("DigiKey", value=False, key="component_search_digikey")
-
-    if st.button("Search", key="component_search_button"):
-        sources = {
-            source
-            for source, enabled in (
-                ("partsbox", use_partsbox),
-                ("mouser", use_mouser),
-                ("digikey", use_digikey),
-            )
-            if enabled
-        }
-        if not sources:
-            # An explicitly empty source set must stay empty -- never
-            # silently fall back to PartsBox just because every checkbox
-            # is off.
-            st.warning("Select at least one source.")
-            st.session_state.lookup_results = []
-        else:
-            query = LookupQuery(
-                mpn=search_text,
-                keywords=search_text,
-                manufacturer=manufacturer_filter,
-                sources=frozenset(sources),
-            )
-            with st.spinner("Searching..."):
-                st.session_state.lookup_results = search_components(query)
-
-    results = st.session_state.lookup_results
-    if not results:
-        st.info("No results yet. Enter a search and click Search.")
-        return
-
-    filter_cols = st.columns(2)
-    with filter_cols[0]:
-        st.selectbox("Filter by source", _options(results, "source"), key="component_search_source_filter")
-    with filter_cols[1]:
-        st.selectbox(
-            "Stock", ["All", "In Stock", "Out of Stock", "Unknown"], key="component_search_stock_filter"
-        )
-
-    dynamic_filters = render_dynamic_facet_filters(results, key_prefix="component_search")
-    filters = {
-        "source": st.session_state.component_search_source_filter,
-        "stock": st.session_state.component_search_stock_filter,
-        **dynamic_filters,
-    }
-
-    filtered = search_and_filter(results, filters=filters)
-    render_lookup_results_table(filtered)
-
-
 def render_lookup_results_table(results, show_stock_sufficiency=False):
     if not results:
         st.info("No results match the current filters.")
@@ -734,7 +865,14 @@ def _render_customer_reference_preview_and_apply(current_run, active_bom_state, 
     if st.button("Apply to All BOM Lines", key=f"{key_prefix}_apply_all", disabled=not result.valid):
         _apply_customer_reference_to_all(current_run, active_bom_state, result.value)
         st.success(f"Applied {result.value} to every BOM line.")
-        st.rerun()
+        # Deliberately no st.rerun() -- Customer Reference is now BOM
+        # Configuration, positioned before Results in page order (see
+        # render_bom_configuration_section()). Results (including its
+        # results_search text_input) still renders normally later in
+        # this SAME script pass, showing the newly applied reference; an
+        # explicit rerun here would abort the script before reaching it
+        # and reset it (see the matching comment in
+        # render_add_to_bom_results()).
 
 
 def _render_project_pcb_reference(current_run, active_bom_state):
@@ -906,7 +1044,12 @@ def _render_inventory_reference(current_run, active_bom_state):
                     # actions.
                     active_bom_state.update_row(row_id, {"customer_reference": result.value})
                     refresh_response_snapshot(current_run)
-                    st.rerun()
+                    st.success(f"Saved {result.value} for this line.")
+                    # Deliberately no st.rerun() -- same reasoning as
+                    # "Apply to All BOM Lines" above: this section is
+                    # positioned before Results in page order, and
+                    # Results still renders normally later in this SAME
+                    # pass.
 
 
 def _render_customer_reference_overrides(current_run, active_bom_state):
@@ -968,10 +1111,9 @@ def render_customer_reference_section(current_run, active_bom_state):
     """
     Customer Reference / Customer Part Number assignment (Yank naming
     convention, YT-SOP-00-01-A) -- feeds Mouser cart / DigiKey MyList /
-    export handoff, never an order. Part of configuring the BOM before
-    purchasing handoff, not a disconnected page -- it's the section
-    right after Run BOM on the single AutoBOM workspace page (see
-    render_autobom_workflow_page()).
+    export handoff, never an order. This is BOM configuration, not a
+    disconnected page -- called from within render_bom_configuration_section()
+    below, alongside build quantity and PartsBox project information.
     """
     st.subheader("Customer Reference")
     st.caption(
@@ -999,6 +1141,83 @@ def render_customer_reference_section(current_run, active_bom_state):
         _render_customer_reference_overrides(current_run, active_bom_state)
 
     _render_add_approved_code()
+
+
+def _apply_build_quantity(current_run, active_bom_state, new_build_quantity):
+    """
+    Recomputes required_qty using the exact same pure function
+    (bom_cleaner.apply_project_quantities()) Upload's initial processing
+    uses -- not a second quantity-math implementation -- then writes
+    each row's recomputed fields back through ActiveBomState.update_row(),
+    the one shared mutation seam. Never itself calls a vendor.
+
+    Only touches rows that actually have a qty_per_board (i.e. came from
+    an uploaded file): a row added manually via Search has no per-board
+    quantity to multiply -- its required_qty was entered directly at Add
+    time and must not be silently overwritten by a build-quantity
+    multiplier that doesn't apply to it.
+    """
+    recomputed = apply_project_quantities(active_bom_state.dataframe, int(new_build_quantity))
+    for row in active_bom_state.rows():
+        if not str(row.get("qty_per_board", "")).strip():
+            continue
+
+        row_id = row["row_id"]
+        index = active_bom_state.index_for_row_id(row_id)
+        active_bom_state.update_row(
+            row_id,
+            {
+                "build_quantity": recomputed.at[index, "build_quantity"],
+                "required_qty": recomputed.at[index, "required_qty"],
+                "status": recomputed.at[index, "status"],
+                "notes": recomputed.at[index, "notes"],
+            },
+        )
+
+    current_run["run"]["build_quantity"] = int(new_build_quantity)
+    refresh_response_snapshot(current_run)
+
+
+def render_bom_configuration_section(current_run, active_bom_state):
+    """
+    Build quantity, PartsBox project information, and Customer Reference
+    are settings for the parts already in the working BOM -- configured
+    after/beside the working parts list (see render_add_parts_section(),
+    which comes first), not before the operator has added anything.
+    """
+    st.subheader("BOM Configuration")
+
+    run_info = current_run.get("run", {})
+    cols = st.columns(2)
+    with cols[0]:
+        new_build_quantity = st.number_input(
+            "Build quantity",
+            min_value=1,
+            value=int(run_info.get("build_quantity") or 1),
+            step=1,
+            key="bomcfg_build_quantity",
+        )
+        if st.button("Apply Build Quantity", key="bomcfg_apply_build_quantity"):
+            _apply_build_quantity(current_run, active_bom_state, new_build_quantity)
+            st.success(f"Applied build quantity {new_build_quantity} to uploaded lines.")
+            # Deliberately no st.rerun() -- same reasoning as "Apply to
+            # All BOM Lines" above: Results still renders normally later
+            # in this SAME pass, reflecting the recomputed required_qty.
+    with cols[1]:
+        project_name = run_info.get("project_name") or ""
+        st.text_input(
+            "PartsBox project", value=project_name, disabled=True, key="bomcfg_project_name_display"
+        )
+        if project_name:
+            st.caption("PartsBox project used for this working BOM's uploaded parts.")
+        else:
+            st.caption(
+                "Set from Upload's settings when a BOM file is processed. Parts "
+                "added via Search alone are not synced to PartsBox."
+            )
+
+    st.divider()
+    render_customer_reference_section(current_run, active_bom_state)
 
 
 def render_purchasing_handoff_section():
@@ -1105,40 +1324,29 @@ def render_purchasing_handoff_section():
 
 def render_autobom_workflow_page():
     """
-    One continuous, vertically-flowing AutoBOM workspace -- NOT tabs.
-    Upload/configuration, Customer Reference, the working BOM/results
-    (with Needs Review actioned inline via expanders), an embedded
-    general Component Search tool, and Purchasing Handoff all appear as
-    sections on this single page, in the order an operator actually
-    works through a BOM. Every section reads/writes the same
-    st.session_state.current_run and its _active_bom_state, so
-    scrolling between sections never loses canonical BOM state. Each
-    section's own render function is unchanged from before this page
-    existed -- this only changes how they're composed (previously as
-    tabs, which still separated them into feeling like different
-    destinations).
-
-    Component Search stays visible regardless of whether a BOM has been
-    run -- it is a general-purpose tool independent of any specific run,
-    not a stage that only exists after Run BOM.
+    One continuous AutoBOM workspace -- NOT separate pages/tabs, and NOT
+    Upload-then-Search-then-everything-else. Search and Upload
+    (render_add_parts_section()) are two intake methods for the SAME
+    canonical working BOM -- Search is the default/primary one and needs
+    no upload first. BOM Configuration, the working BOM/results (with
+    Needs Review actioned inline via expanders), and Purchasing Handoff
+    then apply to whatever is currently in that working BOM, however it
+    got there. Every section reads/writes the same
+    st.session_state.current_run and its _active_bom_state, so scrolling
+    between sections never loses canonical BOM state.
     """
-    render_run_bom_section()
+    render_add_parts_section()
 
     current_run = st.session_state.current_run
     active_bom_state = current_run.get("_active_bom_state") if current_run else None
 
     if current_run is not None and active_bom_state is not None:
         st.divider()
-        render_customer_reference_section(current_run, active_bom_state)
+        render_bom_configuration_section(current_run, active_bom_state)
 
         st.divider()
         render_results_workspace(current_run)
 
-    st.divider()
-    with st.expander("🔍 Search Components"):
-        render_component_search_section()
-
-    if current_run is not None and active_bom_state is not None:
         st.divider()
         render_purchasing_handoff_section()
 

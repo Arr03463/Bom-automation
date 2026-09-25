@@ -261,5 +261,119 @@ class SourceAndStatusDerivationTests(unittest.TestCase):
         self.assertEqual(state.summary_counts()["needs_review"], 0)
 
 
+class AddRowTests(unittest.TestCase):
+    """
+    ActiveBomState.add_row() -- appends one blank row for the unified
+    Search "Add to BOM" intake (see review_actions.apply_replacement(),
+    reused unchanged to then fill in the component identity/sourcing).
+    """
+
+    def test_add_row_to_empty_dataframe_returns_a_valid_row_id(self):
+        df = pd.DataFrame(columns=["mpn", "manufacturer", "required_qty"])
+        state = ActiveBomState(df, run_id="run-1")
+
+        row_id = state.add_row({"required_qty": 5})
+
+        self.assertEqual(row_id, "run-1:0")
+        rows = state.rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["required_qty"], 5)
+        self.assertEqual(rows[0]["mpn"], "")
+
+    def test_add_row_to_existing_dataframe_appends_after_the_last_index(self):
+        df = make_dataframe()
+        state = ActiveBomState(df, run_id="run-1")
+
+        row_id = state.add_row({"mpn": "NEWPART", "required_qty": 2})
+
+        self.assertEqual(row_id, "run-1:3")
+        rows = state.rows()
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(rows[3]["mpn"], "NEWPART")
+        # Existing rows are untouched.
+        self.assertEqual(rows[0]["mpn"], "ABC123")
+
+    def test_add_row_defaults_every_existing_column_to_empty_string(self):
+        df = make_dataframe()
+        state = ActiveBomState(df, run_id="run-1")
+
+        state.add_row({"mpn": "NEWPART"})
+
+        new_row = state.rows()[3]
+        self.assertEqual(new_row["manufacturer"], "")
+
+    def test_update_row_after_add_row_auto_creates_new_columns(self):
+        """
+        A row added to a working BOM that never had sourcing run over it
+        (e.g. started via Search, with no upload yet) has none of
+        sourcing_engine's SOURCING_DECISION_COLUMNS yet. update_row()
+        (used by apply_replacement() immediately after add_row()) must
+        still be able to set them -- confirms pandas' .at[] enlargement
+        safely introduces a brand-new column rather than raising.
+        """
+        df = pd.DataFrame(columns=["mpn", "manufacturer", "required_qty"])
+        state = ActiveBomState(df, run_id="run-1")
+        row_id = state.add_row({"required_qty": 1})
+
+        state.update_row(row_id, {"sourcing_status": "sourced_mouser", "selected_supplier": "Mouser"})
+
+        row = state.get_row(row_id)
+        self.assertEqual(row["sourcing_status"], "sourced_mouser")
+        self.assertEqual(row["selected_supplier"], "Mouser")
+
+
+class AddRowsTests(unittest.TestCase):
+    """
+    ActiveBomState.add_rows() -- bulk-merges another DataFrame's rows in
+    (e.g. from uploading a second file while a working BOM already
+    exists -- see app.py's render_upload_intake()).
+    """
+
+    def test_add_rows_appends_and_reindexes_to_avoid_row_id_collisions(self):
+        df = make_dataframe()
+        state = ActiveBomState(df, run_id="run-1")
+        incoming = pd.DataFrame([{"mpn": "NEW1", "manufacturer": "Wurth"}, {"mpn": "NEW2", "manufacturer": "TDK"}])
+
+        new_ids = state.add_rows(incoming)
+
+        self.assertEqual(new_ids, ["run-1:3", "run-1:4"])
+        rows = state.rows()
+        self.assertEqual(len(rows), 5)
+        mpns = {row["mpn"] for row in rows}
+        self.assertEqual(mpns, {"ABC123", "", "XYZ789", "NEW1", "NEW2"})
+
+    def test_add_rows_tolerates_mismatched_columns_via_union(self):
+        df = pd.DataFrame([{"mpn": "ABC123", "manufacturer": "Yageo"}])
+        state = ActiveBomState(df, run_id="run-1")
+        # Simulates merging in a fully-sourced upload, whose DataFrame
+        # has columns (sourcing_status) the original never had.
+        incoming = pd.DataFrame([{"mpn": "NEW1", "sourcing_status": "sourced_mouser"}])
+
+        state.add_rows(incoming)
+
+        rows = state.rows()
+        self.assertEqual(rows[0]["sourcing_status"], "")
+        self.assertEqual(rows[1]["sourcing_status"], "sourced_mouser")
+        self.assertEqual(rows[1]["manufacturer"], "")
+
+    def test_add_rows_with_empty_or_none_dataframe_is_a_noop(self):
+        df = make_dataframe()
+        state = ActiveBomState(df, run_id="run-1")
+
+        self.assertEqual(state.add_rows(pd.DataFrame()), [])
+        self.assertEqual(state.add_rows(None), [])
+        self.assertEqual(len(state.rows()), 3)
+
+    def test_add_rows_into_an_empty_state_starts_at_index_zero(self):
+        df = pd.DataFrame(columns=["mpn", "manufacturer"])
+        state = ActiveBomState(df, run_id="run-1")
+        incoming = pd.DataFrame([{"mpn": "NEW1", "manufacturer": "Wurth"}])
+
+        new_ids = state.add_rows(incoming)
+
+        self.assertEqual(new_ids, ["run-1:0"])
+        self.assertEqual(len(state.rows()), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
