@@ -7,11 +7,12 @@ directory has been installed/run against the real production host --
 these are prepared, locally-tested-where-possible templates and scripts,
 ready for on-site installation.
 
-Local/operator one-click startup (`Start_AutoBOM.bat`,
-`Create_AutoBOM_Desktop_Shortcut.ps1`) lives at the repository root, not
-here, for discoverability -- see the README's "One-Click Local Launcher"
-section. `launch_local.ps1` below is the piece of that it shares with
-this folder.
+One-click startup (`Start_AutoBOM.bat`, `Create_AutoBOM_Desktop_Shortcut.ps1`)
+lives at the repository root, not here, for discoverability -- see the
+README's "One-Click Launcher (Local Testing & Manual Deployment Start)"
+section. It's usable both for local/operator testing and for manually
+starting AutoBOM on the actual deployment machine. `launch_local.ps1`
+below is the piece of that it shares with this folder.
 
 | File | Purpose |
 |---|---|

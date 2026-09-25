@@ -9,12 +9,13 @@
 # resolves the CURRENT user's real Desktop location, including redirected/
 # OneDrive-managed desktops.
 #
-# Production note: this shortcut is for local/operator testing. Once
-# AutoBOM runs as a Windows service on the Yank engineering PC, a team
-# member's shortcut should just open the AutoBOM browser URL -- it
-# should NOT run this launcher (the service is already running; running
-# this too would start a second, conflicting local instance). See the
-# "One-Click Local Launcher" section in README.md.
+# Useful both for local/operator testing and for whoever operates the
+# actual deployment machine (manual start/restart there too). Once
+# AutoBOM runs as an always-on Windows service on that machine, ordinary
+# TEAM MEMBERS should just bookmark the AutoBOM browser URL instead --
+# double-clicking this while the service is already running would start
+# a second, conflicting local instance. See the "One-Click Launcher"
+# section in README.md.
 
 param(
     [string]$RepoPath = $PSScriptRoot,

@@ -1,12 +1,16 @@
-# AutoBOM local one-click launcher (operator/local testing).
+# AutoBOM one-click launcher -- for local/operator testing AND for
+# manually starting AutoBOM on the actual deployment machine (e.g. before
+# a formal Windows service is installed there, or an ad hoc restart).
 #
 # Thin wrapper around launch_production.ps1 -- reuses that script's
 # existing env-loading/preflight/Streamlit-start logic verbatim instead
-# of duplicating it. This file adds only what a double-clicked local
-# launch specifically needs on top: start the app in the background,
-# wait until it is actually responding, then open the browser -- none of
-# which the production service-wrapper path needs (a service supervisor
-# doesn't want a browser opened for it).
+# of duplicating it (the SAME script a formal Task Scheduler/NSSM service
+# install would invoke as its start command -- see
+# windows_task_scheduler_install.ps1.template /
+# windows_service_install_nssm.ps1.template). This file adds only what a
+# double-clicked, human-at-the-keyboard launch specifically needs on top:
+# start the app in the background, wait until it is actually responding,
+# then open the browser -- a service supervisor doesn't want any of that.
 #
 # Invoked by Start_AutoBOM.bat at the repository root; not meant to be
 # double-clicked directly (a .ps1 double-click typically just opens an
@@ -32,6 +36,15 @@ function Fail($message) {
     Read-Host "Press Enter to close this window"
     exit 1
 }
+
+# A trailing backslash (e.g. from a batch file's %~dp0, which always
+# ends in one) sits directly before the closing quote everywhere this
+# script re-quotes a path into a child process's argument list below --
+# Windows' command-line parser reads "\"" as an ESCAPED quote rather than
+# end-of-argument, corrupting that and every following argument. Strip it
+# here, once, rather than relying on every caller to remember not to pass
+# a trailing backslash.
+$RepoPath = $RepoPath.TrimEnd('\')
 
 Write-Host "AutoBOM local launcher"
 Write-Host "Repository: $RepoPath"

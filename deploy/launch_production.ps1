@@ -35,6 +35,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Defensive: a caller passing a path with a trailing backslash (a batch
+# file's %~dp0 always has one) is harmless to Test-Path/Join-Path here,
+# but this script's own value gets re-quoted into other scripts'
+# argument lists (see launch_local.ps1) -- trimming once at the source
+# keeps that safe regardless of caller.
+$RepoPath = $RepoPath.TrimEnd('\')
+$VenvPath = $VenvPath.TrimEnd('\')
+$EnvFile = $EnvFile.TrimEnd('\')
+
 if (-not (Test-Path $RepoPath)) {
     Write-Error "Repo path does not exist: $RepoPath"
     exit 1

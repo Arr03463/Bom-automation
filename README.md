@@ -46,16 +46,27 @@ Then open:
 http://localhost:8501
 ```
 
-## One-Click Local Launcher (Operator Testing)
+## One-Click Launcher (Local Testing & Manual Deployment Start)
 
-For local/operator testing, double-click **`Start_AutoBOM.bat`** in this
-folder instead of typing the commands above: it finds this checkout from
-its own location, uses the existing `.venv`, loads `.env`, runs the same
-preflight/launch logic `deploy/launch_production.ps1` uses, waits until
-AutoBOM is actually responding, then opens your browser to it
-automatically. If something can't start (missing `.venv`, missing
-`.env`, a preflight failure), the window stays open with a plain-English
-error instead of just closing.
+Double-click **`Start_AutoBOM.bat`** in this folder instead of typing the
+commands above: it finds this checkout from its own location, uses the
+existing `.venv`, loads `.env`, runs the same preflight/launch logic
+`deploy/launch_production.ps1` uses (the SAME script a formal Windows
+service would invoke -- see below), waits until AutoBOM is actually
+responding, then opens your browser to it automatically. If something
+can't start (missing `.venv`, missing `.env`, a preflight failure), the
+window stays open with a plain-English error instead of just closing.
+
+This is useful for:
+- **Local development/operator testing** -- the original use case.
+- **Manually starting AutoBOM on the actual deployment machine** (e.g.
+  the Yank engineering PC), for example before a formal Windows service
+  is installed, or for an ad hoc restart. It is not a separate,
+  parallel deployment mechanism -- it runs the exact same
+  `deploy/launch_production.ps1` a Task Scheduler/NSSM service install
+  would use (see `deploy/README.md` and
+  `Documentation/AutoBOM_Onsite_Deployment_Checklist.md`), plus the
+  wait-and-open-browser behavior a human at the keyboard wants.
 
 To get a desktop icon instead of opening this folder every time, run
 once (from this folder, in PowerShell):
@@ -68,13 +79,14 @@ This creates an **AutoBOM** shortcut on your own Windows Desktop pointing
 at `Start_AutoBOM.bat`. Double-click it any time: browser opens, use the
 app.
 
-This launcher is for local/operator testing and maintenance, not
-production. **Once AutoBOM is installed on the Yank engineering PC as a
-Windows service, normal team users should NOT run this launcher to start
-the server** -- the production service is already running. Their
-eventual shortcut should simply open the AutoBOM browser URL (see
-`Documentation/AutoBOM_Onsite_Deployment_Checklist.md`), not launch a
-second local instance.
+**Do not double-click this while AutoBOM is already running on the same
+machine** (whether you started it this way or a formal service already
+has) -- that would start a second, conflicting instance on the same
+port. Once a machine has an always-on Windows service running AutoBOM,
+ordinary team members should just bookmark the AutoBOM URL instead of
+using this launcher at all; the person operating/maintaining that
+machine can still use it for manual starts/restarts when the service
+isn't already up.
 
 The web app lets you:
 

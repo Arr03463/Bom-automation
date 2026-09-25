@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -58,6 +59,60 @@ class BatchLauncherTests(unittest.TestCase):
 
     def test_no_exit_flag_keeps_window_open_on_failure(self):
         self.assertIn("-NoExit", self.content)
+
+    def test_strips_trailing_backslash_before_quoting_repo_path(self):
+        """
+        Regression test for a real bug: %~dp0 always ends with a
+        trailing backslash. Passed straight through as
+        -RepoPath "%SCRIPT_DIR%", that backslash sits directly before
+        the closing double-quote, which cmd.exe reads as an ESCAPED
+        quote (\") rather than end-of-argument -- corrupting that and
+        every argument after it (observed live: Test-Path raised
+        "Illegal characters in path" because a literal `"` character
+        had been merged into the path string). Executes the actual
+        batch file's own trailing-backslash-stripping logic via cmd.exe
+        (not the full launcher -- that would start a real Streamlit
+        process) to prove the computed value has no stray characters.
+        """
+        cmd_exe = shutil.which("cmd.exe") or shutil.which("cmd")
+        if not cmd_exe:
+            self.skipTest("cmd.exe not available in this environment.")
+
+        # Isolate just the path-computation lines (everything up to and
+        # including the trailing-backslash strip), replacing the real
+        # launch line with an echo, so this proves the batch file's OWN
+        # logic is correct without ever invoking PowerShell/Streamlit.
+        lines = START_BAT.read_text(encoding="utf-8").splitlines()
+        launch_line_index = next(
+            i for i, line in enumerate(lines) if line.strip().lower().startswith("powershell")
+        )
+        harness_lines = lines[:launch_line_index] + ['echo REPO_PATH_RESULT=[%REPO_PATH%]']
+        harness_path = Path(tempfile.gettempdir()) / "autobom_start_bat_harness_test.bat"
+        harness_path.write_text("\r\n".join(harness_lines) + "\r\n", encoding="utf-8")
+        self.addCleanup(harness_path.unlink, missing_ok=True)
+
+        # A directory ending in a backslash, exactly like %~dp0 always
+        # produces -- the harness runs FROM here so %~dp0 reproduces the
+        # real bug scenario.
+        run_dir = Path(tempfile.gettempdir()) / "autobom launcher test dir"
+        run_dir.mkdir(exist_ok=True)
+        self.addCleanup(shutil.rmtree, run_dir, ignore_errors=True)
+        harness_in_run_dir = run_dir / harness_path.name
+        harness_in_run_dir.write_text(harness_path.read_text(encoding="utf-8"), encoding="utf-8")
+        self.addCleanup(harness_in_run_dir.unlink, missing_ok=True)
+
+        result = subprocess.run(
+            [cmd_exe, "/c", str(harness_in_run_dir)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # The bug's symptom: a literal `"` character embedded in the
+        # computed path, and/or a trailing backslash still present.
+        self.assertNotIn('"', result.stdout)
+        self.assertIn(f"REPO_PATH_RESULT=[{run_dir}]", result.stdout)
 
 
 class LaunchLocalTests(unittest.TestCase):
