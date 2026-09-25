@@ -79,13 +79,18 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(len(at.exception), 0)
 
     def test_navigating_to_component_search_has_no_exceptions(self):
+        """
+        Component Search is a tab within the main AutoBOM workflow page
+        (not a separate top-level nav destination) -- st.tabs() renders
+        every tab's widgets regardless of which is visually selected, so
+        simply loading the default "AutoBOM" page is enough to exercise it.
+        """
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
         at.run()
 
-        at.sidebar.radio[0].set_value("Component Search")
-        at.run()
-
         self.assertEqual(len(at.exception), 0)
+        tab_labels = [tab.label for tab in at.tabs]
+        self.assertIn("3. Component Search", tab_labels)
 
     def test_injected_run_result_renders_results_workspace(self):
         result = self._run_with_review_row()
@@ -372,8 +377,6 @@ class DynamicFacetSmokeTests(unittest.TestCase):
     def test_component_search_shows_facets_present_in_results(self):
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
         at.run()
-        at.sidebar.radio[0].set_value("Component Search")
-        at.run()
 
         fake_results = [
             _lookup_result(mpn="A", package="0603", manufacturer="Yageo"),
@@ -415,10 +418,15 @@ class PurchasingPageSmokeTests(unittest.TestCase):
         )
 
     def _navigate_to_purchasing(self, result):
+        """
+        Purchasing Handoff is a tab within the main AutoBOM workflow page
+        now, not a separate top-level nav destination -- the default
+        "AutoBOM" page already renders it (st.tabs() renders every tab's
+        widgets regardless of visual selection), so there is nothing left
+        to navigate to.
+        """
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
         at.session_state["current_run"] = result
-        at.run()
-        at.sidebar.radio[0].set_value("Purchasing")
         at.run()
         return at
 

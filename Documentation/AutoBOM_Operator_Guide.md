@@ -2,6 +2,18 @@
 
 Audience: a teammate using AutoBOM day-to-day, not the developer.
 
+## Navigation
+
+The sidebar has exactly two top-level destinations:
+
+- **AutoBOM** -- one continuous workflow, organized as five tabs across
+  the top of the page: Run BOM, Results / Needs Review, Component Search,
+  Customer Reference, and Purchasing Handoff. These are stages of the
+  same BOM run, not separate apps -- moving between tabs never loses your
+  place; the BOM you're working on stays the same everywhere.
+- **PartsBox Inventory** -- a separate area for browsing/searching the
+  full PartsBox catalog independent of any specific BOM run (see below).
+
 ## Run BOM
 
 1. Upload your BOM as CSV or XLSX.
@@ -43,11 +55,42 @@ ranges (voltage, tolerance, etc.).
 
 ## PartsBox Inventory
 
-A read-only view over PartsBox itself (PartsBox remains the system of
-record). Search or click **Browse All** with an empty query. Storage
-Locations shows which storage locations carry the `production` tag.
+A separate top-level page for browsing/searching the full accessible
+PartsBox catalog (PartsBox remains the system of record) -- not limited
+to parts referenced by the current or any BOM run. Search, or click
+**Browse All** with an empty query to see everything. Storage Locations
+shows which storage locations carry the `production` tag.
 
-## Purchasing
+This page itself is read-only by design: opening it, searching, or
+filtering never writes anything to PartsBox. That's a property of this
+*page*, not a limitation of AutoBOM's PartsBox integration as a whole --
+AutoBOM does perform real PartsBox writes elsewhere, as part of running a
+BOM (creating/reusing the project and storage location, and syncing BOM
+entries into it -- see the Run BOM section above). Those writes only
+happen from an explicit **Run BOM Automation** click, never from viewing
+this page.
+
+## Customer Reference
+
+Sets the Customer Reference / Customer Part Number that flows into the
+Mouser cart, DigiKey MyList, and export files for every BOM line. Three
+ways to generate one, all from Yank's approved naming convention:
+
+- **Project / PCB** -- pick an approved Project code and one or more PCB
+  codes (e.g. `PRJ-ATH-DAB`).
+- **Inventory** -- for stock/inventory builds; AutoBOM can recommend a
+  storage location from PartsBox (checking for the exact part already
+  stored somewhere, then falling back to similar parts) before you
+  confirm (e.g. `INV-A12`).
+- **R&D** -- project code plus a free-text owner (e.g. `RND-ARM-AARON`).
+
+**Apply to All BOM Lines** sets the generated reference on every row;
+individual lines can still be overridden below. Assigning or changing a
+reference never itself calls Mouser/DigiKey/PartsBox -- it only updates
+the BOM's canonical data (and marks purchasing artifacts stale if
+they'd already been generated under the old reference).
+
+## Purchasing Handoff
 
 1. Purchasing status reflects the **current** BOM state, derived per
    supplier:
@@ -81,7 +124,7 @@ Locations shows which storage locations carry the `production` tag.
    live): the MyLists API does not provide a separate share
    identifier/link -- the List ID is the identifier there is.
 
-## Downloads (Run BOM and Purchasing pages)
+## Downloads (Purchasing Handoff tab)
 
 Each output file (cleaned CSV, cleaned workbook, sourcing report, DigiKey
 list CSV, PartsBox import/unmatched CSVs, run summary) tracks its own

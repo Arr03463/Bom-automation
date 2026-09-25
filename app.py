@@ -171,7 +171,14 @@ def show_download(label, file_path, disabled=False):
         )
 
 
-def render_run_bom_page():
+def render_run_bom_section():
+    """
+    Stage 1 of the AutoBOM workflow: upload, options, start. Deliberately
+    stops after showing run messages -- the processed results table lives
+    in the Results / Needs Review section, and downloads live in
+    Purchasing Handoff, so this section stays focused on kicking a run
+    off (see render_autobom_workflow_page()).
+    """
     uploaded_file = st.file_uploader("Upload BOM", type=["csv", "xlsx"])
 
     left, right = st.columns(2)
@@ -224,8 +231,15 @@ def render_run_bom_page():
 
     st.divider()
     render_run_messages(current_run)
-    render_downloads(current_run)
-    st.divider()
+    st.caption("See the Results / Needs Review section for the processed BOM, and Purchasing Handoff for downloads.")
+
+
+def render_results_section():
+    current_run = st.session_state.current_run
+    if current_run is None:
+        st.info("Run a BOM first (see the Run BOM section) to see results here.")
+        return
+
     render_results_workspace(current_run)
 
 
@@ -512,7 +526,7 @@ def render_dynamic_facet_filters(results, key_prefix):
     return filters
 
 
-def render_component_search_page():
+def render_component_search_section():
     st.subheader("Component Search")
     st.caption("PartsBox is searched by default. Enable Mouser/DigiKey to include live supplier results.")
 
@@ -598,20 +612,33 @@ def render_lookup_results_table(results, show_stock_sufficiency=False):
 def render_partsbox_inventory_page():
     """
     Reuses component_lookup.search_components() (sources={"partsbox"},
-    which now supports an empty query as "browse everything") and
+    which supports an empty query as "browse everything" -- confirmed
+    live against the real ~3450-part Yank catalog, not a sample) and
     record_filter -- no second PartsBox search/filter implementation.
-    Read-only: no write action in this phase has confirmed PartsBox API
-    support (see the Phase 4 report), so none is offered here rather
-    than inventing one.
+
+    This BROWSING view is read-only by design (viewing/searching/filtering
+    must never write) -- that is a property of this page, not a claim
+    that AutoBOM's PartsBox integration is architecturally read-only.
+    AutoBOM does perform confirmed PartsBox writes elsewhere: project/
+    storage creation and BOM-entry sync, as part of the Run BOM workflow
+    (see partsbox_project_builder.py) -- this page doesn't duplicate that
+    write path here, it just doesn't hide that it exists.
     """
     st.subheader("PartsBox Inventory")
     st.caption(
-        "PartsBox remains the system of record; this is a read-only view over it. "
+        "PartsBox remains the system of record. This page is a read-only "
+        "browse/search view over the full accessible inventory -- opening, "
+        "searching, or filtering here never writes anything. (AutoBOM does "
+        "perform PartsBox writes elsewhere -- project/storage creation and "
+        "BOM-entry sync happen as part of running a BOM, in the AutoBOM "
+        "workflow's Run BOM section.) "
         "**Confirmed** fields (Manufacturer, MPN, PartsBox part ID) are already used "
         "elsewhere in this app. **Inferred** fields (Description, Category, Package) "
-        "are read defensively and may be blank if PartsBox's live schema differs. "
-        "Quantity/stock is **not exposed** -- no confirmed PartsBox field for it "
-        "exists in this integration."
+        "are read defensively and may be blank if PartsBox's live schema differs -- "
+        "confirmed live against this account's real data that neither is currently "
+        "populated. Quantity/stock is **not exposed** as a simple number -- confirmed "
+        "live that PartsBox's stock field is a per-storage transaction ledger, not a "
+        "scalar, and this integration does not guess a current quantity from it here."
     )
 
     search_cols = st.columns([3, 1])
@@ -972,11 +999,33 @@ def render_customer_reference_section(current_run, active_bom_state):
     _render_add_approved_code()
 
 
-def render_purchasing_page():
+def render_customer_reference_tab():
+    """
+    Thin guard wrapper so the Customer Reference workflow stage can be
+    composed into render_autobom_workflow_page() the same way the other
+    stages are -- render_customer_reference_section() itself is
+    unchanged and still just takes (current_run, active_bom_state).
+    """
+    current_run = st.session_state.current_run
+    if current_run is None:
+        st.info("Run a BOM first to assign Customer References.")
+        return
+
+    active_bom_state = current_run.get("_active_bom_state")
+    if active_bom_state is None:
+        st.info("No active BOM state for the current run.")
+        return
+
+    render_customer_reference_section(current_run, active_bom_state)
+
+
+def render_purchasing_handoff_section():
     """
     Purchasing summary/status/regeneration all derive from the canonical
     ActiveBomState via workflow_runner's build_purchasing_summary()/
     regenerate_purchasing() -- no sourcing decision is recalculated here.
+    Customer Reference assignment lives in its own workflow stage/tab
+    (render_customer_reference_tab()), not here.
     """
     current_run = st.session_state.current_run
     if current_run is None:
@@ -987,9 +1036,6 @@ def render_purchasing_page():
     if active_bom_state is None:
         st.info("No active BOM state for the current run.")
         return
-
-    render_customer_reference_section(current_run, active_bom_state)
-    st.divider()
 
     summary = build_purchasing_summary(current_run)
     st.subheader(f"Purchasing Handoff — {summary['status']}")
@@ -1058,6 +1104,39 @@ def render_purchasing_page():
     render_downloads(current_run)
 
 
+def render_autobom_workflow_page():
+    """
+    One continuous AutoBOM workflow, composed of five stages as tabs
+    rather than separate top-level pages -- Run BOM, Results/Needs
+    Review, Component Search, Customer Reference, and Purchasing Handoff
+    all read/write the same st.session_state.current_run and its
+    _active_bom_state, so moving between tabs never loses canonical BOM
+    state (Streamlit re-runs the whole script on every interaction and
+    session_state is shared across the entire run, regardless of which
+    tab is visually selected). Each stage's own render function is
+    unchanged from before this page existed -- this only composes them.
+    """
+    tab_run, tab_results, tab_search, tab_cref, tab_purchasing = st.tabs(
+        [
+            "1. Run BOM",
+            "2. Results / Needs Review",
+            "3. Component Search",
+            "4. Customer Reference",
+            "5. Purchasing Handoff",
+        ]
+    )
+    with tab_run:
+        render_run_bom_section()
+    with tab_results:
+        render_results_section()
+    with tab_search:
+        render_component_search_section()
+    with tab_cref:
+        render_customer_reference_tab()
+    with tab_purchasing:
+        render_purchasing_handoff_section()
+
+
 st.set_page_config(page_title="AutoBOM", layout="wide")
 init_session_state()
 
@@ -1066,13 +1145,9 @@ st.title("AutoBOM")
 for warning in collect_startup_warnings():
     st.warning(warning)
 
-page = st.sidebar.radio("Navigate", ["Run BOM", "Component Search", "PartsBox Inventory", "Purchasing"])
+page = st.sidebar.radio("Navigate", ["AutoBOM", "PartsBox Inventory"])
 
-if page == "Run BOM":
-    render_run_bom_page()
-elif page == "Component Search":
-    render_component_search_page()
-elif page == "PartsBox Inventory":
-    render_partsbox_inventory_page()
+if page == "AutoBOM":
+    render_autobom_workflow_page()
 else:
-    render_purchasing_page()
+    render_partsbox_inventory_page()

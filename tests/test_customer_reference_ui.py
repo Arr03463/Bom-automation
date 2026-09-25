@@ -1,8 +1,10 @@
 """
-Streamlit UI smoke tests for the Customer Reference section on the
-Purchasing page, using streamlit.testing.v1.AppTest (see
-tests/test_app_smoke.py's module docstring for the patch-target gotcha
-this file follows: patch at the module that DEFINES a name, e.g.
+Streamlit UI smoke tests for the Customer Reference workflow stage (its
+own tab within the main AutoBOM page, alongside Run BOM/Results/Component
+Search/Purchasing Handoff -- see render_autobom_workflow_page() in
+app.py), using streamlit.testing.v1.AppTest (see tests/test_app_smoke.py's
+module docstring for the patch-target gotcha this file follows: patch at
+the module that DEFINES a name, e.g.
 inventory_location_recommender.recommend_location, never app.recommend_location).
 """
 
@@ -62,10 +64,15 @@ class CustomerReferenceUITests(unittest.TestCase):
         )
 
     def _navigate_to_purchasing(self, result):
+        """
+        Customer Reference/Purchasing Handoff are tabs within the main
+        AutoBOM workflow page now, not separate top-level nav
+        destinations -- the default "AutoBOM" page already renders them
+        (st.tabs() renders every tab's widgets regardless of visual
+        selection), so there is nothing left to navigate to.
+        """
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
         at.session_state["current_run"] = result
-        at.run()
-        at.sidebar.radio[0].set_value("Purchasing")
         at.run()
         return at
 
