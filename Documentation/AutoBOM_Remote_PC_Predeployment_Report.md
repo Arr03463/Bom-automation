@@ -311,22 +311,56 @@ No order was placed.
   confirming the existing fallback-to-variations logic is load-bearing in
   practice, not unexercised defensive code. `ProductVariations[0].StandardPricing[0].UnitPrice`
   matched `_first_unit_price()`'s assumption exactly.
-- **MyList creation is BLOCKED**: the stored `DIGIKEY_REFRESH_TOKEN` in
-  this environment's `.env` is invalid/expired
-  (`HTTP 401: Invalid RefreshToken | request id: <redacted>`). This
-  requires an interactive OAuth re-authorization (`python src/digikey_oauth_setup.py`,
-  which opens a browser login) that cannot be completed non-interactively
-  in this environment. This is an external/credential-state fact, not a
-  code defect -- and it incidentally proved the error-handling path
+- **MyList creation was initially BLOCKED**: the stored
+  `DIGIKEY_REFRESH_TOKEN` in this environment's `.env` was invalid/expired
+  (`HTTP 401: Invalid RefreshToken | request id: <redacted>`), requiring
+  an interactive OAuth re-authorization
+  (`python src/digikey_oauth_setup.py`) that this environment can't
+  perform non-interactively. This was an external/credential-state fact,
+  not a code defect -- and it incidentally proved the error-handling path
   works correctly against a genuine live failure: the raised message was
   sanitized (allow-listed fields + request ID only, confirming
   `describe_error_response()`'s field names against a REAL DigiKey error
   body, not just mocks) and no secret was exposed. No token-store write
-  was attempted or corrupted by this failed attempt (the exception is
+  was attempted or corrupted by that failed attempt (the exception is
   raised before the rotation/persistence code ever runs).
-- Token rotation behavior, `FileTokenStore` round-trip against a live
-  rotation, and any DigiKey-confirmed share identifier/link **remain
-  unverified** -- blocked on the same re-authorization step.
+- **The developer re-authorized DigiKey** (`python src/digikey_oauth_setup.py`,
+  run locally). All remaining DigiKey verification below was then
+  completed live:
+  - `get_user_access_token()` succeeded; `token_store_error: None`.
+  - Created three real, disposable test MyLists (`AUTOBOM-API-TEST-2026-09-25`
+    and two follow-up variants used to inspect `add_parts_to_list()`'s
+    response shape in isolation) via `create_digikey_mylist_from_bom()`
+    and direct `DigiKeyMyListsClient` calls, each with one real DigiKey
+    part (`311-10.0KHRTR-ND`, quantity 1). All three succeeded
+    (`created: True`, real string `list_id` returned).
+  - **Confirmed: `create_list()`'s real response is a bare string** (the
+    list ID itself, e.g. `"02UFKJOWAE"`), not a dict -- exactly matching
+    the `isinstance(create_result, str)` branch in
+    `create_digikey_mylist_from_bom()`, confirming that branch is
+    load-bearing in practice, not unexercised defensive code.
+  - **Confirmed: `add_parts_to_list()`'s real response is a plain list of
+    string item IDs** (e.g. `["N7S19MYZ7F"]`), not a list of dicts with
+    per-part detail fields.
+  - **Confirmed: no share identifier/link field exists anywhere in either
+    response.** `share_id: None` (with the existing comment that a
+    distinct share field isn't present and must be verified) is now a
+    **confirmed absence**, not an open question -- nothing was fabricated
+    to fill this gap, per instruction.
+  - **Confirmed token rotation live**: captured a hash of the stored
+    refresh token before and after a `get_user_access_token()` call --
+    the hash changed, confirming DigiKey rotates the refresh token on
+    every use in this account's OAuth configuration. The new value was
+    correctly persisted (read back via `store.get()` immediately after,
+    matching the post-rotation hash; `token_store_error: None`),
+    confirming the `EnvFileTokenStore` round-trip end-to-end against a
+    real rotation, not just a mocked one. No raw token value was ever
+    printed -- only SHA-256 hash prefixes, for comparison purposes only.
+  - Three disposable test MyLists now exist in the real DigiKey account.
+    Not deleted (deletion wasn't requested or tested, per standing
+    instruction). Flagging for team awareness/manual cleanup if desired,
+    alongside the disposable Mouser cart (§11) and PartsBox test project
+    (§13).
 
 ## 13. Live PartsBox verification
 
@@ -586,7 +620,14 @@ The full 27-step procedure: `Documentation/AutoBOM_Onsite_Deployment_Checklist.m
 - DigiKey: client-credentials auth, product-details response shape
   (nested Manufacturer/Category/ProductStatus, DigiKeyProductNumber
   fallback-to-variations behavior), sanitized live error-message shape
-  (via the expired-refresh-token failure).
+  (via the expired-refresh-token failure). After the developer
+  re-authorized (`python src/digikey_oauth_setup.py`): MyList creation
+  (three real disposable test lists), confirmed `create_list()` returns
+  a bare string list ID and `add_parts_to_list()` returns a plain list of
+  string item IDs, confirmed no share identifier/link field exists in
+  either response, confirmed live refresh-token rotation (hash-compared
+  before/after) with correct `EnvFileTokenStore` persistence
+  (`token_store_error: None` throughout).
 - PartsBox: storage list shape + tag presence/absence/case behavior,
   part list shape + confirmed absence of category/package fields +
   stock-as-ledger structure, project-entries shape, project/storage
@@ -595,13 +636,6 @@ The full 27-step procedure: `Documentation/AutoBOM_Onsite_Deployment_Checklist.m
 
 ## 27. LIVE VENDOR PENDING
 
-- DigiKey MyList creation, list ID field, add-parts response, any share
-  identifier, and a live token-rotation round-trip -- blocked on
-  interactive OAuth re-authorization (`python src/digikey_oauth_setup.py`)
-  of the developer's DigiKey account, which requires a browser login this
-  environment cannot perform. Recommended next step: whoever has DigiKey
-  developer-account access runs that script, then this verification can
-  be repeated in minutes.
 - Mouser zero-item/error-response-shape verification (only synthetic/mock
   coverage exists for these two specific cases).
 - PartsBox saved-filter API support (no client code attempts this; still
@@ -637,16 +671,21 @@ bounded interim position.
 
 ## 30. Remaining risks
 
-- DigiKey MyLists automation for the REAL production vendor account is
-  entirely unverified until §27's re-authorization step happens with
-  that account's own credentials, not just the developer's.
+- DigiKey MyLists automation was verified against the developer's own
+  DigiKey account only. It still needs re-verification against the
+  actual production/company DigiKey account's own credentials and
+  refresh-token rotation policy before the team relies on it (a
+  different account may behave differently, e.g. a different rotation
+  cadence or MyLists entitlement).
 - The Windows-service-wrapper choice (Task Scheduler vs. NSSM) is still
   open; both templates are prepared, but neither has been rehearsed on
   Windows (this environment's tooling is Linux/bash-based; the `.ps1`
   files were written carefully but not executed anywhere in this pass).
-- A disposable Mouser test cart and a disposable PartsBox test project
-  (`AUTOBOM-API-TEST-2026-09-24`) now exist in real vendor accounts and
-  were intentionally left in place (no delete testing performed).
+- A disposable Mouser test cart, a disposable PartsBox test project
+  (`AUTOBOM-API-TEST-2026-09-24`), and three disposable DigiKey test
+  MyLists (`AUTOBOM-API-TEST-2026-09-25` and two variants) now exist in
+  real vendor accounts and were intentionally left in place (no delete
+  testing performed).
 - The security hardening backlog (§28) remains real, ongoing work, not
   eliminated by "pilot-ready" status.
 
@@ -662,15 +701,21 @@ preflight, fresh-process persistence proof, configurable runtime paths,
 a pinned dependency lock, an aligned Dev Container, a wrapper-independent
 launch mechanism with two service-install options, a production Streamlit
 config, CI, and a complete on-site installation checklist. Live vendor
-verification was performed for Mouser (full, including one real
-disposable cart) and PartsBox (full, including the P0 idempotency
-guarantee reconfirmed live), and partially for DigiKey (auth + search
-confirmed; MyList blocked on an external credential-renewal step, not a
-code defect).
+verification was completed for all three vendors: Mouser (search + one
+real disposable cart, CartKey shape confirmed), PartsBox (search/storage/
+project shapes, and the P0 BOM-entry idempotency guarantee reconfirmed
+live), and DigiKey (auth + search confirmed; after the developer
+re-authorized via `python src/digikey_oauth_setup.py`, MyList creation,
+list ID shape, add-parts response shape, confirmed absence of any share
+field, and live refresh-token rotation/persistence were all verified
+against three real disposable test MyLists).
 
 Remaining work is genuinely HOST SETUP PENDING (installing on the actual
-machine) or LIVE VENDOR PENDING (DigiKey MyList re-authorization,
-PartsBox saved-filter API support), not further application development.
+machine) or LIVE VENDOR PENDING against the PRODUCTION vendor accounts
+specifically (§27/§30 -- Mouser zero-item/error-shape edge cases,
+PartsBox saved-filter API support, and re-confirming DigiKey against the
+company's own account rather than the developer's), not further
+application development.
 
 Firewall/VPN/SSO hardening is tracked as an explicit backlog and is
 correctly NOT a gate on starting an initial trusted-team pilot, per the

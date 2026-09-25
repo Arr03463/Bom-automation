@@ -143,6 +143,12 @@ class DigiKeyMyListsClient:
         return response.json()
 
     def add_parts_to_list(self, list_id, parts):
+        # Confirmed live (2026-09-25): the real response is a plain list
+        # of string item IDs (e.g. ["N7S19MYZ7F"]), not a list of dicts
+        # with per-part fields -- and no share identifier/link field
+        # exists anywhere in this or create_list()'s response. share_id
+        # staying None in _build_digikey_purchasing() is a confirmed
+        # absence, not an open question.
         self.validate_config()
 
         if self.dry_run:
@@ -226,6 +232,10 @@ def create_digikey_mylist_from_bom(clean_bom, list_name):
 
     resolved_list_name, name_changed = client.resolve_create_list_name(list_name)
 
+    # Confirmed live (2026-09-25, three real disposable test MyLists):
+    # create_list()'s actual response IS a bare string -- the list ID
+    # itself (e.g. "02UFKJOWAE") -- not a dict. This branch is
+    # load-bearing in practice, not unexercised defensive code.
     create_result = client.create_list(resolved_list_name)
     if isinstance(create_result, str):
         list_id = create_result

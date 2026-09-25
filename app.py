@@ -742,7 +742,7 @@ def render_purchasing_page():
         st.write(f"Total quantity: {summary['digikey']['total_quantity']}")
         st.write(f"MyList created: {'Yes' if summary['digikey']['list_created'] else 'No'}")
         st.write(f"List ID: {summary['digikey']['list_id'] or 'Not available'}")
-        st.write(f"Share identifier: {summary['digikey']['share_id'] or 'Not confirmed by current API'}")
+        st.write(f"Share identifier: {summary['digikey']['share_id'] or 'Not provided by the DigiKey MyLists API'}")
 
     st.divider()
 

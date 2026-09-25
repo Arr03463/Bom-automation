@@ -76,9 +76,10 @@ Locations shows which storage locations carry the `production` tag.
    point for a future supported Mouser sharing API/integration.
    AutoBOM's role ends at handoff: checkout, payment, and order
    submission always happen manually, outside AutoBOM.
-4. **DigiKey**: MyList creation is automatic; a verified share
-   identifier is surfaced only if/when DigiKey's API is confirmed to
-   provide one (see the Purchasing page's own note on this).
+4. **DigiKey**: MyList creation is automatic; hand the List ID to
+   purchasing so they can locate it in DigiKey. Confirmed (2026-09-25,
+   live): the MyLists API does not provide a separate share
+   identifier/link -- the List ID is the identifier there is.
 
 ## Downloads (Run BOM and Purchasing pages)
 

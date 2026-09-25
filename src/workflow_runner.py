@@ -613,10 +613,12 @@ def _build_digikey_purchasing(attempted, digikey_mylist_result):
         "created": bool(digikey_mylist_result.get("created")),
         "list_id": digikey_mylist_result.get("list_id"),
         "list_name": digikey_mylist_result.get("list_name"),
-        # DigiKey's confirmed MyLists response only returns ListId/ListName.
-        # A distinct share ID/key field is not present in this repository's
-        # client and must be verified against the live MyLists API before
-        # a value can be surfaced here.
+        # Confirmed live (2026-09-25, three real disposable test
+        # MyLists): create_list() returns a bare string list ID and
+        # add_parts_to_list() returns a plain list of string item IDs --
+        # no share identifier/link field exists anywhere in either
+        # response. This is a confirmed absence, not an open question;
+        # do not fabricate a value here.
         "share_id": None,
         "parts_count": digikey_mylist_result.get("parts_count", 0),
         "message": digikey_mylist_result.get("message"),
