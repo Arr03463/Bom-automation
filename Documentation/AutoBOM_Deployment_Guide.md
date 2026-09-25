@@ -14,27 +14,26 @@ Audience: whoever deploys/redeploys AutoBOM, not the original developer.
 
 ## 2. Hosting decision
 
-**Recommendation: Streamlit Community Cloud is acceptable**, provided the
-conditions below are met. See
-`Documentation/AutoBOM_Final_Deployment_Hardening_Report.md` §1 for the
-full assessment; summary:
+**Current recommendation (supersedes the note below): the existing Yank
+remote engineering Windows PC**, running one Streamlit process under a
+Windows service, exposed only to the trusted corporate LAN/VPN. See
+`Documentation/AutoBOM_Remote_PC_Deployment_Architecture_Audit.md` for
+the full comparison and `Documentation/AutoBOM_Remote_PC_Predeployment_Report.md`
+for what's been prepared/verified toward that target, and
+`Documentation/AutoBOM_Onsite_Deployment_Checklist.md` for the install
+procedure. This host already provides persistent local storage for the
+DigiKey durable token store (`DIGIKEY_TOKEN_STORE=file`) without needing
+an external HTTPS key-value service.
 
-- Community Cloud has **no writable persistent filesystem** and periodic
-  hibernation/restart. This is fine for `runs/<run_id>/` (per-run
-  isolation already treats it as ephemeral scratch space) but is NOT fine
-  for the DigiKey rotating refresh token if left in the default
-  in-process store.
-- **Before enabling `DIGIKEY_MYLISTS_ENABLED=true` on Community Cloud**,
-  configure a durable `DIGIKEY_TOKEN_STORE` backend (`file` against a
-  mounted persistent volume, or `http` against a small external
-  HTTPS key-value/secrets service you control -- see §5 below and
-  `Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md`). The app
-  shows a startup warning banner if this isn't configured correctly.
-- Deploy the app as a **private** Streamlit app restricted to your team's
-  identities. AutoBOM has no built-in login of its own.
-- If a persistent-volume host is preferred instead of Community Cloud
-  (a small VM, or a container platform with a mounted volume), point
-  `DIGIKEY_TOKEN_STORE=file` at that volume -- no code change needed.
+*Earlier assessment, kept for reference:* `Documentation/AutoBOM_Final_Deployment_Hardening_Report.md`
+§1 evaluated Streamlit Community Cloud and found it conditionally
+acceptable provided a durable `DIGIKEY_TOKEN_STORE=http` backend was
+stood up (Community Cloud has no writable persistent filesystem). That
+remains true if the team ever revisits cloud hosting, but the Windows PC
+is the current authoritative target and avoids that extra dependency.
+
+Either way, the app must be deployed with restricted network/access
+control -- AutoBOM has no built-in login of its own.
 
 ## 3. Environment variables
 
@@ -137,8 +136,20 @@ run kick-off (`src/run_retention.py`), based on:
 - `AUTOBOM_MAX_RUNS` (default 200, a total cap including the run just
   created; 0 disables count-based cleanup)
 
-The currently active run is never deleted regardless of its age or
-position. Cleanup failures are caught and never crash a run. On a host
-with an ephemeral filesystem (Community Cloud), a restart already wipes
-`runs/` entirely -- this policy mainly matters for hosts with persistent
+The run that was JUST created by this cleanup call is never deleted,
+regardless of its age or position -- but this is not a guarantee about
+every other currently-open session. Cleanup has no registry of what
+other browser sessions/users currently have open: an older run that's
+still open in someone else's tab, but hasn't triggered a new run itself
+recently, is not specially protected and can be reaped once it crosses
+the age/count threshold. This is a known, accepted tradeoff, not a bug --
+building a "currently open" session registry to close this gap would be
+disproportionate complexity for a small internal tool. Keep the defaults
+conservative (14 days / 200 runs) and raise `AUTOBOM_MAX_RUNS` /
+`AUTOBOM_RUN_RETENTION_DAYS` if the team's actual concurrent-session
+count and BOM turnaround time make the default window too tight.
+
+Cleanup failures are caught and never crash a run. On a host with an
+ephemeral filesystem (Community Cloud), a restart already wipes `runs/`
+entirely -- this policy mainly matters for hosts with persistent
 storage, or long uptime stretches between restarts.

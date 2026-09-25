@@ -66,10 +66,13 @@ Locations shows which storage locations carry the `production` tag.
    current BOM. This is the ONLY action that can create a live Mouser
    cart or DigiKey MyList -- navigating, filtering, or just leaving the
    page open never does.
-3. **Mouser**: cart creation is automatic; sharing with purchasing is
-   currently a manual step -- open Mouser yourself, use its Share action,
-   and hand the resulting Access ID directly to purchasing. Nothing needs
-   to be pasted back into AutoBOM.
+3. **Mouser**: cart creation is automatic; sharing with purchasing is a
+   manual step -- open Mouser yourself, use its Share action, and hand
+   the resulting Access ID directly to purchasing. Nothing needs to be
+   pasted back into AutoBOM. This is confirmed with Mouser as the correct
+   long-term design (the Access ID is derived internally from the
+   CartKey, but that derivation isn't exposed through any supported
+   public/Automation Services API) -- not a temporary gap.
 4. **DigiKey**: MyList creation is automatic; a verified share
    identifier is surfaced only if/when DigiKey's API is confirmed to
    provide one (see the Purchasing page's own note on this).
