@@ -20,7 +20,22 @@ from component_lookup import (  # noqa: E402
     search_components,
 )
 from config_validation import collect_startup_warnings  # noqa: E402
+from customer_reference import (  # noqa: E402
+    MAX_LENGTH as CUSTOMER_REFERENCE_MAX_LENGTH,
+    build_inventory_reference,
+    build_project_reference,
+    build_rnd_reference,
+    validate_customer_reference,
+)
+from customer_reference_registry import (  # noqa: E402
+    RegistryError,
+    add_pcb_code,
+    add_project,
+    get_pcb_codes,
+    get_projects,
+)
 from engineering_units import parse_engineering_value  # noqa: E402
+from inventory_location_recommender import recommend_location  # noqa: E402
 from partsbox_client import PartsBoxClient  # noqa: E402
 from partsbox_project_builder import PRODUCTION_STORAGE_TAG, storage_has_tag  # noqa: E402
 from record_filter import generate_facets, search_and_filter  # noqa: E402
@@ -676,6 +691,287 @@ def render_partsbox_storage_locations():
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
+def _apply_customer_reference_to_all(current_run, active_bom_state, value):
+    for row in active_bom_state.rows():
+        active_bom_state.update_row(row["row_id"], {"customer_reference": value})
+    # Same mutation seam Retry Exact/Find Replacement use: marks
+    # regeneratable purchasing artifacts stale so a cart/MyList already
+    # generated under the OLD reference isn't silently handed off as
+    # current. Never itself calls a vendor -- only Regenerate Purchasing
+    # does that.
+    refresh_response_snapshot(current_run)
+
+
+def _render_customer_reference_preview_and_apply(current_run, active_bom_state, preview, key_prefix):
+    result = validate_customer_reference(preview)
+    if result.valid:
+        st.success(f"{result.value}  —  {result.length} / {CUSTOMER_REFERENCE_MAX_LENGTH} characters  ✓ Valid")
+    else:
+        st.error(
+            f"{result.value}  —  {result.length} / {CUSTOMER_REFERENCE_MAX_LENGTH} characters\n"
+            + "\n".join(f"✗ {error}" for error in result.errors)
+        )
+
+    if st.button("Apply to All BOM Lines", key=f"{key_prefix}_apply_all", disabled=not result.valid):
+        _apply_customer_reference_to_all(current_run, active_bom_state, result.value)
+        st.success(f"Applied {result.value} to every BOM line.")
+        st.rerun()
+
+
+def _render_project_pcb_reference(current_run, active_bom_state):
+    try:
+        projects = get_projects()
+        pcb_codes = get_pcb_codes()
+    except RegistryError as exc:
+        st.error(f"Customer Reference registry error: {exc}")
+        return
+
+    project_options = sorted(projects.keys())
+    pcb_options = sorted(pcb_codes.keys())
+    if not project_options or not pcb_options:
+        st.warning("No approved Project or PCB codes in the registry yet. Add one below.")
+        return
+
+    cols = st.columns(2)
+    with cols[0]:
+        project = st.selectbox(
+            "Project",
+            project_options,
+            key="cref_project",
+            format_func=lambda code: f"{code} — {projects.get(code, '')}",
+        )
+    with cols[1]:
+        selected_pcbs = st.multiselect(
+            "PCB Code(s)",
+            pcb_options,
+            key="cref_pcb_codes",
+            format_func=lambda code: f"{code} — {pcb_codes.get(code, '')}",
+        )
+
+    if not selected_pcbs:
+        st.info("Select at least one PCB code to generate a reference.")
+        return
+
+    preview = build_project_reference(project, selected_pcbs)
+    _render_customer_reference_preview_and_apply(current_run, active_bom_state, preview, "cref_prj")
+
+
+def _render_rnd_reference(current_run, active_bom_state):
+    try:
+        projects = get_projects()
+    except RegistryError as exc:
+        st.error(f"Customer Reference registry error: {exc}")
+        return
+
+    project_options = sorted(projects.keys())
+    if not project_options:
+        st.warning("No approved Project codes in the registry yet. Add one below.")
+        return
+
+    cols = st.columns(2)
+    with cols[0]:
+        project = st.selectbox(
+            "Project",
+            project_options,
+            key="cref_rnd_project",
+            format_func=lambda code: f"{code} — {projects.get(code, '')}",
+        )
+    with cols[1]:
+        # Deliberately free text, not a fixed registry -- staff/owners
+        # change over time and are not an "approved code" concept.
+        owner = st.text_input("Owner", key="cref_owner")
+
+    if not owner.strip():
+        st.info("Enter an owner to generate a reference.")
+        return
+
+    preview = build_rnd_reference(project, owner)
+    _render_customer_reference_preview_and_apply(current_run, active_bom_state, preview, "cref_rnd")
+
+
+def _render_inventory_reference(current_run, active_bom_state):
+    rows = active_bom_state.rows()
+    if not rows:
+        st.info("No BOM lines to assign.")
+        return
+
+    def _row_label(row):
+        reference = row.get("customer_reference") or "(none)"
+        manufacturer = row.get("manufacturer", "") or "(unknown manufacturer)"
+        return f"{row.get('mpn') or '(missing MPN)'} — {manufacturer} [{reference}]"
+
+    row_by_label = {_row_label(row): row for row in rows}
+    selected_label = st.selectbox("Part", list(row_by_label.keys()), key="cref_inventory_row_label")
+    row = row_by_label[selected_label]
+    row_id = row["row_id"]
+
+    if st.button("Get Recommendation", key="cref_inventory_recommend"):
+        with st.spinner("Checking PartsBox for existing/similar placement..."):
+            recommendation = recommend_location(
+                mpn=row.get("mpn", ""),
+                manufacturer=row.get("manufacturer", ""),
+                description=row.get("description", ""),
+            )
+        st.session_state["cref_inventory_recommendation"] = {
+            "row_id": row_id,
+            "location": recommendation.location,
+            "confidence": recommendation.confidence,
+            "reason": recommendation.reason,
+        }
+
+    recommendation = st.session_state.get("cref_inventory_recommendation")
+    if not recommendation or recommendation["row_id"] != row_id:
+        st.caption("Click Get Recommendation to see a suggested storage location for this part.")
+        return
+
+    st.write(f"**Recommended Location:** {recommendation['location'] or 'None'}")
+    st.write(f"**Match:** {recommendation['confidence']}")
+    st.write(f"**Reason:** {recommendation['reason']}")
+
+    try:
+        storage_response = PartsBoxClient().list_storage_locations()
+        storage_names = sorted(
+            {
+                storage.get("storage/name", "")
+                for storage in storage_response.get("data", [])
+                if isinstance(storage, dict) and storage.get("storage/name")
+            }
+        )
+    except Exception as exc:
+        storage_names = []
+        st.warning(f"Could not load PartsBox storage locations for manual selection: {exc}")
+
+    options = []
+    if recommendation["location"]:
+        options.append(recommendation["location"])
+    options.extend(name for name in storage_names if name != recommendation["location"])
+
+    if options:
+        chosen_location = st.selectbox(
+            "Location to use (Accept the recommendation, or choose a different one)",
+            options,
+            key=f"cref_inventory_location_{row_id}",
+        )
+    else:
+        chosen_location = st.text_input(
+            "Location to use (no PartsBox storage locations loaded)",
+            value=recommendation["location"],
+            key=f"cref_inventory_location_text_{row_id}",
+        )
+
+    if not chosen_location:
+        return
+
+    preview = build_inventory_reference(chosen_location)
+    result = validate_customer_reference(preview)
+    if result.valid:
+        st.success(f"{result.value}  —  {result.length} / {CUSTOMER_REFERENCE_MAX_LENGTH} characters  ✓ Valid")
+    else:
+        st.error("; ".join(result.errors))
+
+    if st.button("Save Reference for This Line", key=f"cref_inventory_save_{row_id}", disabled=not result.valid):
+        # Inventory reference assignment only writes the canonical
+        # customer_reference field -- it never triggers a PartsBox
+        # stock-movement/relocation operation. Assigning a Customer
+        # Reference and moving physical/PartsBox stock are different
+        # actions.
+        active_bom_state.update_row(row_id, {"customer_reference": result.value})
+        refresh_response_snapshot(current_run)
+        st.session_state.pop("cref_inventory_recommendation", None)
+        st.success(f"Saved {result.value} for this line.")
+        st.rerun()
+
+
+def _render_customer_reference_overrides(current_run, active_bom_state):
+    rows = active_bom_state.rows()
+    if not rows:
+        st.caption("No BOM lines.")
+        return
+
+    for row in rows:
+        row_id = row["row_id"]
+        label = f"{row.get('mpn') or '(missing MPN)'} — {row.get('manufacturer', '') or '(unknown manufacturer)'}"
+        cols = st.columns([3, 3, 1])
+        cols[0].write(label)
+        new_value = cols[1].text_input(
+            "Reference",
+            value=row.get("customer_reference", "") or "",
+            key=f"cref_override_{row_id}",
+            label_visibility="collapsed",
+        )
+        if cols[2].button("Save", key=f"cref_override_save_{row_id}"):
+            normalized = new_value.strip().upper()
+            if normalized:
+                result = validate_customer_reference(normalized)
+                if not result.valid:
+                    st.error("; ".join(result.errors))
+                    continue
+                normalized = result.value
+            active_bom_state.update_row(row_id, {"customer_reference": normalized})
+            refresh_response_snapshot(current_run)
+            st.rerun()
+
+
+def _render_add_approved_code():
+    with st.expander("+ Add Approved Project or PCB Code"):
+        st.caption(
+            "Today's codes are the current approved registry, not a permanent "
+            "list -- add a new one here as projects/boards are approved. See "
+            "config/customer_reference_registry.json."
+        )
+        code_type = st.radio(
+            "Type", ["Project Code", "PCB Code"], key="cref_add_type", horizontal=True
+        )
+        code = st.text_input("Code (uppercase letters/digits only)", key="cref_add_code")
+        description = st.text_input("Description", key="cref_add_description")
+        if st.button("Save New Code", key="cref_add_save"):
+            try:
+                if code_type == "Project Code":
+                    add_project(code, description)
+                else:
+                    add_pcb_code(code, description)
+            except RegistryError as exc:
+                st.error(str(exc))
+            else:
+                st.success(f"Added {code.strip().upper()!r} to the approved registry.")
+                st.rerun()
+
+
+def render_customer_reference_section(current_run, active_bom_state):
+    """
+    Customer Reference / Customer Part Number assignment (Yank naming
+    convention, YT-SOP-00-01-A) -- feeds Mouser cart / DigiKey MyList /
+    export handoff, never an order. Lives on the Purchasing page since
+    it's purchasing preparation, not a disconnected page.
+    """
+    st.subheader("Customer Reference")
+    st.caption(
+        "Sets the Customer Reference / Customer Part Number used on Mouser "
+        "and DigiKey orders. AutoBOM prepares this field; purchasing still "
+        "completes checkout manually outside AutoBOM."
+    )
+
+    st.radio(
+        "Reference Type",
+        ["Project / PCB", "Inventory", "R&D"],
+        key="cref_reference_type",
+        horizontal=True,
+    )
+    reference_type = st.session_state["cref_reference_type"]
+
+    if reference_type == "Project / PCB":
+        _render_project_pcb_reference(current_run, active_bom_state)
+    elif reference_type == "R&D":
+        _render_rnd_reference(current_run, active_bom_state)
+    else:
+        _render_inventory_reference(current_run, active_bom_state)
+
+    with st.expander("Override individual lines"):
+        _render_customer_reference_overrides(current_run, active_bom_state)
+
+    _render_add_approved_code()
+
+
 def render_purchasing_page():
     """
     Purchasing summary/status/regeneration all derive from the canonical
@@ -691,6 +987,9 @@ def render_purchasing_page():
     if active_bom_state is None:
         st.info("No active BOM state for the current run.")
         return
+
+    render_customer_reference_section(current_run, active_bom_state)
+    st.divider()
 
     summary = build_purchasing_summary(current_run)
     st.subheader(f"Purchasing Handoff — {summary['status']}")

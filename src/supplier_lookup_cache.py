@@ -1,8 +1,8 @@
 import json
 import os
-import uuid
 from pathlib import Path
 
+from atomic_file import atomic_write_json as _atomic_write_json
 from file_lock import FileLock as _FileLock
 from file_lock import DEFAULT_LOCK_TIMEOUT_SECONDS, LOCK_STALE_SECONDS
 from manufacturer_aliases import normalize_manufacturer, normalize_part_number
@@ -51,19 +51,6 @@ def _read_json_file(path):
         return json.loads(text)
     except (OSError, json.JSONDecodeError):
         return {}
-
-
-def _atomic_write_json(path, data):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-
-    tmp_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-    try:
-        os.replace(str(tmp_path), str(path))
-    except OSError:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 class SupplierLookupCache:

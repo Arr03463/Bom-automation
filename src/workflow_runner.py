@@ -929,6 +929,12 @@ def run_bom_workflow(
         # Review_Items sheet are all derived from it below, rather than
         # each independently re-filtering/re-copying clean_bom.
         active_bom_state = ActiveBomState(result.clean_bom, run_id)
+        # Canonical Customer Reference field (see customer_reference.py):
+        # initialized here so it exists as a real column from run start --
+        # present in rows()/exports immediately, not only once an operator
+        # first assigns a value via update_row().
+        if "customer_reference" not in active_bom_state.dataframe.columns:
+            active_bom_state.dataframe["customer_reference"] = ""
         review_items_df = active_bom_state.review_items_dataframe()
         result.review_items = review_items_df
 

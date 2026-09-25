@@ -80,6 +80,19 @@ class WorkflowRunnerContractTests(unittest.TestCase):
             self.assertTrue(row["row_id"].startswith(f"{workspace['run_id']}:"))
         self.assertEqual(result["review_items"], [])
 
+    def test_customer_reference_column_is_initialized_empty_on_every_row(self):
+        """
+        customer_reference is canonical BOM data (see customer_reference.py)
+        -- it must exist on every row from run start, not only appear
+        once an operator first assigns a value.
+        """
+        _, result = run_isolated_workflow(self.temp_root)
+
+        self.assertTrue(result["bom_rows"])
+        for row in result["bom_rows"]:
+            self.assertIn("customer_reference", row)
+            self.assertEqual(row["customer_reference"], "")
+
     def test_purchasing_and_partsbox_default_when_not_attempted(self):
         _, result = run_isolated_workflow(self.temp_root)
 

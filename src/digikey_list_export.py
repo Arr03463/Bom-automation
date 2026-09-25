@@ -10,6 +10,7 @@ DIGIKEY_COLUMNS = [
     "selected_supplier",
     "sourcing_status",
     "sourcing_notes",
+    "customer_reference",
 ]
 
 

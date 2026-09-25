@@ -13,6 +13,7 @@ SOURCING_COLUMNS = [
     "digikey_stock",
     "sourcing_status",
     "sourcing_notes",
+    "customer_reference",
 ]
 
 

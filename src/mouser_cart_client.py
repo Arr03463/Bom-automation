@@ -66,6 +66,19 @@ class MouserCartClient:
 
 
 def build_mouser_cart_items(clean_bom):
+    # Aggregated by (part number, Customer Reference) rather than part
+    # number alone: two BOM rows for the same Mouser part but different
+    # Customer References (e.g. one line for a project order, another for
+    # inventory restock) must stay separate cart lines, each carrying its
+    # own reference -- merging them would silently drop one reference.
+    # Confirmed live (2026-09-25, one real disposable cart line) and via
+    # Mouser's published Cart API schema: CartItemRequest.CustomerPartNumber
+    # is a per-item, optional REQUEST string field -- exactly what Customer
+    # Reference maps onto. Sending it round-tripped correctly with zero
+    # Errors; Mouser's RESPONSE echoes the same value back under a
+    # different field name, CartItemCustPartNumber (not read by this
+    # codebase today, since it doesn't parse cart response line items
+    # beyond CartKey -- noted here in case that changes).
     item_quantities = {}
 
     for _, row in clean_bom.iterrows():
@@ -86,18 +99,19 @@ def build_mouser_cart_items(clean_bom):
         except ValueError:
             continue
 
-        item_quantities[mouser_part_number] = (
-            item_quantities.get(mouser_part_number, 0) + parsed_qty
-        )
+        customer_reference = str(row.get("customer_reference", "") or "").strip()
+        key = (mouser_part_number, customer_reference)
+        item_quantities[key] = item_quantities.get(key, 0) + parsed_qty
 
     items = []
-    for mouser_part_number, quantity in item_quantities.items():
-        items.append(
-            {
-                "MouserPartNumber": mouser_part_number,
-                "Quantity": quantity,
-            }
-        )
+    for (mouser_part_number, customer_reference), quantity in item_quantities.items():
+        item = {
+            "MouserPartNumber": mouser_part_number,
+            "Quantity": quantity,
+        }
+        if customer_reference:
+            item["CustomerPartNumber"] = customer_reference
+        items.append(item)
 
     return items
 

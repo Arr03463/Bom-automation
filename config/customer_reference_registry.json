@@ -1,0 +1,27 @@
+{
+  "projects": {
+    "ARM": "NASA P3 (Armstrong)",
+    "ALD": "NASA P2 CON (Aldrin)",
+    "COL": "NASA P2 CONV (Collins)",
+    "SPAR": "ARMY P2 (Sparta)",
+    "ATH": "ARMY P1 Battery (Athens)",
+    "TBCA": "TBCA POC3",
+    "SNAP": "SnapOn",
+    "MOM": "Mothership"
+  },
+  "pcb_codes": {
+    "BOOST": "Transmitter DCDC",
+    "AMP": "Transmitter Amplifier",
+    "TXCTR": "Transmitter Controls",
+    "MINI": "Transmitter Mini DCDC",
+    "TXTER": "Transmitter Termination",
+    "RXTER": "Receiver Termination",
+    "REC": "Receiver Rectifier",
+    "BUCK": "Receiver DCDC",
+    "PDU": "Receiver PDU",
+    "RXCTR": "Receiver Controls",
+    "MISC": "Miscellaneous",
+    "DAB": "Dual Active Bridge",
+    "BUZZ": "Bus Bar"
+  }
+}

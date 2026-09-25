@@ -183,6 +183,18 @@ def build_timestamped_list_name(list_name):
 
 
 def build_digikey_mylists_parts(clean_bom):
+    # Confirmed via DigiKey's official MyLists v1 OpenAPI spec: the
+    # RequestedPart schema has a per-part, optional CustomerReference
+    # string field -- exactly what Customer Reference maps onto. Sending
+    # it live (2026-09-26, one disposable test MyList) was accepted with
+    # no error; this client has no "get list contents" endpoint to read
+    # it back and confirm storage directly, so that last step relies on
+    # the official schema rather than an echoed response (unlike Mouser's
+    # cart, whose response did echo the value back -- see
+    # mouser_cart_client.py). Unlike Mouser's cart (aggregated by part
+    # number), each BOM row already becomes its own list entry here, so
+    # no merge-key
+    # change is needed to keep references per-line.
     parts = []
 
     for _, row in clean_bom.iterrows():
@@ -195,25 +207,28 @@ def build_digikey_mylists_parts(clean_bom):
         supplier_part_number = str(row.get("supplier_part_number", "")).strip()
         mpn = str(row.get("mpn", "")).strip()
         qty = str(row.get("supplier_order_qty", "")).strip()
+        customer_reference = str(row.get("customer_reference", "") or "").strip()
 
         part_number = supplier_part_number or mpn
 
         if not part_number or not qty:
             continue
 
-        parts.append(
-            {
-                "RequestedPartNumber": part_number,
-                "OriginalPartNumber": mpn,
-                "ManufacturerName": str(row.get("manufacturer", "")).strip(),
-                "SelectedQuantityIndex": 0,
-                "Quantities": [
-                    {
-                        "Quantity": int(float(qty)),
-                    }
-                ],
-            }
-        )
+        part_entry = {
+            "RequestedPartNumber": part_number,
+            "OriginalPartNumber": mpn,
+            "ManufacturerName": str(row.get("manufacturer", "")).strip(),
+            "SelectedQuantityIndex": 0,
+            "Quantities": [
+                {
+                    "Quantity": int(float(qty)),
+                }
+            ],
+        }
+        if customer_reference:
+            part_entry["CustomerReference"] = customer_reference
+
+        parts.append(part_entry)
 
     return parts
 

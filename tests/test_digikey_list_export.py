@@ -55,6 +55,17 @@ class ExportDigikeyListTests(unittest.TestCase):
 
         self.assertEqual(count, 1)
 
+    def test_customer_reference_column_included_when_present(self):
+        clean_bom = pd.DataFrame(
+            [{"mpn": "A", "selected_supplier": "DigiKey", "customer_reference": "INV-A12"}]
+        )
+
+        path, _ = export_digikey_list(clean_bom, str(self.temp_dir))
+
+        content = Path(path).read_text()
+        self.assertIn("customer_reference", content)
+        self.assertIn("INV-A12", content)
+
 
 if __name__ == "__main__":
     unittest.main()
