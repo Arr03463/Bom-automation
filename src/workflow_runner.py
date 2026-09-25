@@ -456,9 +456,24 @@ def regenerate_purchasing(response, run_mouser_cart=True, run_digikey_mylist=Tru
                 "add_result": digikey_mylist_result.get("add_result") if digikey_mylist_result else None,
             }
             purchasing["digikey"] = built
-            if built["created"]:
+            if built["created"] and not built["token_persistence_degraded"]:
                 artifact_status["digikey_mylist"] = STATUS_CURRENT
                 messages.append("DigiKey MyList regenerated from the current BOM state.")
+            elif built["created"] and built["token_persistence_degraded"]:
+                # The list itself was created (its data is preserved
+                # above), but the rotated refresh token this call
+                # produced could not be durably persisted -- the next
+                # refresh attempt will likely fail until that's fixed.
+                # Reported as failed, not current, so purchasing doesn't
+                # claim DigiKey is fully healthy (Codex F2).
+                artifact_status["digikey_mylist"] = STATUS_FAILED
+                errors.append(
+                    "DigiKey MyList was created, but its rotated refresh token could "
+                    "not be durably persisted -- DigiKey MyLists automation will "
+                    "likely fail on the next attempt or after a restart until this "
+                    "is corrected. See "
+                    "Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md."
+                )
             else:
                 artifact_status["digikey_mylist"] = STATUS_FAILED
                 errors.append(f"DigiKey MyList regeneration did not create a list: {built.get('message')}")
@@ -515,10 +530,15 @@ def _count_sourcing(clean_bom):
 
 def _extract_mouser_cart_key(raw_result):
     """
-    Best-effort CartKey extraction. The Cart API response shape returned by
-    add_items_to_cart() is not yet confirmed against a live Mouser response;
-    this checks the shapes referenced in Mouser's published Cart API docs
-    and falls back to None rather than guessing further.
+    Confirmed live (2026-09-24, one real disposable test cart via
+    MouserCartClient.add_items_to_cart()): CartKey is returned at the TOP
+    LEVEL of the response (alongside CartItems/CurrencyCode/Errors/
+    MerchandiseTotal/TotalItemCount), with no "Cart" sub-object present in
+    that response at all. The Cart.CartKey branch below is kept as a
+    defensive fallback for a response shape variant referenced in
+    Mouser's published docs but never observed against this account --
+    not removed, since it costs nothing to keep and protects against a
+    shape change.
     """
     if not isinstance(raw_result, dict):
         return None
@@ -576,7 +596,17 @@ def _build_digikey_purchasing(attempted, digikey_mylist_result):
             "share_id": None,
             "parts_count": 0,
             "message": None,
+            "token_persistence_degraded": False,
         }
+
+    # Codex F2: a MyList can be genuinely created while the DigiKey
+    # refresh token rotated during that call failed to persist durably.
+    # That is not a healthy outcome -- the store still holds a token
+    # DigiKey has already invalidated -- so callers (regenerate_purchasing,
+    # run_bom_workflow) must not treat "created: True" alone as
+    # sufficient to mark this artifact current. See
+    # create_digikey_mylist_from_bom()'s "token_store_error" field.
+    token_store_error = digikey_mylist_result.get("token_store_error")
 
     return {
         "attempted": True,
@@ -590,6 +620,7 @@ def _build_digikey_purchasing(attempted, digikey_mylist_result):
         "share_id": None,
         "parts_count": digikey_mylist_result.get("parts_count", 0),
         "message": digikey_mylist_result.get("message"),
+        "token_persistence_degraded": bool(token_store_error),
     }
 
 
@@ -773,6 +804,14 @@ def run_bom_workflow(
                             response["messages"].append(
                                 f"DigiKey MyList parts added: {digikey_mylist_result.get('parts_count', 0)}"
                             )
+                            if digikey_mylist_result.get("token_store_error"):
+                                response["warnings"].append(
+                                    "DigiKey MyList was created, but its rotated refresh "
+                                    "token could not be durably persisted -- DigiKey "
+                                    "MyLists automation will likely fail on the next "
+                                    "attempt or after a restart until this is corrected. "
+                                    "See Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md."
+                                )
                         else:
                             response["messages"].append(
                                 f"DigiKey MyList skipped: {digikey_mylist_result.get('message')}"
@@ -962,9 +1001,13 @@ def run_bom_workflow(
         if not requirement["digikey_mylist"]:
             artifact_status["digikey_mylist"] = STATUS_NOT_REQUIRED
         elif run_digikey_mylist and os.getenv("DIGIKEY_MYLISTS_ENABLED", "false").lower() == "true":
+            # Created but with a token-persistence failure (Codex F2) is
+            # reported as failed, not current -- see _build_digikey_purchasing().
             artifact_status["digikey_mylist"] = (
                 STATUS_CURRENT
-                if digikey_mylist_result and digikey_mylist_result.get("created")
+                if digikey_mylist_result
+                and digikey_mylist_result.get("created")
+                and not digikey_mylist_result.get("token_store_error")
                 else STATUS_FAILED
             )
         else:

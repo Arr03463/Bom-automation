@@ -8,6 +8,15 @@ from file_lock import FileLock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# The operation this lock protects (DigiKeyClient.get_user_access_token()'s
+# read-refresh-write cycle) includes a single HTTP POST with a 30s request
+# timeout. The stale-reclaim threshold must stay comfortably longer than
+# that so a legitimately slow-but-live refresh is never mistaken for an
+# abandoned lock and reclaimed by a second waiter mid-request -- 4x the
+# request timeout is a simple, conservative margin, not a distributed-lock
+# scheme.
+TOKEN_LOCK_STALE_SECONDS = 120
+
 
 class TokenStoreError(Exception):
     """
@@ -115,7 +124,7 @@ class EnvFileTokenStore(TokenStore):
         return True
 
     def lock(self, timeout=None):
-        return FileLock(self.env_path, timeout=timeout)
+        return FileLock(self.env_path, timeout=timeout, stale_after=TOKEN_LOCK_STALE_SECONDS)
 
 
 class FileTokenStore(TokenStore):
@@ -151,7 +160,9 @@ class FileTokenStore(TokenStore):
         # One shared lock file per directory (not per key): today there is
         # exactly one key in practice (DIGIKEY_REFRESH_TOKEN), and a
         # per-directory lock is simpler than inventing per-key lock paths.
-        return FileLock(self.directory / "_rotation", timeout=timeout)
+        return FileLock(
+            self.directory / "_rotation", timeout=timeout, stale_after=TOKEN_LOCK_STALE_SECONDS
+        )
 
 
 class HttpTokenStore(TokenStore):

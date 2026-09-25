@@ -9,6 +9,23 @@ LOCK_STALE_SECONDS = 30
 LOCK_POLL_SECONDS = 0.05
 
 
+class LockAcquisitionError(RuntimeError):
+    """
+    Raised by FileLock.__enter__() when the lock could not be acquired
+    within its timeout. `with FileLock(...):` is fail-closed by design --
+    entering the block always means the lock is actually held, so
+    protected code can never run believing it is exclusive when it isn't
+    (see the Codex F1 finding: a caller using `with` must not be able to
+    proceed after a failed/timed-out acquire).
+
+    Callers that want to skip the protected operation on a timeout
+    instead of raising (e.g. SupplierLookupCache.save(), which treats "no
+    lock" as "skip this save, try again next time") should call
+    acquire()/release() manually and check the boolean return value
+    rather than using `with`.
+    """
+
+
 class FileLock:
     """
     Minimal advisory lock built on atomic directory-entry creation
@@ -31,13 +48,26 @@ class FileLock:
     already lost to a successor that re-acquired it).
     """
 
-    def __init__(self, target_path, timeout=None):
+    def __init__(self, target_path, timeout=None, stale_after=None):
         self.lock_path = Path(str(target_path) + LOCK_SUFFIX)
         self.timeout = timeout if timeout is not None else DEFAULT_LOCK_TIMEOUT_SECONDS
+        # How long an unreleased lock file must sit untouched before a
+        # waiting acquirer treats it as abandoned (a holder that crashed
+        # without releasing) rather than a slow-but-live operation. Must
+        # stay comfortably longer than the slowest legitimate protected
+        # operation using this lock instance, or a live holder's lock can
+        # be reclaimed out from under it -- see DigiKeyClient's DigiKey
+        # token-refresh lock, which uses a longer value than the
+        # SupplierLookupCache default because its protected operation
+        # includes a real HTTP round trip.
+        self.stale_after = stale_after if stale_after is not None else LOCK_STALE_SECONDS
         self._owner_token = None
 
     def __enter__(self):
-        self.acquire()
+        if not self.acquire():
+            raise LockAcquisitionError(
+                f"Could not acquire lock within {self.timeout}s: {self.lock_path}"
+            )
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -77,7 +107,7 @@ class FileLock:
         except OSError:
             return
 
-        if age < LOCK_STALE_SECONDS:
+        if age < self.stale_after:
             return
 
         try:

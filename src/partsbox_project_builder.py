@@ -343,6 +343,14 @@ def storage_has_tag(storage_record, tag):
     lifecycle below (deciding storage_tag_missing) and by the PartsBox
     Inventory UI's Storage Locations view (app.py), so the two never
     duplicate this check with diverging logic.
+
+    Confirmed live (2026-09-24, real storage/all response, 1888 storage
+    records): "storage/tags" is a plain list of plain strings when
+    present (e.g. ["Production"]), and the KEY IS ABSENT ENTIRELY (not an
+    empty list) on records with no tags -- confirmed across several
+    distinct field-presence combinations. Tag values are not
+    lowercase-normalized by the API ("Production", not "production"),
+    confirming the .strip().lower() normalization below is load-bearing.
     """
     if not isinstance(storage_record, dict):
         return False

@@ -15,7 +15,7 @@ SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
 
 from digikey_client import DigiKeyClient
-from file_lock import FileLock
+from file_lock import FileLock, LockAcquisitionError
 from token_store import (
     EnvFileTokenStore,
     FileTokenStore,
@@ -404,9 +404,15 @@ class TokenStoreLockTests(unittest.TestCase):
         def try_second():
             first_holder_has_lock.wait(timeout=2)
             lock = store.lock(timeout=0.3)
-            with lock:
-                if lock.acquired:
+            try:
+                with lock:
+                    # Fail-closed (Codex F1): entering `with lock:` at all
+                    # means acquisition succeeded, so reaching this line
+                    # while the first holder is still active would itself
+                    # be the bug.
                     second_holder_acquired_while_first_held.set()
+            except LockAcquisitionError:
+                pass
             second_holder_tried.set()
 
         thread_a = threading.Thread(target=hold_first)
@@ -537,6 +543,106 @@ class DigiKeyClientConcurrentRotationTests(unittest.TestCase):
         self.assertEqual(state["rejected"], [])
         self.assertEqual(state["rotations"], 2)
         self.assertEqual(store.get("DIGIKEY_REFRESH_TOKEN"), state["current"])
+
+    def test_lock_timeout_makes_zero_digikey_requests(self):
+        """
+        Codex F1: a caller that cannot acquire the token-store lock must
+        make ZERO DigiKey refresh-token HTTP requests -- not a request
+        with a stale token, not a "best effort" request. Holds the lock
+        externally (simulating another process/thread's in-progress
+        refresh) and asserts requests.post is never called.
+        """
+        store = FileTokenStore(self.temp_dir)
+        store.set("DIGIKEY_REFRESH_TOKEN", "T0")
+        client = self._make_client(store, "T0")
+
+        blocking_lock = FileLock(self.temp_dir / "_rotation", timeout=5)
+        self.assertTrue(blocking_lock.acquire())
+        try:
+            # Short per-call timeout so the test doesn't wait for the
+            # store's own (120s) default. Builds a fresh FileLock rather
+            # than calling store.lock() again, to avoid patching over
+            # itself.
+            with patch.object(
+                store,
+                "lock",
+                lambda timeout=None: FileLock(self.temp_dir / "_rotation", timeout=0.2),
+            ):
+                with patch("digikey_client.requests.post") as mock_post:
+                    with self.assertRaises(RuntimeError) as ctx:
+                        client.get_user_access_token()
+
+            mock_post.assert_not_called()
+            self.assertIn("busy", str(ctx.exception).lower())
+        finally:
+            blocking_lock.release()
+
+
+class DigiKeyTokenPersistenceFailureDegradesResultTests(unittest.TestCase):
+    """
+    Codex F2: a successful DigiKey refresh whose rotated-token PERSISTENCE
+    fails must not be indistinguishable from a fully healthy rotation.
+    DigiKeyClient itself already records token_store_error (see
+    DigiKeyClientTokenStoreErrorSurfacingTests); this covers that it
+    survives into create_digikey_mylist_from_bom()'s returned dict, which
+    is what workflow_runner.py's artifact-status logic reads (see
+    tests/test_purchasing_state.py for the workflow_runner-level
+    assertion that this degrades the reported artifact status).
+    """
+
+    def test_create_mylist_result_carries_token_store_error(self):
+        import digikey_mylists_client as dm
+
+        fake_auth_client = MagicMock()
+        fake_auth_client.get_user_access_token.return_value = "access-token"
+        fake_auth_client.token_store_error = "store unreachable"
+
+        with patch.object(dm.DigiKeyMyListsClient, "__init__", lambda self: None):
+            client = dm.DigiKeyMyListsClient()
+            client.auth_client = fake_auth_client
+            client.dry_run = True
+            client.enabled = True
+            client.client_id = "id"
+            client.account_id = ""
+
+        with patch("digikey_mylists_client.DigiKeyMyListsClient", return_value=client):
+            with patch(
+                "digikey_mylists_client.build_digikey_mylists_parts",
+                return_value=[{"RequestedPartNumber": "X"}],
+            ):
+                result = dm.create_digikey_mylist_from_bom(
+                    clean_bom=object(), list_name="Test List"
+                )
+
+        self.assertTrue(result["created"])
+        self.assertEqual(result["token_store_error"], "store unreachable")
+
+    def test_create_mylist_result_has_no_token_store_error_when_healthy(self):
+        import digikey_mylists_client as dm
+
+        fake_auth_client = MagicMock()
+        fake_auth_client.get_user_access_token.return_value = "access-token"
+        fake_auth_client.token_store_error = None
+
+        with patch.object(dm.DigiKeyMyListsClient, "__init__", lambda self: None):
+            client = dm.DigiKeyMyListsClient()
+            client.auth_client = fake_auth_client
+            client.dry_run = True
+            client.enabled = True
+            client.client_id = "id"
+            client.account_id = ""
+
+        with patch("digikey_mylists_client.DigiKeyMyListsClient", return_value=client):
+            with patch(
+                "digikey_mylists_client.build_digikey_mylists_parts",
+                return_value=[{"RequestedPartNumber": "X"}],
+            ):
+                result = dm.create_digikey_mylist_from_bom(
+                    clean_bom=object(), list_name="Test List"
+                )
+
+        self.assertTrue(result["created"])
+        self.assertIsNone(result["token_store_error"])
 
 
 if __name__ == "__main__":

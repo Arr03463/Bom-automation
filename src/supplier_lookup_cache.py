@@ -12,6 +12,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CACHE_PATH = PROJECT_ROOT / ".cache" / "supplier_lookup_cache.json"
 
 
+def default_cache_path():
+    """
+    AUTOBOM_CACHE_ROOT lets a deployment put runtime cache data outside
+    the source checkout, the same way AUTOBOM_RUNS_ROOT does for run
+    directories (see run_workspace.resolve_runs_root()). The more
+    specific SUPPLIER_LOOKUP_CACHE_PATH (an exact file path, pre-existing)
+    still takes priority when set -- this only changes the *default* used
+    when that isn't.
+    """
+    cache_root = os.getenv("AUTOBOM_CACHE_ROOT", "").strip()
+    if cache_root:
+        return Path(cache_root) / "supplier_lookup_cache.json"
+    return DEFAULT_CACHE_PATH
+
+
 def _lock_timeout_seconds():
     try:
         return float(
@@ -54,7 +69,7 @@ def _atomic_write_json(path, data):
 class SupplierLookupCache:
     def __init__(self):
         self.enabled = os.getenv("SUPPLIER_LOOKUP_CACHE_ENABLED", "true").lower() == "true"
-        self.path = Path(os.getenv("SUPPLIER_LOOKUP_CACHE_PATH", str(DEFAULT_CACHE_PATH)))
+        self.path = Path(os.getenv("SUPPLIER_LOOKUP_CACHE_PATH", str(default_cache_path())))
         self.data = {}
         self._pending_updates = {}
         self.dirty = False

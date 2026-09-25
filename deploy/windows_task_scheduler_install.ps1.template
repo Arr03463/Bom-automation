@@ -1,0 +1,56 @@
+# TEMPLATE -- adapt and review before running. Not executed as part of
+# this pass (see Documentation/AutoBOM_Remote_PC_Predeployment_Report.md
+# -- Windows service installation is HOST SETUP PENDING, not performed
+# here).
+#
+# Registers AutoBOM to start at boot via Task Scheduler, restart on
+# failure, and run whether a user is logged on or not. This requires
+# nothing beyond what Windows already provides -- no third-party service
+# wrapper -- at the cost of coarser process supervision/log handling than
+# a dedicated service manager (see windows_service_install_nssm.ps1.template
+# for that alternative if the team has NSSM approved).
+#
+# Prerequisites before running this:
+#   - Production checkout, venv, and directories already exist (see
+#     Documentation/AutoBOM_Onsite_Deployment_Checklist.md).
+#   - A dedicated service account exists and this script is run with
+#     permission to register a task running as that account.
+#   - launch_production.ps1 has been run manually at least once and
+#     confirmed to work.
+
+param(
+    [string]$TaskName = "AutoBOM",
+    [string]$RepoPath = "C:\AutoBOM\prod\repo",
+    [string]$VenvPath = "C:\AutoBOM\prod\.venv",
+    [string]$EnvFile = "C:\AutoBOM\prod\repo\.env",
+    [string]$ServiceAccount = "DOMAIN\svc-autobom"  # replace with the approved service account
+)
+
+$ErrorActionPreference = "Stop"
+
+$launchScript = Join-Path $RepoPath "deploy\launch_production.ps1"
+$arguments = "-ExecutionPolicy Bypass -File `"$launchScript`" -RepoPath `"$RepoPath`" -VenvPath `"$VenvPath`" -EnvFile `"$EnvFile`""
+
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments -WorkingDirectory $RepoPath
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$settings = New-ScheduledTaskSettingsSet `
+    -RestartCount 999 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -StartWhenAvailable `
+    -DontStopOnIdleEnd
+
+# Prompts for the service account's password interactively -- do not
+# hardcode a credential in this script or commit one anywhere.
+$credential = Get-Credential -UserName $ServiceAccount -Message "Enter the AutoBOM service account password"
+
+Register-ScheduledTask -TaskName $TaskName `
+    -Action $action `
+    -Trigger $trigger `
+    -Settings $settings `
+    -User $credential.UserName `
+    -Password $credential.GetNetworkCredential().Password `
+    -RunLevel Highest `
+    -Description "AutoBOM Streamlit application (see Documentation/AutoBOM_Deployment_Guide.md)"
+
+Write-Host "Registered scheduled task '$TaskName'. Start it now with:"
+Write-Host "  Start-ScheduledTask -TaskName '$TaskName'"

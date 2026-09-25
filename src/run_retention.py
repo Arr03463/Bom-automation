@@ -3,7 +3,7 @@ import shutil
 import time
 from pathlib import Path
 
-from run_workspace import RUNS_ROOT
+from run_workspace import resolve_runs_root
 
 DEFAULT_RETENTION_DAYS = 14
 DEFAULT_MAX_RUNS = 200
@@ -34,7 +34,16 @@ def cleanup_old_runs(runs_root=None, active_run_id=None, retention_days=None, ma
     policy can be disabled by setting its value to 0.
 
     Never deletes active_run_id -- the run this call site is currently
-    working with, regardless of its age or position. Never raises: every
+    working with, regardless of its age or position. This is NOT a
+    guarantee that every other currently-open browser session's run is
+    protected: cleanup has no registry of what other sessions are doing
+    and will reap an older run that's still open in someone else's tab if
+    it crosses the age/count threshold (Codex F4). Deliberately not
+    solved with a session registry here -- that's disproportionate
+    complexity for a small internal tool; use conservative
+    AUTOBOM_RUN_RETENTION_DAYS/AUTOBOM_MAX_RUNS defaults instead, and see
+    Documentation/AutoBOM_Deployment_Guide.md for the documented
+    tradeoff. Never raises: every
     failure (a missing directory, a permissions error, a file busy on
     Windows, an unexpected exception) is caught and returned in
     result["errors"] instead of propagating, so a retention problem can
@@ -46,7 +55,7 @@ def cleanup_old_runs(runs_root=None, active_run_id=None, retention_days=None, ma
     result = {"deleted": [], "kept": [], "errors": []}
 
     try:
-        runs_root = Path(runs_root) if runs_root else RUNS_ROOT
+        runs_root = Path(runs_root) if runs_root else resolve_runs_root()
         retention_days = _retention_days() if retention_days is None else retention_days
         max_runs = _max_runs() if max_runs is None else max_runs
 

@@ -221,6 +221,7 @@ def create_digikey_mylist_from_bom(clean_bom, list_name):
             "created": False,
             "message": "No DigiKey-sourced parts found.",
             "parts_count": 0,
+            "token_store_error": None,
         }
 
     resolved_list_name, name_changed = client.resolve_create_list_name(list_name)
@@ -236,6 +237,15 @@ def create_digikey_mylist_from_bom(clean_bom, list_name):
             or create_result.get("id")
         )
 
+    # Codex F2: a rotated refresh token that failed to persist durably is
+    # a degraded outcome even when the MyList call(s) above succeeded --
+    # the durable store still holds the OLD token DigiKey has already
+    # invalidated, so the NEXT refresh attempt (this process or another,
+    # especially after a restart) will fail until re-persisted. Read
+    # unconditionally so this is never lost regardless of which branch
+    # below returns.
+    token_store_error = getattr(client.auth_client, "token_store_error", None)
+
     if not list_id:
         return {
             "created": False,
@@ -245,9 +255,11 @@ def create_digikey_mylist_from_bom(clean_bom, list_name):
             "name_changed": name_changed,
             "parts_count": len(parts),
             "create_result": create_result,
+            "token_store_error": token_store_error,
         }
 
     add_result = client.add_parts_to_list(list_id, parts)
+    token_store_error = getattr(client.auth_client, "token_store_error", None)
 
     return {
         "created": True,
@@ -258,6 +270,7 @@ def create_digikey_mylist_from_bom(clean_bom, list_name):
         "parts_count": len(parts),
         "create_result": create_result,
         "add_result": add_result,
+        "token_store_error": token_store_error,
     }
 
 

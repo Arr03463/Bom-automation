@@ -32,6 +32,17 @@ ALL_SOURCES = frozenset({"partsbox", "mouser", "digikey"})
 # dropped, so a category-specific field PartsBox actually returns (e.g.
 # a capacitance or voltage attribute) becomes filterable without this
 # module needing to know its name in advance.
+#
+# Confirmed live (2026-09-24, real part/all response, ~3450 parts): NONE
+# of them include a "part/category" or "part/package" key at all -- these
+# two fields are not present in this account's PartsBox part records via
+# this endpoint (a "part/type" field exists but is a PartsBox internal
+# record-type discriminator, i.e. "linked"/"local"/"meta", unrelated to
+# electronic component category). category/package will read as "" for
+# every PartsBox result until either a per-part detail endpoint exposing
+# them is confirmed and added, or this account begins populating those
+# fields -- this is expected/confirmed behavior, not a bug in the
+# extraction below.
 _KNOWN_PARTSBOX_FIELDS = {
     "part/id",
     "part/mpn",

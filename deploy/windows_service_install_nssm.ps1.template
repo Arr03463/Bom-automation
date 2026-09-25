@@ -1,0 +1,53 @@
+# TEMPLATE -- adapt and review before running. Not executed as part of
+# this pass. Requires NSSM (Non-Sucking Service Manager, nssm.cc) to be
+# approved and already installed -- this script does not install NSSM
+# itself. If NSSM isn't approved for use, see
+# windows_task_scheduler_install.ps1.template instead, which needs
+# nothing beyond Windows itself.
+#
+# Windows Services must implement the Service Control Handler API to
+# respond to start/stop signals; a plain PowerShell/python.exe process
+# does not, so `sc.exe create` cannot wrap launch_production.ps1
+# directly. NSSM exists specifically to bridge this -- it registers
+# itself as the real service and supervises an arbitrary child process
+# (here, powershell.exe running launch_production.ps1), restarting it on
+# failure and redirecting its stdout/stderr to files.
+
+param(
+    [string]$ServiceName = "AutoBOM",
+    [string]$RepoPath = "C:\AutoBOM\prod\repo",
+    [string]$VenvPath = "C:\AutoBOM\prod\.venv",
+    [string]$EnvFile = "C:\AutoBOM\prod\repo\.env",
+    [string]$LogDir = "C:\AutoBOM\prod\logs",
+    [string]$NssmExe = "C:\AutoBOM\tools\nssm.exe"
+)
+
+$ErrorActionPreference = "Stop"
+
+if (-not (Test-Path $NssmExe)) {
+    Write-Error "nssm.exe not found at $NssmExe -- install/approve NSSM first, or use windows_task_scheduler_install.ps1.template instead."
+    exit 1
+}
+
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+$launchScript = Join-Path $RepoPath "deploy\launch_production.ps1"
+$arguments = "-ExecutionPolicy Bypass -File `"$launchScript`" -RepoPath `"$RepoPath`" -VenvPath `"$VenvPath`" -EnvFile `"$EnvFile`""
+
+& $NssmExe install $ServiceName "powershell.exe" $arguments
+& $NssmExe set $ServiceName AppDirectory $RepoPath
+& $NssmExe set $ServiceName AppStdout (Join-Path $LogDir "autobom-stdout.log")
+& $NssmExe set $ServiceName AppStderr (Join-Path $LogDir "autobom-stderr.log")
+# Rotate logs when they exceed ~10MB rather than growing unbounded.
+& $NssmExe set $ServiceName AppRotateFiles 1
+& $NssmExe set $ServiceName AppRotateBytes 10485760
+& $NssmExe set $ServiceName Start SERVICE_AUTO_START
+& $NssmExe set $ServiceName AppExit Default Restart
+& $NssmExe set $ServiceName AppRestartDelay 5000
+& $NssmExe set $ServiceName DisplayName "AutoBOM"
+& $NssmExe set $ServiceName Description "AutoBOM Streamlit application (see Documentation/AutoBOM_Deployment_Guide.md)"
+
+Write-Host "Service '$ServiceName' installed. Configure the service account via:"
+Write-Host "  $NssmExe set $ServiceName ObjectName DOMAIN\svc-autobom <password>"
+Write-Host "Then start it with:"
+Write-Host "  Start-Service $ServiceName"

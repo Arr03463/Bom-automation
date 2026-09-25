@@ -404,6 +404,43 @@ class RegeneratePurchasingTests(PurchasingStateTestCase):
         self.assertEqual(result["purchasing"]["mouser"]["cart_key"], "abc")
         self.assertEqual(derive_purchasing_status(result), "Partial — Generation Failed")
 
+    def test_digikey_mylist_created_but_token_persistence_failed_is_reported_as_failed(self):
+        """
+        Codex F2: a DigiKey MyList created successfully, but whose rotated
+        refresh token failed to persist durably, must not be reported as
+        a healthy/current artifact -- the next refresh attempt is likely
+        to fail until this is corrected, so purchasing must not claim
+        DigiKey is Ready.
+        """
+        result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
+        active_bom_state = result["_active_bom_state"]
+        row_id = active_bom_state.rows()[0]["row_id"]
+        self.make_digikey_sourced(active_bom_state, row_id)
+        os.environ["MOUSER_CART_ENABLED"] = "false"
+        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
+
+        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
+            mock_digikey.return_value = {
+                "created": True,
+                "list_id": "list-1",
+                "parts_count": 1,
+                "token_store_error": "store unreachable",
+            }
+            regenerate_purchasing(result)
+
+        self.assertEqual(result["artifact_status"]["digikey_mylist"], "failed")
+        # The list itself was genuinely created; its data is preserved
+        # for the operator even though the artifact status reflects the
+        # underlying persistence risk.
+        self.assertTrue(result["purchasing"]["digikey"]["created"])
+        self.assertEqual(result["purchasing"]["digikey"]["list_id"], "list-1")
+        self.assertTrue(result["purchasing"]["digikey"]["token_persistence_degraded"])
+        self.assertIn(
+            "could not be durably persisted",
+            " ".join(result["purchasing_regeneration_errors"]),
+        )
+        self.assertNotEqual(derive_purchasing_status(result), "Ready for Handoff")
+
     def test_partial_regeneration_digikey_success_mouser_failure(self):
         result = self.run_workflow(csv_text=CLEAN_BOM_CSV)
         active_bom_state = result["_active_bom_state"]

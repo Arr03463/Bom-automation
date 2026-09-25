@@ -1,0 +1,33 @@
+# TEMPLATE -- adapt and review before running. Not executed as part of
+# this pass. Covers rollback/removal for BOTH install paths -- use the
+# section matching whichever install template was actually used.
+
+param(
+    [string]$ServiceName = "AutoBOM",
+    [switch]$UsedTaskScheduler,
+    [switch]$UsedNssm,
+    [string]$NssmExe = "C:\AutoBOM\tools\nssm.exe"
+)
+
+$ErrorActionPreference = "Stop"
+
+if ($UsedTaskScheduler) {
+    Stop-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $ServiceName -Confirm:$false
+    Write-Host "Scheduled task '$ServiceName' removed."
+}
+elseif ($UsedNssm) {
+    if (-not (Test-Path $NssmExe)) {
+        Write-Error "nssm.exe not found at $NssmExe."
+        exit 1
+    }
+    & $NssmExe stop $ServiceName
+    & $NssmExe remove $ServiceName confirm
+    Write-Host "Service '$ServiceName' removed via NSSM."
+}
+else {
+    Write-Error "Specify -UsedTaskScheduler or -UsedNssm to select which removal path to run."
+    exit 1
+}
+
+Write-Host "AutoBOM no longer starts automatically. The checkout, venv, runs/cache/token directories are NOT deleted by this script -- remove them manually if intentionally decommissioning."

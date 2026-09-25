@@ -1,9 +1,26 @@
+import os
 import re
 import uuid
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUNS_ROOT = PROJECT_ROOT / "runs"
+
+
+def resolve_runs_root():
+    """
+    AUTOBOM_RUNS_ROOT lets a deployment put runtime data outside the
+    source checkout (e.g. C:\\AutoBOM\\prod\\data\\runs) instead of being
+    forced to use runs/ inside the repo -- useful for separating a
+    release checkout from persistent runtime state, and for keeping
+    production/development data apart when both run from different
+    checkouts on the same machine. Falls back to the in-repo default
+    (RUNS_ROOT) when unset, so existing behavior/tests are unaffected.
+    Read at call time (not baked into a module-level constant) so a
+    change takes effect without re-importing this module.
+    """
+    override = os.getenv("AUTOBOM_RUNS_ROOT", "").strip()
+    return Path(override) if override else RUNS_ROOT
 
 
 def new_run_id():
@@ -32,7 +49,7 @@ def build_run_workspace(run_id=None, runs_root=None, cleanup=True):
     creation -- run isolation must not depend on retention succeeding.
     """
     run_id = run_id or new_run_id()
-    run_root = Path(runs_root) if runs_root else RUNS_ROOT
+    run_root = Path(runs_root) if runs_root else resolve_runs_root()
     run_dir = run_root / run_id
     input_dir = run_dir / "input"
     output_dir = run_dir / "output"

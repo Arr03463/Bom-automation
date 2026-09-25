@@ -1,7 +1,8 @@
 {
-  "name": "Python 3",
-  // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
+  "name": "AutoBOM Dev Container (development only -- do not run production here)",
+  // Aligned to Python 3.12 to match the tested/production version -- see
+  // requirements-lock.txt and Documentation/AutoBOM_Deployment_Guide.md.
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
   "customizations": {
     "codespaces": {
       "openFiles": [
@@ -17,9 +18,26 @@
       ]
     }
   },
-  "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; [ -f requirements.txt ] && pip3 install --user -r requirements.txt; pip3 install --user streamlit; echo '✅ Packages installed and Requirements met'",
+  "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; [ -f requirements-lock.txt ] && pip3 install --user -r requirements-lock.txt || pip3 install --user -r requirements.txt; echo '✅ Packages installed and Requirements met'",
+  // Development-only launch: relaxed CORS/XSRF and no port-binding
+  // restriction are appropriate for a throwaway container preview, never
+  // for a production deployment -- see .streamlit/config.prod.toml and
+  // Documentation/AutoBOM_Deployment_Guide.md for the production
+  // Streamlit configuration this must not be copied from.
   "postAttachCommand": {
     "server": "streamlit run app.py --server.enableCORS false --server.enableXsrfProtection false"
+  },
+  // Explicit dev-mode defaults so this container can never accidentally
+  // discover or use a host's production token/runtime directories: it
+  // has its own isolated filesystem regardless, but these make the
+  // separation explicit rather than incidental. A real DigiKey
+  // integration test still requires real credentials supplied by the
+  // developer (e.g. via a local, git-ignored .env) -- these defaults
+  // only control WHERE runtime/token state lives, not credentials.
+  "containerEnv": {
+    "DIGIKEY_TOKEN_STORE": "memory",
+    "AUTOBOM_RUNS_ROOT": "",
+    "AUTOBOM_CACHE_ROOT": ""
   },
   "portsAttributes": {
     "8501": {

@@ -4,6 +4,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from file_lock import LockAcquisitionError
 from http_error_utils import raise_for_status as _raise_for_status
 from manufacturer_aliases import (
     manufacturers_equivalent,
@@ -120,40 +121,61 @@ class DigiKeyClient:
         # invalidated. See token_store.TokenStore.lock() and
         # Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md for what
         # backs this on backends with no real lock (memory, http).
-        with self.token_store.lock():
-            current_refresh_token = self._current_refresh_token()
-            if not current_refresh_token:
-                raise ValueError(
-                    "DigiKey MyLists requires 3-legged OAuth. Set DIGIKEY_REFRESH_TOKEN "
-                    "or DIGIKEY_ACCESS_TOKEN in .env after authorizing this app with your "
-                    "My DigiKey account."
+        #
+        # FileLock.__enter__() is fail-closed: if the lock cannot be
+        # acquired within its timeout, entering this `with` raises
+        # LockAcquisitionError instead of proceeding unlocked, so a timed-
+        # out caller makes ZERO DigiKey refresh-token requests (Codex F1).
+        try:
+            with self.token_store.lock():
+                current_refresh_token = self._current_refresh_token()
+                if not current_refresh_token:
+                    raise ValueError(
+                        "DigiKey MyLists requires 3-legged OAuth. Set DIGIKEY_REFRESH_TOKEN "
+                        "or DIGIKEY_ACCESS_TOKEN in .env after authorizing this app with your "
+                        "My DigiKey account."
+                    )
+
+                response = requests.post(
+                    self.token_url,
+                    data={
+                        "client_id": self.client_id,
+                        "client_secret": self.client_secret,
+                        "refresh_token": current_refresh_token,
+                        "grant_type": "refresh_token",
+                    },
+                    timeout=30,
                 )
+                _raise_for_status(response, "DigiKey user token request failed")
 
-            response = requests.post(
-                self.token_url,
-                data={
-                    "client_id": self.client_id,
-                    "client_secret": self.client_secret,
-                    "refresh_token": current_refresh_token,
-                    "grant_type": "refresh_token",
-                },
-                timeout=30,
-            )
-            _raise_for_status(response, "DigiKey user token request failed")
-
-            token_data = response.json()
-            self.access_token = token_data.get("access_token")
-            new_refresh_token = token_data.get("refresh_token", current_refresh_token)
-            # Update in-memory state before attempting to persist: DigiKey
-            # has already invalidated current_refresh_token by returning a
-            # new one, so this process must use the new value for any
-            # further refresh even if durable persistence below fails.
-            self.refresh_token = new_refresh_token
-            if new_refresh_token != current_refresh_token:
-                try:
-                    self.token_store.set(REFRESH_TOKEN_STORE_KEY, new_refresh_token)
-                except TokenStoreError as exc:
-                    self.token_store_error = str(exc)
+                token_data = response.json()
+                self.access_token = token_data.get("access_token")
+                new_refresh_token = token_data.get("refresh_token", current_refresh_token)
+                # Update in-memory state before attempting to persist: DigiKey
+                # has already invalidated current_refresh_token by returning a
+                # new one, so this process must use the new value for any
+                # further refresh even if durable persistence below fails.
+                self.refresh_token = new_refresh_token
+                if new_refresh_token != current_refresh_token:
+                    try:
+                        self.token_store.set(REFRESH_TOKEN_STORE_KEY, new_refresh_token)
+                    except TokenStoreError as exc:
+                        # Codex F2: this is a degraded state, not a healthy
+                        # rotation -- the store still holds the OLD token,
+                        # which DigiKey has already invalidated. The access
+                        # token returned below is still valid for THIS
+                        # request, but the next refresh attempt (this
+                        # process or another) will fail until re-persisted.
+                        # Recorded here, not swallowed; callers up through
+                        # workflow_runner.py surface this as a failed
+                        # artifact rather than a healthy one (see
+                        # _build_digikey_purchasing()).
+                        self.token_store_error = str(exc)
+        except LockAcquisitionError as exc:
+            raise RuntimeError(
+                "DigiKey token store is busy (another refresh appears to be in "
+                "progress); try again in a moment."
+            ) from exc
 
         if not self.access_token:
             raise ValueError("DigiKey did not return a user access token.")
@@ -406,10 +428,15 @@ def _digikey_product_to_result(product, notes=None):
     if status:
         result_notes.append(str(status))
 
-    # Best-effort only: DigiKey's live "Category" field shape is not
-    # confirmed against this codebase's own tests/mocks -- extracted
-    # defensively the same way Manufacturer/ProductStatus are (nested
-    # {"Name": ...} or a plain string), left "" otherwise.
+    # Confirmed live (2026-09-24, real ProductDetails call): Category is a
+    # nested dict with a "Name" key (along with CategoryId/ParentId/
+    # ProductCount/ImageUrl, unused here), exactly as extracted below --
+    # same confirmed shape for Manufacturer ({"Id":.., "Name":..}) and
+    # ProductStatus ({"Id":.., "Status":..}). DigiKeyProductNumber was
+    # absent at the top level for the part checked and only present
+    # inside ProductVariations[0] -- confirming the existing fallback
+    # below (not just top-level access) is load-bearing, not defensive
+    # dead code.
     category = product.get("Category", "")
     if isinstance(category, dict):
         category = category.get("Name", "") or category.get("Value", "")

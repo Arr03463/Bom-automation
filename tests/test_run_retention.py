@@ -48,6 +48,31 @@ class CleanupOldRunsTests(unittest.TestCase):
         self.assertIn("active-run", result["kept"])
         self.assertTrue((self.temp_root / "active-run").exists())
 
+    def test_older_open_session_run_is_not_specially_protected(self):
+        """
+        Codex F4: cleanup only protects the ONE run_id passed as
+        active_run_id (the run just created by this call). An older run
+        that's still open in a different browser session/tab -- but
+        wasn't the run that triggered this particular cleanup call -- has
+        no special protection and can be reaped once it crosses the
+        threshold, exactly like any other old run. This is a documented,
+        accepted tradeoff (see Documentation/AutoBOM_Deployment_Guide.md
+        "Run-directory retention"), not a bug -- this test exists to
+        demonstrate the actual behavior, not to assert it should be
+        different.
+        """
+        _make_run_dir(self.temp_root, "still-open-in-another-tab", age_seconds=30 * 86400)
+
+        result = cleanup_old_runs(
+            runs_root=self.temp_root,
+            active_run_id="brand-new-run",  # a DIFFERENT session's new run
+            retention_days=14,
+            max_runs=0,
+        )
+
+        self.assertIn("still-open-in-another-tab", result["deleted"])
+        self.assertFalse((self.temp_root / "still-open-in-another-tab").exists())
+
     def test_runs_older_than_retention_days_are_deleted(self):
         _make_run_dir(self.temp_root, "old-run", age_seconds=30 * 86400)
         _make_run_dir(self.temp_root, "new-run", age_seconds=0)

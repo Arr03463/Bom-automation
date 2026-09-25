@@ -726,9 +726,13 @@ def render_purchasing_page():
         st.write(f"Cart created: {'Yes' if summary['mouser']['cart_created'] else 'No'}")
         st.write(f"CartKey: {summary['mouser']['cart_key'] or 'Not available'}")
         st.caption(
-            "Sharing is manual for now: complete the Share action in Mouser directly "
-            "and hand the resulting Access ID to purchasing. No need to paste it back "
-            "into AutoBOM."
+            "Sharing is manual: complete the Share action in Mouser directly and "
+            "hand the resulting Access ID to purchasing. No need to paste it back "
+            "into AutoBOM. Confirmed with Mouser (2026-09-24): the Cart Sharing "
+            "Access ID is derived internally from the CartKey, but that derivation "
+            "is not exposed through any supported public or Automation Services "
+            "API -- this manual step is the correct long-term design here, not a "
+            "gap pending a future API."
         )
 
     with cols[1]:

@@ -176,10 +176,13 @@ def _parse_stock(value):
 
 
 def _mouser_part_to_result(part, notes=None):
-    # Best-effort only: Mouser's live "Category" field shape is not
-    # confirmed against this codebase's own tests/mocks. Extracted
-    # defensively (plain string only) and left "" otherwise, rather than
-    # guessing at a nested shape the way DigiKey's Category is handled.
+    # Confirmed live (2026-09-24, real keyword search): Category,
+    # Manufacturer, ManufacturerPartNumber, MouserPartNumber, and
+    # ProductDetailUrl are all plain top-level strings, unlike DigiKey's
+    # nested {"Name": ...} shape for the same concepts. Availability is a
+    # combined string ("2953404 In Stock"), matching _parse_stock()'s
+    # digit-extraction approach below. PriceBreaks[0].Price is a
+    # currency-prefixed string ("$0.10"), matching _first_price().
     category = part.get("Category", "")
     if not isinstance(category, str):
         category = ""

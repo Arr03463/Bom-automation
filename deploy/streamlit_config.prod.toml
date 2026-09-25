@@ -1,0 +1,38 @@
+# Production Streamlit configuration template.
+#
+# Streamlit only auto-loads .streamlit/config.toml in the working
+# directory it's launched from. This file is a TEMPLATE, kept outside
+# .streamlit/ so it can never be silently picked up by a development run
+# (the Dev Container's own launch command passes --server.enableCORS
+# false --server.enableXsrfProtection false directly, which would
+# override this anyway, but keeping this file out of .streamlit/ avoids
+# any ambiguity about which config applies where).
+#
+# On-site: copy this file to <production checkout>\.streamlit\config.toml
+# (see Documentation/AutoBOM_Onsite_Deployment_Checklist.md). Do not
+# commit a copy at that path -- it's deployment-specific.
+
+[server]
+headless = true
+# Bind address: 127.0.0.1 if a reverse proxy sits in front of this
+# process, or an internal LAN interface address if browsers connect
+# directly. Never 0.0.0.0 without a firewall rule restricting who can
+# reach the port -- see Documentation/AutoBOM_Deployment_Guide.md.
+address = "127.0.0.1"
+port = 8501
+# Left at Streamlit's secure defaults (both true) -- do not disable
+# these in production. The Dev Container disables them for local
+# preview convenience only; that must never be copied here.
+enableCORS = true
+enableXsrfProtection = true
+# Community Cloud's own quirks (browser auto-open, file watcher) don't
+# apply to a Windows-service deployment; keep the file watcher on so
+# code updates after a redeploy are picked up on next restart, not
+# silently ignored.
+fileWatcherType = "auto"
+
+[browser]
+gatherUsageStats = false
+
+[logger]
+level = "info"
