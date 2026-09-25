@@ -58,6 +58,7 @@ RESULTS_DISPLAY_COLUMNS = {
     "designators": "Designators",
     "required_qty": "Quantity Required",
     "source": "Source",
+    "customer_reference": "Customer Reference",
     "supplier_part_number": "Supplier Part Number",
     "result_status": "Status",
     "review_reason": "Review Reason",
@@ -173,11 +174,11 @@ def show_download(label, file_path, disabled=False):
 
 def render_run_bom_section():
     """
-    Stage 1 of the AutoBOM workflow: upload, options, start. Deliberately
-    stops after showing run messages -- the processed results table lives
-    in the Results / Needs Review section, and downloads live in
-    Purchasing Handoff, so this section stays focused on kicking a run
-    off (see render_autobom_workflow_page()).
+    Top section of the single-page AutoBOM workspace: upload, options,
+    start. Deliberately stops after showing run messages -- the
+    processed results table, Customer Reference, and downloads live in
+    their own sections further down the same page (see
+    render_autobom_workflow_page()), not on a separate tab/page.
     """
     uploaded_file = st.file_uploader("Upload BOM", type=["csv", "xlsx"])
 
@@ -231,16 +232,7 @@ def render_run_bom_section():
 
     st.divider()
     render_run_messages(current_run)
-    st.caption("See the Results / Needs Review section for the processed BOM, and Purchasing Handoff for downloads.")
-
-
-def render_results_section():
-    current_run = st.session_state.current_run
-    if current_run is None:
-        st.info("Run a BOM first (see the Run BOM section) to see results here.")
-        return
-
-    render_results_workspace(current_run)
+    st.caption("See Results / Needs Review and Purchasing Handoff further down this page.")
 
 
 def render_run_messages(current_run):
@@ -817,43 +809,39 @@ def _render_rnd_reference(current_run, active_bom_state):
 
 
 def _render_inventory_reference(current_run, active_bom_state):
+    """
+    Evaluated per BOM line, not one part picked from a dropdown --
+    recommend_location() (PartsBox-ledger-based: exact part match first,
+    similarity scoring as a fallback) is the same recommender used
+    before, just called once per row in the CURRENT BOM instead of only
+    for a single manually-selected row, and shown as one table the
+    operator can accept or override per line. Only runs on an explicit
+    button click -- selecting "Inventory" above never triggers this by
+    itself, since it's one PartsBox read per BOM line.
+    """
     rows = active_bom_state.rows()
     if not rows:
         st.info("No BOM lines to assign.")
         return
 
-    def _row_label(row):
-        reference = row.get("customer_reference") or "(none)"
-        manufacturer = row.get("manufacturer", "") or "(unknown manufacturer)"
-        return f"{row.get('mpn') or '(missing MPN)'} — {manufacturer} [{reference}]"
+    if st.button("Get Recommendations for All Parts", key="cref_inventory_recommend_all"):
+        with st.spinner("Checking PartsBox for existing/similar placement for every BOM line..."):
+            st.session_state["cref_inventory_recommendations"] = {
+                row["row_id"]: recommend_location(
+                    mpn=row.get("mpn", ""),
+                    manufacturer=row.get("manufacturer", ""),
+                    description=row.get("description", ""),
+                )
+                for row in rows
+            }
 
-    row_by_label = {_row_label(row): row for row in rows}
-    selected_label = st.selectbox("Part", list(row_by_label.keys()), key="cref_inventory_row_label")
-    row = row_by_label[selected_label]
-    row_id = row["row_id"]
-
-    if st.button("Get Recommendation", key="cref_inventory_recommend"):
-        with st.spinner("Checking PartsBox for existing/similar placement..."):
-            recommendation = recommend_location(
-                mpn=row.get("mpn", ""),
-                manufacturer=row.get("manufacturer", ""),
-                description=row.get("description", ""),
-            )
-        st.session_state["cref_inventory_recommendation"] = {
-            "row_id": row_id,
-            "location": recommendation.location,
-            "confidence": recommendation.confidence,
-            "reason": recommendation.reason,
-        }
-
-    recommendation = st.session_state.get("cref_inventory_recommendation")
-    if not recommendation or recommendation["row_id"] != row_id:
-        st.caption("Click Get Recommendation to see a suggested storage location for this part.")
+    recommendations = st.session_state.get("cref_inventory_recommendations")
+    if not recommendations:
+        st.caption(
+            "Click 'Get Recommendations for All Parts' to see a suggested storage "
+            "location for every BOM line."
+        )
         return
-
-    st.write(f"**Recommended Location:** {recommendation['location'] or 'None'}")
-    st.write(f"**Match:** {recommendation['confidence']}")
-    st.write(f"**Reason:** {recommendation['reason']}")
 
     try:
         storage_response = PartsBoxClient().list_storage_locations()
@@ -868,45 +856,57 @@ def _render_inventory_reference(current_run, active_bom_state):
         storage_names = []
         st.warning(f"Could not load PartsBox storage locations for manual selection: {exc}")
 
-    options = []
-    if recommendation["location"]:
-        options.append(recommendation["location"])
-    options.extend(name for name in storage_names if name != recommendation["location"])
+    header_cols = st.columns([3, 2, 3, 2, 1])
+    for col, heading in zip(header_cols, ["Part", "Match", "Reason", "Location", ""]):
+        col.markdown(f"**{heading}**")
 
-    if options:
-        chosen_location = st.selectbox(
-            "Location to use (Accept the recommendation, or choose a different one)",
-            options,
-            key=f"cref_inventory_location_{row_id}",
-        )
-    else:
-        chosen_location = st.text_input(
-            "Location to use (no PartsBox storage locations loaded)",
-            value=recommendation["location"],
-            key=f"cref_inventory_location_text_{row_id}",
-        )
+    for row in rows:
+        row_id = row["row_id"]
+        recommendation = recommendations.get(row_id)
+        if recommendation is None:
+            continue
 
-    if not chosen_location:
-        return
+        label = f"{row.get('mpn') or '(missing MPN)'} — {row.get('manufacturer', '') or '(unknown manufacturer)'}"
+        cols = st.columns([3, 2, 3, 2, 1])
+        cols[0].write(label)
+        cols[1].write(recommendation.confidence)
+        cols[2].write(recommendation.reason)
 
-    preview = build_inventory_reference(chosen_location)
-    result = validate_customer_reference(preview)
-    if result.valid:
-        st.success(f"{result.value}  —  {result.length} / {CUSTOMER_REFERENCE_MAX_LENGTH} characters  ✓ Valid")
-    else:
-        st.error("; ".join(result.errors))
+        options = [recommendation.location] if recommendation.location else []
+        options.extend(name for name in storage_names if name != recommendation.location)
 
-    if st.button("Save Reference for This Line", key=f"cref_inventory_save_{row_id}", disabled=not result.valid):
-        # Inventory reference assignment only writes the canonical
-        # customer_reference field -- it never triggers a PartsBox
-        # stock-movement/relocation operation. Assigning a Customer
-        # Reference and moving physical/PartsBox stock are different
-        # actions.
-        active_bom_state.update_row(row_id, {"customer_reference": result.value})
-        refresh_response_snapshot(current_run)
-        st.session_state.pop("cref_inventory_recommendation", None)
-        st.success(f"Saved {result.value} for this line.")
-        st.rerun()
+        with cols[3]:
+            if options:
+                chosen_location = st.selectbox(
+                    "Location",
+                    options,
+                    key=f"cref_inv_location_{row_id}",
+                    label_visibility="collapsed",
+                )
+            else:
+                chosen_location = st.text_input(
+                    "Location",
+                    value=recommendation.location or "",
+                    key=f"cref_inv_location_text_{row_id}",
+                    label_visibility="collapsed",
+                )
+
+        with cols[4]:
+            if st.button("Save", key=f"cref_inv_save_{row_id}", disabled=not chosen_location):
+                preview = build_inventory_reference(chosen_location)
+                result = validate_customer_reference(preview)
+                if not result.valid:
+                    st.error("; ".join(result.errors))
+                else:
+                    # Inventory reference assignment only writes the
+                    # canonical customer_reference field -- it never
+                    # triggers a PartsBox stock-movement/relocation
+                    # operation. Assigning a Customer Reference and
+                    # moving physical/PartsBox stock are different
+                    # actions.
+                    active_bom_state.update_row(row_id, {"customer_reference": result.value})
+                    refresh_response_snapshot(current_run)
+                    st.rerun()
 
 
 def _render_customer_reference_overrides(current_run, active_bom_state):
@@ -968,8 +968,10 @@ def render_customer_reference_section(current_run, active_bom_state):
     """
     Customer Reference / Customer Part Number assignment (Yank naming
     convention, YT-SOP-00-01-A) -- feeds Mouser cart / DigiKey MyList /
-    export handoff, never an order. Lives on the Purchasing page since
-    it's purchasing preparation, not a disconnected page.
+    export handoff, never an order. Part of configuring the BOM before
+    purchasing handoff, not a disconnected page -- it's the section
+    right after Run BOM on the single AutoBOM workspace page (see
+    render_autobom_workflow_page()).
     """
     st.subheader("Customer Reference")
     st.caption(
@@ -999,33 +1001,15 @@ def render_customer_reference_section(current_run, active_bom_state):
     _render_add_approved_code()
 
 
-def render_customer_reference_tab():
-    """
-    Thin guard wrapper so the Customer Reference workflow stage can be
-    composed into render_autobom_workflow_page() the same way the other
-    stages are -- render_customer_reference_section() itself is
-    unchanged and still just takes (current_run, active_bom_state).
-    """
-    current_run = st.session_state.current_run
-    if current_run is None:
-        st.info("Run a BOM first to assign Customer References.")
-        return
-
-    active_bom_state = current_run.get("_active_bom_state")
-    if active_bom_state is None:
-        st.info("No active BOM state for the current run.")
-        return
-
-    render_customer_reference_section(current_run, active_bom_state)
-
-
 def render_purchasing_handoff_section():
     """
     Purchasing summary/status/regeneration all derive from the canonical
     ActiveBomState via workflow_runner's build_purchasing_summary()/
     regenerate_purchasing() -- no sourcing decision is recalculated here.
-    Customer Reference assignment lives in its own workflow stage/tab
-    (render_customer_reference_tab()), not here.
+    Customer Reference assignment is its own section earlier on the same
+    page (see render_autobom_workflow_page()), not here -- this is
+    purchasing OUTPUT, generated from whatever Customer Reference/BOM
+    state is currently canonical.
     """
     current_run = st.session_state.current_run
     if current_run is None:
@@ -1069,7 +1053,11 @@ def render_purchasing_handoff_section():
         st.write(f"Items: {summary['mouser']['item_count']}")
         st.write(f"Total quantity: {summary['mouser']['total_quantity']}")
         st.write(f"Cart created: {'Yes' if summary['mouser']['cart_created'] else 'No'}")
-        st.write(f"CartKey: {summary['mouser']['cart_key'] or 'Not available'}")
+        if summary["mouser"]["cart_key"]:
+            st.write("CartKey:")
+            st.code(summary["mouser"]["cart_key"], language=None)
+        else:
+            st.write("CartKey: Not available")
         st.caption(
             "Sharing is manual for now: complete the Share action in Mouser directly "
             "and hand the resulting Access ID to purchasing. No need to paste it back "
@@ -1086,8 +1074,19 @@ def render_purchasing_handoff_section():
         st.write(f"Items: {summary['digikey']['item_count']}")
         st.write(f"Total quantity: {summary['digikey']['total_quantity']}")
         st.write(f"MyList created: {'Yes' if summary['digikey']['list_created'] else 'No'}")
-        st.write(f"List ID: {summary['digikey']['list_id'] or 'Not available'}")
-        st.write(f"Share identifier: {summary['digikey']['share_id'] or 'Not provided by the DigiKey MyLists API'}")
+        if summary["digikey"]["list_id"]:
+            st.write("List ID:")
+            st.code(summary["digikey"]["list_id"], language=None)
+        else:
+            st.write("List ID: Not available")
+        # Only ever shows a real value returned by the DigiKey MyLists API
+        # -- confirmed live that it does not provide a separate share
+        # identifier/link, so this never invents one.
+        if summary["digikey"]["share_id"]:
+            st.write("Share identifier:")
+            st.code(summary["digikey"]["share_id"], language=None)
+        else:
+            st.write("Share identifier: Not provided by the DigiKey MyLists API")
 
     st.divider()
 
@@ -1106,34 +1105,41 @@ def render_purchasing_handoff_section():
 
 def render_autobom_workflow_page():
     """
-    One continuous AutoBOM workflow, composed of five stages as tabs
-    rather than separate top-level pages -- Run BOM, Results/Needs
-    Review, Component Search, Customer Reference, and Purchasing Handoff
-    all read/write the same st.session_state.current_run and its
-    _active_bom_state, so moving between tabs never loses canonical BOM
-    state (Streamlit re-runs the whole script on every interaction and
-    session_state is shared across the entire run, regardless of which
-    tab is visually selected). Each stage's own render function is
-    unchanged from before this page existed -- this only composes them.
+    One continuous, vertically-flowing AutoBOM workspace -- NOT tabs.
+    Upload/configuration, Customer Reference, the working BOM/results
+    (with Needs Review actioned inline via expanders), an embedded
+    general Component Search tool, and Purchasing Handoff all appear as
+    sections on this single page, in the order an operator actually
+    works through a BOM. Every section reads/writes the same
+    st.session_state.current_run and its _active_bom_state, so
+    scrolling between sections never loses canonical BOM state. Each
+    section's own render function is unchanged from before this page
+    existed -- this only changes how they're composed (previously as
+    tabs, which still separated them into feeling like different
+    destinations).
+
+    Component Search stays visible regardless of whether a BOM has been
+    run -- it is a general-purpose tool independent of any specific run,
+    not a stage that only exists after Run BOM.
     """
-    tab_run, tab_results, tab_search, tab_cref, tab_purchasing = st.tabs(
-        [
-            "1. Run BOM",
-            "2. Results / Needs Review",
-            "3. Component Search",
-            "4. Customer Reference",
-            "5. Purchasing Handoff",
-        ]
-    )
-    with tab_run:
-        render_run_bom_section()
-    with tab_results:
-        render_results_section()
-    with tab_search:
+    render_run_bom_section()
+
+    current_run = st.session_state.current_run
+    active_bom_state = current_run.get("_active_bom_state") if current_run else None
+
+    if current_run is not None and active_bom_state is not None:
+        st.divider()
+        render_customer_reference_section(current_run, active_bom_state)
+
+        st.divider()
+        render_results_workspace(current_run)
+
+    st.divider()
+    with st.expander("🔍 Search Components"):
         render_component_search_section()
-    with tab_cref:
-        render_customer_reference_tab()
-    with tab_purchasing:
+
+    if current_run is not None and active_bom_state is not None:
+        st.divider()
         render_purchasing_handoff_section()
 
 

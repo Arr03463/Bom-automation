@@ -1,10 +1,11 @@
 """
-Streamlit UI smoke tests for the Customer Reference workflow stage (its
-own tab within the main AutoBOM page, alongside Run BOM/Results/Component
-Search/Purchasing Handoff -- see render_autobom_workflow_page() in
-app.py), using streamlit.testing.v1.AppTest (see tests/test_app_smoke.py's
-module docstring for the patch-target gotcha this file follows: patch at
-the module that DEFINES a name, e.g.
+Streamlit UI smoke tests for the Customer Reference section (a section
+on the single, vertically-flowing AutoBOM page, alongside Run BOM/
+Results/Purchasing Handoff -- NOT a tab -- see
+render_autobom_workflow_page() in app.py), using
+streamlit.testing.v1.AppTest (see tests/test_app_smoke.py's module
+docstring for the patch-target gotcha this file follows: patch at the
+module that DEFINES a name, e.g.
 inventory_location_recommender.recommend_location, never app.recommend_location).
 """
 
@@ -65,11 +66,10 @@ class CustomerReferenceUITests(unittest.TestCase):
 
     def _navigate_to_purchasing(self, result):
         """
-        Customer Reference/Purchasing Handoff are tabs within the main
-        AutoBOM workflow page now, not separate top-level nav
-        destinations -- the default "AutoBOM" page already renders them
-        (st.tabs() renders every tab's widgets regardless of visual
-        selection), so there is nothing left to navigate to.
+        Customer Reference/Purchasing Handoff are sections on the single
+        AutoBOM page now, not separate top-level nav destinations or
+        tabs -- the default "AutoBOM" page already renders them once
+        current_run is set, so there is nothing left to navigate to.
         """
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
         at.session_state["current_run"] = result
@@ -216,11 +216,19 @@ class CustomerReferenceUITests(unittest.TestCase):
         self.assertTrue(apply_button.disabled)
 
     def test_inventory_recommendation_flow(self):
+        """
+        Inventory recommendations are evaluated for every BOM line at
+        once (per the "inline per part" requirement), not one part
+        picked from a dropdown -- this BOM has 2 lines, so
+        recommend_location() must be called once per line, and the
+        result shown/saveable per row via that row's own "Save" button.
+        """
         from inventory_location_recommender import CONFIDENCE_EXACT_PART, LocationRecommendation
 
         result = self._run()
         active_bom_state = result["_active_bom_state"]
-        row_id = active_bom_state.rows()[0]["row_id"]
+        rows = active_bom_state.rows()
+        row_id = rows[0]["row_id"]
         at = self._navigate_to_purchasing(result)
 
         at.radio(key="cref_reference_type").set_value("Inventory")
@@ -236,14 +244,14 @@ class CustomerReferenceUITests(unittest.TestCase):
                 "data": [{"storage/name": "A12"}, {"storage/name": "A14"}]
             }
 
-            recommend_button = next(b for b in at.button if b.label == "Get Recommendation")
+            recommend_button = next(b for b in at.button if b.label == "Get Recommendations for All Parts")
             recommend_button.click()
             at.run()
 
             self.assertEqual(len(at.exception), 0)
-            mock_recommend.assert_called_once()
+            self.assertEqual(mock_recommend.call_count, len(rows))
 
-            save_button = next(b for b in at.button if b.label == "Save Reference for This Line")
+            save_button = next(b for b in at.button if b.key == f"cref_inv_save_{row_id}")
             save_button.click()
             at.run()
 

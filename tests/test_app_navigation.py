@@ -2,9 +2,13 @@
 Streamlit UI tests for the AutoBOM/PartsBox Inventory information
 architecture (see render_autobom_workflow_page() in app.py): top-level
 navigation is just ["AutoBOM", "PartsBox Inventory"] -- Run BOM, Results/
-Needs Review, Component Search, Customer Reference, and Purchasing
-Handoff are stages/tabs of one continuous AutoBOM page, not separate
-top-level pages. Uses streamlit.testing.v1.AppTest (see
+Needs Review, Customer Reference, and Purchasing Handoff are sections of
+one continuous, vertically-flowing AutoBOM page, NOT tabs (an earlier
+version of this page used top-level tabs for these; that still separated
+them into feeling like different destinations, so they were recomposed
+as plain vertical sections instead). Component Search is an embedded
+tool (inside a "Search Components" expander) available on the same page
+regardless of BOM state. Uses streamlit.testing.v1.AppTest (see
 tests/test_app_smoke.py's module docstring for the patch-target gotcha
 this file follows).
 """
@@ -48,7 +52,7 @@ class TopLevelNavigationTests(unittest.TestCase):
             self.assertNotIn(stale_page_name, options)
 
 
-class AutobomWorkflowTabsTests(unittest.TestCase):
+class AutobomWorkflowSectionsTests(unittest.TestCase):
     def setUp(self):
         self.temp_root = Path(tempfile.mkdtemp(prefix="autobom_nav_test_"))
         self.addCleanup(shutil.rmtree, self.temp_root, ignore_errors=True)
@@ -68,22 +72,32 @@ class AutobomWorkflowTabsTests(unittest.TestCase):
             output_folder=str(workspace["output_dir"]),
         )
 
-    def test_default_page_is_the_autobom_workflow_with_five_stage_tabs(self):
+    def test_default_page_has_no_top_level_workflow_tabs(self):
+        """
+        The core complaint this pass fixes: Run BOM / Results / Component
+        Search / Customer Reference / Purchasing Handoff must NOT be
+        rendered as st.tabs() -- that still separates them into feeling
+        like different destinations, even on one nominal "page". The
+        only tabs left anywhere should be the pre-existing, unrelated
+        "All Results" / "Needs Review (N)" split inside the results
+        table itself.
+        """
+        result = self._run()
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.session_state["current_run"] = result
         at.run()
 
         self.assertEqual(len(at.exception), 0)
         tab_labels = [tab.label for tab in at.tabs]
-        self.assertEqual(
-            tab_labels,
-            [
-                "1. Run BOM",
-                "2. Results / Needs Review",
-                "3. Component Search",
-                "4. Customer Reference",
-                "5. Purchasing Handoff",
-            ],
-        )
+        for stale_tab_name in (
+            "1. Run BOM",
+            "2. Results / Needs Review",
+            "3. Component Search",
+            "4. Customer Reference",
+            "5. Purchasing Handoff",
+        ):
+            self.assertNotIn(stale_tab_name, tab_labels)
+        self.assertTrue(any(label.startswith("Needs Review") for label in tab_labels))
 
     def test_run_bom_upload_widget_is_present_on_main_workflow_page(self):
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
@@ -92,10 +106,19 @@ class AutobomWorkflowTabsTests(unittest.TestCase):
         self.assertEqual(len(at.file_uploader), 1)
         self.assertEqual(at.file_uploader[0].label, "Upload BOM")
 
-    def test_component_search_is_reachable_without_a_separate_top_level_page(self):
+    def test_component_search_is_embedded_and_visible_without_any_bom_run(self):
+        """
+        Component Search is a general-purpose tool independent of any
+        BOM run (unchanged from before this pass) -- it must render even
+        when current_run is None, inside its own expander, not gated
+        behind Run BOM having produced a result.
+        """
         at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
         at.run()
 
+        self.assertEqual(len(at.exception), 0)
+        expander_labels = [exp.label for exp in at.expander]
+        self.assertIn("🔍 Search Components", expander_labels)
         subheaders = [el.value for el in at.subheader]
         self.assertIn("Component Search", subheaders)
 
@@ -126,15 +149,15 @@ class AutobomWorkflowTabsTests(unittest.TestCase):
 
         self.assertEqual(len(at.metric), 5)
 
-    def test_switching_between_workflow_stages_preserves_canonical_bom_state(self):
+    def test_repeated_reruns_preserve_canonical_bom_state(self):
         """
-        There is nothing to "switch" server-side -- st.tabs() renders
-        every tab every run regardless of visual selection, and
-        st.session_state (including current_run/_active_bom_state) is
-        shared across the whole script execution. This proves the
-        canonical state a Run BOM stage produced is still exactly what
-        Results, Customer Reference, and Purchasing Handoff all see
-        after further reruns (e.g. interacting with an unrelated widget).
+        There is no navigation to lose state over -- every section
+        renders on every rerun of the same page, and st.session_state
+        (including current_run/_active_bom_state) is shared across the
+        whole script execution. This proves the canonical state a Run
+        BOM produced is still exactly what Results, Customer Reference,
+        and Purchasing Handoff all see after further reruns (e.g.
+        interacting with an unrelated widget).
         """
         result = self._run()
         active_bom_state = result["_active_bom_state"]
@@ -150,6 +173,48 @@ class AutobomWorkflowTabsTests(unittest.TestCase):
         self.assertIs(at.session_state["current_run"], result)
         self.assertIs(at.session_state["current_run"]["_active_bom_state"], active_bom_state)
         self.assertEqual(active_bom_state.get_row(row_id)["mpn"], "RC0603FR-0710KL")
+
+    def test_customer_reference_column_is_visible_in_the_working_bom_table(self):
+        """
+        Customer Reference must be visible directly in the working BOM
+        table, not only reachable via a separate section -- confirms the
+        column survives dataframe rendering after a bulk Customer
+        Reference assignment.
+        """
+        result = self._run()
+        active_bom_state = result["_active_bom_state"]
+        for row in active_bom_state.rows():
+            active_bom_state.update_row(row["row_id"], {"customer_reference": "PRJ-ATH-DAB"})
+
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.session_state["current_run"] = result
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        dataframes = [df.value for df in at.dataframe]
+        self.assertTrue(
+            any("Customer Reference" in df.columns and (df["Customer Reference"] == "PRJ-ATH-DAB").all() for df in dataframes)
+        )
+
+    def test_sections_appear_top_to_bottom_in_workflow_order(self):
+        """
+        Confirms the vertical composition order: Customer Reference
+        configuration before the working BOM/results, before Purchasing
+        Handoff -- matching the order an operator actually works through
+        a BOM, not an arbitrary order.
+        """
+        result = self._run()
+        at = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=15)
+        at.session_state["current_run"] = result
+        at.run()
+
+        subheaders = [el.value for el in at.subheader]
+        cref_index = subheaders.index("Customer Reference")
+        results_index = next(i for i, h in enumerate(subheaders) if h.startswith("AutoBOM Results"))
+        purchasing_index = next(i for i, h in enumerate(subheaders) if h.startswith("Purchasing Handoff"))
+
+        self.assertLess(cref_index, results_index)
+        self.assertLess(results_index, purchasing_index)
 
 
 class PartsBoxInventoryTopLevelTests(unittest.TestCase):

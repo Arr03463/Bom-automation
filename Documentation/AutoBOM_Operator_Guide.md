@@ -6,11 +6,12 @@ Audience: a teammate using AutoBOM day-to-day, not the developer.
 
 The sidebar has exactly two top-level destinations:
 
-- **AutoBOM** -- one continuous workflow, organized as five tabs across
-  the top of the page: Run BOM, Results / Needs Review, Component Search,
-  Customer Reference, and Purchasing Handoff. These are stages of the
-  same BOM run, not separate apps -- moving between tabs never loses your
-  place; the BOM you're working on stays the same everywhere.
+- **AutoBOM** -- one continuous workspace, not a set of separate
+  pages/tabs. Upload/configure your BOM at the top, then scroll down
+  through Customer Reference, the working BOM/results, an embedded
+  Component Search tool, and Purchasing Handoff -- all on the same page,
+  all reading/writing the same BOM. You never navigate away and lose
+  your place.
 - **PartsBox Inventory** -- a separate area for browsing/searching the
   full PartsBox catalog independent of any specific BOM run (see below).
 
@@ -23,22 +24,52 @@ The sidebar has exactly two top-level destinations:
 3. Choose which suppliers to source against (Mouser/DigiKey) and whether
    to create a Mouser cart / DigiKey MyList automatically as part of this
    run, then click **Run BOM Automation**.
-4. Review the messages/warnings, then scroll down to **Results**:
-   - Summary metrics (Total Parts / PartsBox / Mouser / DigiKey / Needs
-     Review).
-   - **All Results**: search and filter the processed BOM.
-   - **Needs Review**: parts that couldn't be automatically sourced.
+4. Review the messages/warnings, then scroll down for Customer Reference,
+   Results, and Purchasing Handoff -- all on this same page.
 
-## Needs Review
+## Customer Reference
+
+Sets the Customer Reference / Customer Part Number that flows into the
+Mouser cart, DigiKey MyList, and export files for every BOM line. This
+section appears right after Run BOM, since it's part of configuring the
+BOM, not a separate purchasing-only step. Three ways to generate one, all
+from Yank's approved naming convention:
+
+- **Project / PCB** -- pick an approved Project code and one or more PCB
+  codes (e.g. `PRJ-ATH-DAB`).
+- **Inventory** -- for stock/inventory builds. Click **Get Recommendations
+  for All Parts** to see a suggested storage location for every BOM line
+  at once (PartsBox exact-part match first, similar-part fallback), shown
+  as a table you can accept or override per line before saving.
+- **R&D** -- project code plus a free-text owner (e.g. `RND-ARM-AARON`).
+
+**Apply to All BOM Lines** sets the generated reference on every row;
+individual lines can still be overridden below. Assigning or changing a
+reference never itself calls Mouser/DigiKey/PartsBox -- it only updates
+the BOM's canonical data (and marks purchasing artifacts stale if
+they'd already been generated under the old reference).
+
+## Results / Needs Review
+
+Below Customer Reference:
+
+- Summary metrics (Total Parts / PartsBox / Mouser / DigiKey / Needs
+  Review).
+- The working BOM table, including each line's **Customer Reference**,
+  source, and status.
+- **All Results** / **Needs Review**: search and filter the processed
+  BOM; Needs Review isolates parts that couldn't be automatically
+  sourced.
 
 For each item needing review:
 
 1. **Retry Exact Part** -- re-attempts the same MPN/manufacturer lookup.
    Use this first if you suspect a transient API issue.
-2. **Find Replacement** -- opens the same search used by Component
-   Search, prefilled with what AutoBOM already knows about the part.
-   Search Mouser/DigiKey, review candidates, and select one. AutoBOM
-   updates the BOM row and re-runs sourcing for it automatically.
+2. **Find Replacement** -- opens the same shared search Component Search
+   uses, prefilled with what AutoBOM already knows about the part, right
+   there inline under that BOM line. Search Mouser/DigiKey, review
+   candidates, and select one. AutoBOM updates the BOM row and re-runs
+   sourcing for it automatically.
 3. **Check PartsBox** -- last-resort fallback lookup against PartsBox
    inventory, for when no purchasable replacement is available.
 
@@ -47,48 +78,13 @@ silently substitute a part.
 
 ## Component Search
 
-A general-purpose search independent of any specific BOM run. PartsBox is
-searched by default; enable Mouser/DigiKey to include live supplier
-results. Use the dynamic filters (only shown when the current results
-actually have that data) to narrow by category, package, and parametric
-ranges (voltage, tolerance, etc.).
-
-## PartsBox Inventory
-
-A separate top-level page for browsing/searching the full accessible
-PartsBox catalog (PartsBox remains the system of record) -- not limited
-to parts referenced by the current or any BOM run. Search, or click
-**Browse All** with an empty query to see everything. Storage Locations
-shows which storage locations carry the `production` tag.
-
-This page itself is read-only by design: opening it, searching, or
-filtering never writes anything to PartsBox. That's a property of this
-*page*, not a limitation of AutoBOM's PartsBox integration as a whole --
-AutoBOM does perform real PartsBox writes elsewhere, as part of running a
-BOM (creating/reusing the project and storage location, and syncing BOM
-entries into it -- see the Run BOM section above). Those writes only
-happen from an explicit **Run BOM Automation** click, never from viewing
-this page.
-
-## Customer Reference
-
-Sets the Customer Reference / Customer Part Number that flows into the
-Mouser cart, DigiKey MyList, and export files for every BOM line. Three
-ways to generate one, all from Yank's approved naming convention:
-
-- **Project / PCB** -- pick an approved Project code and one or more PCB
-  codes (e.g. `PRJ-ATH-DAB`).
-- **Inventory** -- for stock/inventory builds; AutoBOM can recommend a
-  storage location from PartsBox (checking for the exact part already
-  stored somewhere, then falling back to similar parts) before you
-  confirm (e.g. `INV-A12`).
-- **R&D** -- project code plus a free-text owner (e.g. `RND-ARM-AARON`).
-
-**Apply to All BOM Lines** sets the generated reference on every row;
-individual lines can still be overridden below. Assigning or changing a
-reference never itself calls Mouser/DigiKey/PartsBox -- it only updates
-the BOM's canonical data (and marks purchasing artifacts stale if
-they'd already been generated under the old reference).
+A general-purpose search independent of any specific BOM run, embedded on
+the same AutoBOM page inside a **Search Components** expander (it's a
+tool available at any time, not a stage that only appears after a BOM
+run). PartsBox is searched by default; enable Mouser/DigiKey to include
+live supplier results. Use the dynamic filters (only shown when the
+current results actually have that data) to narrow by category, package,
+and parametric ranges (voltage, tolerance, etc.).
 
 ## Purchasing Handoff
 
@@ -107,24 +103,29 @@ they'd already been generated under the old reference).
      blocks readiness.
 2. Click **Regenerate Purchasing** to (re)create what's needed from the
    current BOM. This is the ONLY action that can create a live Mouser
-   cart or DigiKey MyList -- navigating, filtering, or just leaving the
-   page open never does.
-3. **Mouser**: cart creation is automatic; sharing with purchasing is a
-   manual step for now -- open Mouser yourself, use its Share action, and
-   hand the resulting Access ID directly to purchasing. Nothing needs to
-   be pasted back into AutoBOM. Confirmed with Mouser: the Access ID is
-   derived internally from the CartKey, but that derivation isn't
-   currently exposed through any supported public/Automation Services
-   API -- this is the current supported workflow, with a clean extension
-   point for a future supported Mouser sharing API/integration.
-   AutoBOM's role ends at handoff: checkout, payment, and order
-   submission always happen manually, outside AutoBOM.
-4. **DigiKey**: MyList creation is automatic; hand the List ID to
-   purchasing so they can locate it in DigiKey. Confirmed (2026-09-25,
-   live): the MyLists API does not provide a separate share
-   identifier/link -- the List ID is the identifier there is.
+   cart or DigiKey MyList -- uploading, configuring, searching, changing
+   Customer Reference, filtering, or just leaving the page open never
+   does.
+3. **Mouser**: cart creation is automatic; CartKey is shown in a copyable
+   code block. Sharing with purchasing is a manual step for now -- open
+   Mouser yourself, use its Share action, and hand the resulting Access ID
+   directly to purchasing. Nothing needs to be pasted back into AutoBOM.
+   Confirmed with Mouser: the Access ID is derived internally from the
+   CartKey, but that derivation isn't currently exposed through any
+   supported public/Automation Services API -- this is the current
+   supported workflow, with a clean extension point for a future
+   supported Mouser sharing API/integration. AutoBOM's role ends at
+   handoff: checkout, payment, and order submission always happen
+   manually, outside AutoBOM.
+4. **DigiKey**: MyList creation is automatic; the List ID is shown in a
+   copyable code block -- hand it to purchasing so they can locate it in
+   DigiKey. Confirmed (2026-09-25, live): the MyLists API does not
+   provide a separate share identifier/link -- the List ID is the
+   identifier there is. If a share identifier is ever returned by the
+   API, it will appear the same way, in its own copyable code block --
+   AutoBOM never invents one.
 
-## Downloads (Purchasing Handoff tab)
+## Downloads (Purchasing Handoff)
 
 Each output file (cleaned CSV, cleaned workbook, sourcing report, DigiKey
 list CSV, PartsBox import/unmatched CSVs, run summary) tracks its own
@@ -134,6 +135,23 @@ failed -- **other files being current does not re-enable it**. Two files
 (the multi-sheet cleaned workbook and the PartsBox unmatched CSV) are
 never automatically regenerated after a BOM change; re-run BOM Automation
 if you need a current copy of either.
+
+## PartsBox Inventory
+
+A separate top-level page for browsing/searching the full accessible
+PartsBox catalog (PartsBox remains the system of record) -- not limited
+to parts referenced by the current or any BOM run. Search, or click
+**Browse All** with an empty query to see everything. Storage Locations
+shows which storage locations carry the `production` tag.
+
+This page itself is read-only by design: opening it, searching, or
+filtering never writes anything to PartsBox. That's a property of this
+*page*, not a limitation of AutoBOM's PartsBox integration as a whole --
+AutoBOM does perform real PartsBox writes elsewhere, as part of running a
+BOM (creating/reusing the project and storage location, and syncing BOM
+entries into it -- see the Run BOM section above). Those writes only
+happen from an explicit **Run BOM Automation** click, never from viewing
+this page.
 
 ## What NOT to do
 
