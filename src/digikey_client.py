@@ -443,6 +443,44 @@ def _digikey_product_to_result(product, notes=None):
     if not isinstance(category, str):
         category = ""
 
+    # Description/Parameters are per DigiKey's documented Product
+    # Information API v4 response shape -- NOT independently confirmed
+    # live against a real account the way Category/Manufacturer/
+    # ProductStatus above were, so treated defensively: a response
+    # missing or reshaping either just yields "" / {} rather than
+    # raising. Description is commonly a nested
+    # {"ProductDescription":.., "DetailedDescription":..} object,
+    # matching the same nested-dict pattern already confirmed for
+    # Category/Manufacturer/ProductStatus. Parameters is a list of
+    # {"ParameterText": "Package / Case", "ValueText": "0402 (1005
+    # Metric)", ...} entries covering whatever parametric specs DigiKey
+    # returns for this part (voltage, tolerance, current, temperature
+    # range, ...) -- captured generically into characteristics rather
+    # than guessing which ones matter for a given category, same as
+    # PartsBox's own characteristics handling. A parameter whose name
+    # looks like a package/case designation is ALSO copied into the
+    # dedicated `package` field.
+    description = product.get("Description", "")
+    if isinstance(description, dict):
+        description = description.get("ProductDescription", "") or description.get(
+            "DetailedDescription", ""
+        )
+    if not isinstance(description, str):
+        description = ""
+
+    characteristics = {}
+    package = ""
+    for parameter in product.get("Parameters", None) or []:
+        if not isinstance(parameter, dict):
+            continue
+        name = str(parameter.get("ParameterText", "")).strip()
+        value = str(parameter.get("ValueText", "")).strip()
+        if not name or not value:
+            continue
+        characteristics[name] = value
+        if not package and ("package" in name.lower() or "case" in name.lower()):
+            package = value
+
     return SupplierResult(
         supplier="DigiKey",
         manufacturer=manufacturer,
@@ -453,6 +491,9 @@ def _digikey_product_to_result(product, notes=None):
         product_url=product.get("ProductUrl", ""),
         notes="; ".join(result_notes),
         category=category,
+        description=description,
+        package=package,
+        characteristics=characteristics,
     )
 
 

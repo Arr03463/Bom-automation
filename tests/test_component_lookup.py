@@ -372,6 +372,49 @@ class CategoryFieldTests(unittest.TestCase):
         self.assertEqual(results[0]["category"], "Resistors")
 
 
+class SupplierResultDescriptionPackageCharacteristicsWiringTests(unittest.TestCase):
+    """
+    _supplier_result_to_lookup_result() previously hardcoded
+    description="", package="", characteristics={} regardless of what
+    the client's SupplierResult actually carried -- confirms the wiring
+    fix, distinct from tests/test_mouser_client.py and
+    tests/test_digikey_client.py, which cover the client-side raw-API
+    parsing that populates SupplierResult in the first place.
+    """
+
+    def test_mouser_description_package_characteristics_reach_the_lookup_result(self):
+        query = LookupQuery(mpn="ABC123", sources=frozenset({"mouser"}))
+        candidate = mouser_result()
+        candidate.description = "CAP CER 1UF 16V X7R 0603"
+        candidate.package = "0603"
+        candidate.characteristics = {"Voltage Rating": "16V"}
+        mouser_client = FakeSupplierSearchClient({"ABC123": [candidate]})
+
+        results = search_components(query, mouser_client=mouser_client)
+
+        self.assertEqual(results[0]["description"], "CAP CER 1UF 16V X7R 0603")
+        self.assertEqual(results[0]["package"], "0603")
+        # LookupResult.to_dict() also flattens characteristics onto the
+        # top level (same convention PartsBox records already use), so
+        # generate_facets()/apply_filters() can filter on them directly.
+        self.assertEqual(results[0]["characteristics"], {"Voltage Rating": "16V"})
+        self.assertEqual(results[0]["Voltage Rating"], "16V")
+
+    def test_digikey_description_package_characteristics_reach_the_lookup_result(self):
+        query = LookupQuery(mpn="ABC123", sources=frozenset({"digikey"}))
+        candidate = digikey_result()
+        candidate.description = "FSV Series Single 150 V Schottky Rectifier"
+        candidate.package = "TO-277A"
+        candidate.characteristics = {"Current - Average Rectified (Io)": "270A"}
+        digikey_client = FakeSupplierSearchClient({"ABC123": [candidate]})
+
+        results = search_components(query, digikey_client=digikey_client)
+
+        self.assertEqual(results[0]["description"], "FSV Series Single 150 V Schottky Rectifier")
+        self.assertEqual(results[0]["package"], "TO-277A")
+        self.assertEqual(results[0]["characteristics"], {"Current - Average Rectified (Io)": "270A"})
+
+
 class FakeRaisingSupplierClient:
     """
     Stands in for a supplier client whose search_candidates() raises --

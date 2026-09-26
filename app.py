@@ -779,6 +779,26 @@ def render_selected_part_details():
             stat_cols[0].metric("Stock", stock_display)
             stat_cols[1].metric("Unit Price", candidate.get("unit_price") or "—")
             stat_cols[2].metric("Supplier P/N", candidate.get("supplier_part_number") or "—")
+
+        # Whatever parametric specs the source actually returned
+        # (voltage, tolerance, current, temperature range, ...) -- shown
+        # generically rather than a fixed set of expected fields, same
+        # as PartsBox's own characteristics; added directly in response
+        # to an operator report that Find Replacement gave no way to
+        # judge a candidate ("can't make an effective replacement
+        # without that"). Absent entirely (not even an empty caption)
+        # when the source returned none, rather than implying every
+        # candidate has parametric data available.
+        characteristics = candidate.get("characteristics")
+        if characteristics:
+            st.caption("Characteristics (as returned by the source):")
+            st.dataframe(
+                pd.DataFrame(
+                    [{"Attribute": name, "Value": value} for name, value in characteristics.items()]
+                ),
+                width="stretch",
+                hide_index=True,
+            )
     with detail_cols[1]:
         qty = st.number_input("Quantity", min_value=1, value=1, step=1, key="component_search_add_qty")
         st.caption("No purchasing action happens here -- this only adds a line to the working BOM.")

@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import inspect
 
@@ -22,6 +22,21 @@ class SupplierResult:
     # one -- never fabricated. Existing cached SupplierResult JSON
     # without this key still loads fine via the field's default.
     category: str = ""
+    # Same best-effort/defensive posture as category, added directly in
+    # response to an operator report that Find Replacement's results
+    # table had no way to judge a candidate (blank Description/Package,
+    # no voltage/tolerance/current/temp) -- "can't make an effective
+    # replacement without that." description/package are each a plain
+    # string when the vendor's response has an obvious single field for
+    # them; characteristics holds every other parametric attribute the
+    # vendor returned (Mouser's ProductAttributes / DigiKey's Parameters)
+    # as {attribute name: value}, generic rather than guessing which
+    # specs matter for a given part category. Existing cached
+    # SupplierResult JSON without these keys still loads fine via each
+    # field's default.
+    description: str = ""
+    package: str = ""
+    characteristics: dict = field(default_factory=dict)
 
 
 def parse_int(value):

@@ -187,6 +187,37 @@ def _mouser_part_to_result(part, notes=None):
     if not isinstance(category, str):
         category = ""
 
+    # Description and ProductAttributes are per Mouser's documented
+    # Search API v1 response shape -- NOT independently confirmed live
+    # against a real account the way Category/Manufacturer/etc. above
+    # were, so treated defensively: a response missing or reshaping
+    # either just yields "" / {} rather than raising. ProductAttributes
+    # is a list of {"AttributeName": ..., "AttributeValue": ...} pairs
+    # covering whatever parametric specs Mouser returns for this part
+    # (voltage, tolerance, package/case, temperature range, ...) --
+    # captured generically into characteristics rather than guessing
+    # which ones matter for a given category, same as PartsBox's own
+    # characteristics handling. An attribute whose name looks like a
+    # package/case designation is ALSO copied into the dedicated
+    # `package` field, matching the PartsBox/PartsBox-inventory
+    # LookupResult shape's own package column.
+    description = part.get("Description", "")
+    if not isinstance(description, str):
+        description = ""
+
+    characteristics = {}
+    package = ""
+    for attribute in part.get("ProductAttributes", None) or []:
+        if not isinstance(attribute, dict):
+            continue
+        name = str(attribute.get("AttributeName", "")).strip()
+        value = str(attribute.get("AttributeValue", "")).strip()
+        if not name or not value:
+            continue
+        characteristics[name] = value
+        if not package and ("package" in name.lower() or "case" in name.lower()):
+            package = value
+
     return SupplierResult(
         supplier="Mouser",
         manufacturer=part.get("Manufacturer", ""),
@@ -197,6 +228,9 @@ def _mouser_part_to_result(part, notes=None):
         product_url=part.get("ProductDetailUrl", ""),
         notes="; ".join(notes or []),
         category=category,
+        description=description,
+        package=package,
+        characteristics=characteristics,
     )
 
 
