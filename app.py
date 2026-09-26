@@ -1604,29 +1604,46 @@ def _render_add_approved_code():
 
 def render_customer_reference_summary(current_run, active_bom_state):
     """
-    Configuration's compact Customer Reference control: a one-line
-    summary of whatever reference the working BOM currently carries (the
-    first row's value stands in for "the BOM's" reference the same way
-    the design spec's crefSummary does), plus an "Edit Customer
+    Configuration's compact Customer Reference control -- the one
+    thing in Configuration that's ALWAYS visible (per the interaction
+    spec's §8: "shows the currently-applied reference (or 'Set once
+    parts are added' before a BOM exists) plus a validity chip and an
+    'Edit ▾' affordance... Disabled/hinted, not clickable, until a BOM
+    exists"), not something that disappears entirely with no working
+    BOM -- a prior version of this gated the whole control behind
+    `current_run is not None`, which silently dropped the only
+    Configuration-card control replacing the mockup's plain "Customer
+    part number" field whenever the page was still blank.
+
+    A one-line summary of whatever reference the working BOM currently
+    carries (the first row's value stands in for "the BOM's" reference,
+    same as the design spec's crefSummary), plus an "Edit Customer
     Reference" trigger that opens the full generator/override UI in a
     st.popover() rather than as an always-expanded inline section --
     matches the frontend design spec's CustomerReferenceEditor being a
     popover anchored off Configuration, not a permanent page section.
+    `current_run`/`active_bom_state` are None before any BOM exists.
     """
-    rows = active_bom_state.rows()
-    current_value = (rows[0].get("customer_reference") or "").strip() if rows else ""
+    has_bom = current_run is not None and active_bom_state is not None
+    current_value = ""
+    if has_bom:
+        rows = active_bom_state.rows()
+        current_value = (rows[0].get("customer_reference") or "").strip() if rows else ""
 
     summary_cols = st.columns([3, 1])
     with summary_cols[0]:
-        if current_value:
+        if not has_bom:
+            st.caption("Customer Reference: set once parts are added.")
+        elif current_value:
             result = validate_customer_reference(current_value)
             status = "valid" if result.valid else "invalid"
             st.write(f"**Customer Reference:** {current_value} ({status})")
         else:
             st.caption("Customer Reference: not set yet.")
     with summary_cols[1]:
-        with st.popover("Edit Customer Reference", width="stretch"):
-            render_customer_reference_section(current_run, active_bom_state)
+        with st.popover("Edit Customer Reference", width="stretch", disabled=not has_bom):
+            if has_bom:
+                render_customer_reference_section(current_run, active_bom_state)
 
 
 def render_customer_reference_section(current_run, active_bom_state):
@@ -1745,8 +1762,10 @@ def render_configuration_section():
             # All BOM Lines" below: Results still renders normally later
             # in this SAME pass, reflecting the recomputed required_qty.
 
-        st.divider()
-        render_customer_reference_summary(current_run, active_bom_state)
+    # Always rendered -- see render_customer_reference_summary()'s
+    # docstring for why this must not be gated behind current_run.
+    st.divider()
+    render_customer_reference_summary(current_run, active_bom_state)
 
 
 def render_purchasing_handoff_section():

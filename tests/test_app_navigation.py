@@ -150,6 +150,25 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         self.assertIn("Mouser", checkbox_labels)
         self.assertIn("DigiKey", checkbox_labels)
 
+    def test_customer_reference_control_is_visible_before_any_bom_exists(self):
+        """
+        Regression: render_customer_reference_summary() was previously
+        gated behind current_run existing, so the ONLY Configuration-card
+        control replacing the mockup's plain "Customer part number"
+        field silently disappeared on a fresh/blank page -- reported
+        directly by the operator ("what happened to the customer part
+        number"). It must always render, hinting "set once parts are
+        added" and disabling its Edit popover, rather than vanishing.
+        """
+        at = fresh_app_test()
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        captions = [c.value for c in at.caption]
+        self.assertTrue(any("Customer Reference" in c for c in captions))
+        self.assertTrue(any("set once parts are added" in c.lower() for c in captions))
+        self.assertGreaterEqual(len(at.get("popover")), 1)
+
     def test_customer_reference_is_reachable_without_a_separate_top_level_page(self):
         result = self._run()
         at = fresh_app_test()
