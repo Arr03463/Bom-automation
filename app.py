@@ -147,7 +147,8 @@ def init_session_state():
     # Shared Configuration section defaults -- set here (not just via each
     # widget's own value=) so Upload's button handler can safely read them
     # via st.session_state even on the very first page load, before the
-    # Configuration section (which renders after Add Parts) has been
+    # Configuration section (rendered inside Add Parts' right column,
+    # below Upload -- see render_add_parts_section()) has been
     # instantiated in this pass yet.
     st.session_state.setdefault("cfg_build_quantity", 1)
     st.session_state.setdefault("cfg_project_name", "")
@@ -227,7 +228,15 @@ def render_add_parts_section():
     write through the one shared active_bom_state, however it was
     started. Search is shown first/larger since it's the default intake
     method (works with no upload at all); Upload sits beside it as the
-    secondary option.
+    secondary option, with Configuration stacked directly below it in
+    the same narrower column -- Upload alone doesn't fill this column's
+    height, and Configuration is what Upload's own processing reads at
+    the moment a file is dropped, so keeping the two visually adjacent
+    matches how they actually depend on each other. Run messages (the
+    automation's own success/warning/info log for whatever run is
+    current) are pushed to the very end of the page instead of showing
+    here -- see render_autobom_workflow_page() -- so the operator sees
+    the actual working BOM/results before a wall of run-log text.
     """
     st.subheader("Add Parts")
 
@@ -236,11 +245,8 @@ def render_add_parts_section():
         render_component_search_intake()
     with right:
         render_upload_intake()
-
-    current_run = st.session_state.current_run
-    if current_run is not None:
         st.divider()
-        render_run_messages(current_run)
+        render_configuration_section()
 
 
 def _pagination_controls(total_items, key_prefix, signature, page_size=DEFAULT_PAGE_SIZE):
@@ -1708,25 +1714,25 @@ def render_configuration_section():
     """
     st.subheader("Configuration")
 
-    cols = st.columns(2)
-    with cols[0]:
-        st.number_input("Build quantity", min_value=1, step=1, key="cfg_build_quantity")
-        st.text_input("Project Name", key="cfg_project_name")
-    with cols[1]:
-        st.text_input("Project Description", key="cfg_project_description")
-        write_enabled = st.checkbox("Update PartsBox Project", key="cfg_update_partsbox_project")
-        # Two-tone microcopy per the frontend design spec's write-toggle:
-        # distinct explanatory copy for the on/off state, not just a
-        # static help tooltip -- distinct from the PartsBox Source
-        # checkbox next to Search, which only searches PartsBox and
-        # never writes either way.
-        if write_enabled:
-            st.caption(
-                "Creates or reuses the PartsBox project and storage (tagged production) "
-                "and adds matched BOM entries."
-            )
-        else:
-            st.caption("Uploads source parts only. PartsBox is read, never written.")
+    # Single stacked column, not a 2-column grid -- this now renders
+    # inside Add Parts' narrower right-hand column (under Upload), where
+    # a further column split would leave too little width per field.
+    st.number_input("Build quantity", min_value=1, step=1, key="cfg_build_quantity")
+    st.text_input("Project Name", key="cfg_project_name")
+    st.text_input("Project Description", key="cfg_project_description")
+    write_enabled = st.checkbox("Update PartsBox Project", key="cfg_update_partsbox_project")
+    # Two-tone microcopy per the frontend design spec's write-toggle:
+    # distinct explanatory copy for the on/off state, not just a
+    # static help tooltip -- distinct from the PartsBox Source
+    # checkbox next to Search, which only searches PartsBox and
+    # never writes either way.
+    if write_enabled:
+        st.caption(
+            "Creates or reuses the PartsBox project and storage (tagged production) "
+            "and adds matched BOM entries."
+        )
+    else:
+        st.caption("Uploads source parts only. PartsBox is read, never written.")
 
     current_run = st.session_state.current_run
     active_bom_state = current_run.get("_active_bom_state") if current_run else None
@@ -1849,20 +1855,18 @@ def render_autobom_workflow_page():
     tabs, and NOT "Search mode" vs. "Upload mode". Search and Upload
     (render_add_parts_section()) are two intake methods for the SAME
     canonical working BOM -- Search is the default/primary one and needs
-    no upload first. Configuration (render_configuration_section()) is
-    the one shared sourcing configuration for the whole job, always
-    visible right below Add Parts since Upload's very first click reads
-    it. The working BOM/results (with Needs Review actioned inline via
-    expanders) and Purchasing Handoff then apply to whatever is
-    currently in that working BOM, however it got there. Every section
-    reads/writes the same st.session_state.current_run and its
-    _active_bom_state, so scrolling between sections never loses
-    canonical BOM state.
+    no upload first; Configuration lives inside that same section now,
+    stacked under Upload (see render_add_parts_section()'s docstring).
+    The working BOM/results (with Needs Review actioned inline) and
+    Purchasing Handoff then apply to whatever is currently in that
+    working BOM, however it got there. Every section reads/writes the
+    same st.session_state.current_run and its _active_bom_state, so
+    scrolling between sections never loses canonical BOM state. Run
+    messages render last, after the actual results/purchasing content,
+    not immediately under Add Parts -- an operator's first look at the
+    page should be the working BOM, not a wall of run-log text.
     """
     render_add_parts_section()
-
-    st.divider()
-    render_configuration_section()
 
     current_run = st.session_state.current_run
     active_bom_state = current_run.get("_active_bom_state") if current_run else None
@@ -1873,6 +1877,10 @@ def render_autobom_workflow_page():
 
         st.divider()
         render_purchasing_handoff_section()
+
+    if current_run is not None:
+        st.divider()
+        render_run_messages(current_run)
 
 
 ASSETS_FOLDER = PROJECT_ROOT / "assets"
@@ -1885,8 +1893,15 @@ ASSETS_FOLDER = PROJECT_ROOT / "assets"
 # no native Streamlit equivalent (st.title is a single fixed size).
 _HEADER_CSS = """
 <style>
-.autobom-header-title { font-size: 2rem; font-weight: 700; color: #0f172a; line-height: 1.1; }
-.autobom-header-subtitle { color: #64748b; font-size: 0.95rem; margin-top: 0.1rem; }
+.autobom-header-title {
+  font-size: 2rem; font-weight: 700; line-height: 1.1;
+  color: var(--st-text-color, inherit);
+}
+.autobom-header-subtitle {
+  font-size: 0.95rem; margin-top: 0.1rem;
+  color: var(--st-secondary-text-color, var(--st-text-color, inherit));
+  opacity: 0.75;
+}
 </style>
 """
 
