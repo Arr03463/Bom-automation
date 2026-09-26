@@ -1,3 +1,4 @@
+import base64
 import sys
 from pathlib import Path
 
@@ -1984,11 +1985,20 @@ def render_app_header():
         yank_mark = ASSETS_FOLDER / "yank_mark.png"
         arro_mark = ASSETS_FOLDER / "arro_mark.png"
         if yank_mark.exists() and arro_mark.exists():
-            icon_cols = st.columns(2)
-            with icon_cols[0]:
-                st.image(str(yank_mark), width=28)
-            with icon_cols[1]:
-                st.image(str(arro_mark), width=28)
+            # Inline HTML instead of two st.columns -- st.columns' own
+            # gutter spacing pushed the two marks far apart regardless of
+            # image size; a flex row with an explicit small gap is the
+            # only way to control both size AND spacing directly, per
+            # direct operator feedback ("bigger and closer together").
+            yank_b64 = base64.b64encode(yank_mark.read_bytes()).decode("ascii")
+            arro_b64 = base64.b64encode(arro_mark.read_bytes()).decode("ascii")
+            st.markdown(
+                '<div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;height:44px">'
+                f'<img src="data:image/png;base64,{yank_b64}" style="height:40px;width:auto" />'
+                f'<img src="data:image/png;base64,{arro_b64}" style="height:40px;width:auto" />'
+                "</div>",
+                unsafe_allow_html=True,
+            )
 
 
 st.set_page_config(page_title="AutoBOM", layout="wide")
