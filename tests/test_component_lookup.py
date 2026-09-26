@@ -372,5 +372,90 @@ class CategoryFieldTests(unittest.TestCase):
         self.assertEqual(results[0]["category"], "Resistors")
 
 
+class FakeRaisingSupplierClient:
+    """
+    Stands in for a supplier client whose search_candidates() raises --
+    e.g. Mouser's real part-number search endpoint returning HTTP 400
+    for free-text keywords instead of an actual part number (confirmed
+    live: typing a component description into what only accepts a
+    strict MPN).
+    """
+
+    def __init__(self, message="HTTP 400: no structured error details in response"):
+        self.message = message
+
+    def search_candidates(self, term):
+        raise RuntimeError(self.message)
+
+
+class SearchComponentsErrorIsolationTests(unittest.TestCase):
+    """
+    One supplier's failure must never take down the whole search or
+    silently drop PartsBox/the other supplier's results -- confirmed as
+    a real crash (a raw traceback shown to the operator) before this
+    fix, triggered by searching a plain-English description against
+    Mouser via Needs Review's "Search description instead" quick-swap.
+    """
+
+    def test_failing_mouser_does_not_raise_and_other_sources_still_return(self):
+        query = LookupQuery(
+            mpn="22uF +/-20% 35V X5R SMD 1206", sources=frozenset({"mouser", "digikey"})
+        )
+        digikey_client = FakeSupplierSearchClient(
+            {"22uF +/-20% 35V X5R SMD 1206": [digikey_result()]}
+        )
+
+        # Must not raise.
+        results = search_components(
+            query, mouser_client=FakeRaisingSupplierClient(), digikey_client=digikey_client
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["source"], "DigiKey")
+
+    def test_failure_is_reported_via_the_errors_list_when_provided(self):
+        query = LookupQuery(mpn="bad query", sources=frozenset({"mouser"}))
+        errors = []
+
+        results = search_components(
+            query,
+            mouser_client=FakeRaisingSupplierClient("HTTP 400: no structured error details in response"),
+            errors=errors,
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(len(errors), 1)
+        source, message = errors[0]
+        self.assertEqual(source, "mouser")
+        self.assertIn("400", message)
+
+    def test_errors_default_of_none_does_not_require_callers_to_pass_a_list(self):
+        """
+        Every existing caller that doesn't know about the new `errors`
+        parameter must keep working exactly as before -- just without
+        crashing on a bad query.
+        """
+        query = LookupQuery(mpn="bad query", sources=frozenset({"digikey"}))
+
+        results = search_components(query, digikey_client=FakeRaisingSupplierClient())
+
+        self.assertEqual(results, [])
+
+    def test_both_suppliers_failing_reports_both_without_raising(self):
+        query = LookupQuery(mpn="bad query", sources=frozenset({"mouser", "digikey"}))
+        errors = []
+
+        results = search_components(
+            query,
+            mouser_client=FakeRaisingSupplierClient("mouser boom"),
+            digikey_client=FakeRaisingSupplierClient("digikey boom"),
+            errors=errors,
+        )
+
+        self.assertEqual(results, [])
+        failed_sources = {source for source, _ in errors}
+        self.assertEqual(failed_sources, {"mouser", "digikey"})
+
+
 if __name__ == "__main__":
     unittest.main()

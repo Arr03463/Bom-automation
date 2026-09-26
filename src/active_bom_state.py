@@ -19,8 +19,14 @@ def _needs_review(row):
     Same criteria build_review_items() uses to decide review membership,
     applied per-row -- one definition of "needs review," reused rather
     than re-derived, so a row's result_status here always agrees with
-    whether it actually shows up in review_items().
+    whether it actually shows up in review_items(). A row the operator
+    has explicitly marked Do Not Populate (see ActiveBomState.mark_as_dnp())
+    is never "needs review" regardless of its underlying status -- that
+    is the whole point of DNP: an explicit decision to stop tracking
+    this line, not a claim that it's actually resolved/sourced.
     """
+    if row.get("dnp") is True:
+        return False
     if str(row.get("status", "")).strip() in REVIEW_STATUSES:
         return True
     if str(row.get("supplier_match_status", "")).strip() in SUPPLIER_REVIEW_STATUSES:
@@ -39,6 +45,9 @@ def _derive_source(row):
     independent of Mouser/DigiKey sourcing (a part can exist in PartsBox
     and also be sourced externally).
     """
+    if row.get("dnp") is True:
+        return "None"
+
     selected_supplier = str(row.get("selected_supplier", "")).strip().lower()
     if selected_supplier == "mouser":
         return "Mouser"
@@ -58,6 +67,9 @@ def _derive_result_status(row):
     Mouser row can be Ready or Error; a PartsBox row can be Ready or need
     review. The raw columns remain untouched on the row for debugging.
     """
+    if row.get("dnp") is True:
+        return "DNP"
+
     if str(row.get("supplier_match_status", "")).strip().lower() == "error":
         return "Error"
 
@@ -245,6 +257,21 @@ class ActiveBomState:
             self.dataframe.at[index, column] = value
 
         return self.get_row(row_id)
+
+    def mark_as_dnp(self, row_id):
+        """
+        Marks a line "Do Not Populate" -- an explicit operator decision
+        that this line will not be sourced/procured, distinct from
+        "still needs review" (which implies AutoBOM should keep trying).
+        Goes through the same update_row() mutation seam as every other
+        change, so it's immediately reflected everywhere: the row drops
+        out of review_items()/summary_counts()['needs_review'] (see the
+        module-level _needs_review()/_derive_result_status() dnp
+        checks) and therefore no longer blocks purchasing regeneration,
+        while still appearing in rows()/the Working Parts List with a
+        "DNP" status and "None" source.
+        """
+        return self.update_row(row_id, {"dnp": True})
 
     def to_records(self, dataframe):
         """

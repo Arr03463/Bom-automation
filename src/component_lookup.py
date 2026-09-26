@@ -149,12 +149,24 @@ def build_query_from_bom_row(row, sources=None):
     )
 
 
-def search_components(query, partsbox_client=None, mouser_client=None, digikey_client=None):
+def search_components(query, partsbox_client=None, mouser_client=None, digikey_client=None, errors=None):
     """
     Runs the query against every source enabled on it and returns a flat
     list of normalized dicts (LookupResult.to_dict()), ready to hand to
     record_filter.search_and_filter() for further text search/filtering --
     the same filtering layer the Results Workspace uses.
+
+    Each source is isolated: a Mouser/DigiKey API failure (e.g. a query
+    string their part-number search endpoint rejects -- confirmed live,
+    typing a plain-English description into what only accepts a real
+    part number returns an HTTP 400) no longer aborts the whole call and
+    silently drops PartsBox/the other supplier's results too. When
+    `errors` is a list, a `(source, message)` tuple is appended for each
+    source that failed, so a caller can surface "DigiKey failed, Mouser
+    results below are still current" instead of losing everything or
+    crashing the page. `errors=None` (the default) keeps every existing
+    caller's behavior unchanged except no longer crashing on a bad
+    query -- that source's results are just empty.
     """
     # An explicitly empty source set must stay empty (no results) rather
     # than silently falling back to PartsBox -- only a genuinely unset
@@ -162,17 +174,24 @@ def search_components(query, partsbox_client=None, mouser_client=None, digikey_c
     sources = query.sources if query.sources is not None else DEFAULT_SOURCES
     results = []
 
+    def _run_source(source_name, search_fn):
+        try:
+            results.extend(search_fn())
+        except Exception as exc:  # noqa: BLE001 -- one supplier's failure must never sink the others
+            if errors is not None:
+                errors.append((source_name, str(exc)))
+
     if "partsbox" in sources:
         client = partsbox_client or PartsBoxClient()
-        results.extend(_search_partsbox(query, client))
+        _run_source("partsbox", lambda: _search_partsbox(query, client))
 
     if "mouser" in sources:
         client = mouser_client or MouserClient()
-        results.extend(_search_mouser(query, client))
+        _run_source("mouser", lambda: _search_mouser(query, client))
 
     if "digikey" in sources:
         client = digikey_client or DigiKeyClient()
-        results.extend(_search_digikey(query, client))
+        _run_source("digikey", lambda: _search_digikey(query, client))
 
     required_qty = parse_engineering_value(query.required_qty)
     for result in results:

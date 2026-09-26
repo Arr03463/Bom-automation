@@ -375,5 +375,78 @@ class AddRowsTests(unittest.TestCase):
         self.assertEqual(len(state.rows()), 1)
 
 
+class MarkAsDnpTests(unittest.TestCase):
+    """
+    "Mark DNP" (Do Not Populate) -- an explicit operator decision that a
+    line will not be sourced/procured, distinct from "still needs
+    review." Added directly in response to an operator request for an
+    escape hatch: Regenerate Purchasing was unconditionally blocked by
+    ANY unresolved review row, with no way to say "skip this one and
+    proceed."
+    """
+
+    def test_marked_row_drops_out_of_review_items(self):
+        df = make_dataframe()
+        state = ActiveBomState(df, run_id="run-1")
+        self.assertEqual(len(state.review_items()), 1)
+
+        state.mark_as_dnp("run-1:1")
+
+        self.assertEqual(state.review_items(), [])
+
+    def test_marked_row_has_dnp_status_and_none_source(self):
+        df = make_dataframe()
+        state = ActiveBomState(df, run_id="run-1")
+
+        state.mark_as_dnp("run-1:1")
+
+        row = state.get_row("run-1:1")
+        self.assertEqual(row["result_status"], "DNP")
+        self.assertEqual(row["source"], "None")
+        self.assertFalse(row["needs_review"])
+
+    def test_summary_counts_excludes_dnp_rows_from_needs_review(self):
+        df = make_dataframe()
+        state = ActiveBomState(df, run_id="run-1")
+        self.assertEqual(state.summary_counts()["needs_review"], 1)
+
+        state.mark_as_dnp("run-1:1")
+
+        self.assertEqual(state.summary_counts()["needs_review"], 0)
+
+    def test_marking_one_row_dnp_does_not_affect_other_rows(self):
+        """
+        Regression guard: pandas backfills a newly-created `dnp` column
+        with NaN for every row that didn't get it explicitly set --
+        confirms that NaN is correctly treated as "not DNP" for the
+        other rows, not as a truthy/error value.
+        """
+        df = make_dataframe()
+        state = ActiveBomState(df, run_id="run-1")
+
+        state.mark_as_dnp("run-1:1")
+
+        rows = state.rows()
+        untouched_row = next(row for row in rows if row["row_id"] == "run-1:0")
+        self.assertEqual(untouched_row["result_status"], "Ready")
+        self.assertFalse(untouched_row["needs_review"])
+
+    def test_dnp_row_still_appears_in_rows_with_working_parts_list(self):
+        """
+        DNP is a visible status in the Working Parts List, not a
+        deletion -- the row must still appear via rows(), just excluded
+        from review_items()/the needs-review count.
+        """
+        df = make_dataframe()
+        state = ActiveBomState(df, run_id="run-1")
+
+        state.mark_as_dnp("run-1:1")
+
+        rows = state.rows()
+        self.assertEqual(len(rows), 3)
+        marked_row = next(row for row in rows if row["row_id"] == "run-1:1")
+        self.assertEqual(marked_row["result_status"], "DNP")
+
+
 if __name__ == "__main__":
     unittest.main()

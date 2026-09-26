@@ -522,8 +522,19 @@ def render_component_search_intake():
                 keywords=search_result.submitted,
                 sources=frozenset(enter_sources),
             )
+            supplier_errors = []
             with st.spinner("Searching suppliers..."):
-                st.session_state["component_search_supplier_results"] = search_components(query)
+                st.session_state["component_search_supplier_results"] = search_components(
+                    query, errors=supplier_errors
+                )
+            # A supplier rejecting this exact query (e.g. Mouser's
+            # part-number search endpoint returning HTTP 400 for
+            # free-text keywords instead of a real MPN) no longer takes
+            # the whole search down with it -- the other supplier's
+            # results above still came back; this just reports which
+            # one(s) failed and why.
+            for failed_source, message in supplier_errors:
+                st.warning(f"{failed_source.title()} search failed: {message}")
         else:
             st.session_state["component_search_supplier_results"] = []
         # Tracked separately from the live `.submitted` trigger value
@@ -1066,12 +1077,20 @@ def render_working_parts_list(current_run, active_bom_state):
         st.info("No results match the current search/filters.")
         return
 
-    current_page = _pagination_controls(
-        len(filtered_rows),
-        key_prefix="working_parts_list",
-        signature=result_signature(query_text, filters),
-        page_size=WORKING_LIST_PAGE_SIZE,
-    )
+    # Page-state math happens here (signature tracking/clamping), but the
+    # Prev/Next UI itself renders AFTER the table below -- per direct
+    # operator feedback that it read as belonging above a different
+    # section when it sat above this list.
+    signature = result_signature(query_text, filters)
+    sig_key = "working_parts_list_page_sig"
+    page_key = "working_parts_list_page_num"
+    if st.session_state.get(sig_key) != signature:
+        st.session_state[sig_key] = signature
+        st.session_state[page_key] = 1
+    total_pages = total_pages_for(len(filtered_rows), page_size=WORKING_LIST_PAGE_SIZE)
+    current_page = clamp_page(st.session_state.get(page_key, 1), total_pages)
+    st.session_state[page_key] = current_page
+
     page = paginate(filtered_rows, page=current_page, page_size=WORKING_LIST_PAGE_SIZE)
 
     table_df = pd.DataFrame(page.items)
@@ -1084,6 +1103,18 @@ def render_working_parts_list(current_run, active_bom_state):
         height=WORKING_LIST_TABLE_HEIGHT,
         hide_index=True,
         disabled=[col for col in display_df.columns if col != "Customer Reference"],
+        # Explicit per-column width hints so columns keep a readable
+        # size and the grid scrolls horizontally for the rest instead of
+        # auto-compressing every column to fit the container width.
+        column_config={
+            "Description": st.column_config.TextColumn(width="large"),
+            "Manufacturer Part Number": st.column_config.TextColumn(width="medium"),
+            "Manufacturer": st.column_config.TextColumn(width="medium"),
+            "Designators": st.column_config.TextColumn(width="medium"),
+            "Customer Reference": st.column_config.TextColumn(width="medium"),
+            "Supplier Part Number": st.column_config.TextColumn(width="medium"),
+            "Review Reason": st.column_config.TextColumn(width="large"),
+        },
         key="working_parts_list_editor",
     )
 
@@ -1094,6 +1125,19 @@ def render_working_parts_list(current_run, active_bom_state):
             if new_value != (original_row.get("customer_reference", "") or ""):
                 active_bom_state.update_row(original_row["row_id"], {"customer_reference": new_value})
                 refresh_response_snapshot(current_run)
+
+    if total_pages > 1:
+        nav_cols = st.columns([1, 3, 1])
+        with nav_cols[0]:
+            if st.button("< Prev", key="working_parts_list_prev_page", disabled=current_page <= 1):
+                st.session_state[page_key] = current_page - 1
+        with nav_cols[1]:
+            st.caption(f"Page {current_page} of {total_pages} · {len(filtered_rows)} result(s)")
+        with nav_cols[2]:
+            if st.button("Next >", key="working_parts_list_next_page", disabled=current_page >= total_pages):
+                st.session_state[page_key] = current_page + 1
+    else:
+        st.caption(f"{len(filtered_rows)} result(s)")
 
 
 def render_needs_review_section(current_run, active_bom_state):
@@ -1150,7 +1194,7 @@ def render_needs_review_section(current_run, active_bom_state):
             "until a match is found or a replacement is applied."
         )
 
-        action_cols = st.columns(3)
+        action_cols = st.columns(4)
 
         if action_cols[0].button("Retry Exact Part", key=f"retry_{row_id}"):
             with st.spinner("Retrying exact part lookup..."):
@@ -1165,6 +1209,23 @@ def render_needs_review_section(current_run, active_bom_state):
         if action_cols[2].button("Check PartsBox", key=f"check_partsbox_{row_id}"):
             st.session_state.replacement_lookup_sources = frozenset({"partsbox"})
             st.session_state["replacement_panel_open"] = True
+
+        if action_cols[3].button("Mark DNP", key=f"mark_dnp_{row_id}"):
+            # Do Not Populate -- an explicit "stop tracking this line"
+            # decision, distinct from resolving it via Retry/Replacement.
+            # Immediately drops it out of review_items() (see
+            # active_bom_state._needs_review()'s dnp check), so it no
+            # longer blocks Regenerate Purchasing.
+            active_bom_state.mark_as_dnp(row_id)
+            refresh_response_snapshot(current_run)
+            st.session_state["replacement_panel_open"] = False
+            st.session_state.pop(f"replacement_results_{row_id}", None)
+            st.session_state.pop(f"replacement_selected_{row_id}", None)
+            # Not touching st.session_state.selected_review_row_id here --
+            # see the matching comment in render_replacement_lookup()'s
+            # "Use Selected Replacement" handler; it's a real widget key
+            # already instantiated earlier in this same pass.
+            st.rerun()
 
         if st.session_state.get("replacement_panel_open"):
             render_replacement_lookup(current_run, active_bom_state, row_id)
@@ -1237,8 +1298,18 @@ def render_replacement_lookup(current_run, active_bom_state, row_id):
         else:
             query.mpn = search_value
             query.keywords = search_value
+            replacement_search_errors = []
             with st.spinner("Searching..."):
-                st.session_state[f"replacement_results_{row_id}"] = search_components(query)
+                st.session_state[f"replacement_results_{row_id}"] = search_components(
+                    query, errors=replacement_search_errors
+                )
+            # Free-text (e.g. "Search description instead" against
+            # Mouser/DigiKey, which only implement a strict part-number
+            # search) can fail without taking down the whole page or the
+            # other supplier's results -- see search_components()'s
+            # per-source isolation.
+            for failed_source, message in replacement_search_errors:
+                st.warning(f"{failed_source.title()} search failed: {message}")
 
     results = st.session_state.get(f"replacement_results_{row_id}", [])
     if not results:

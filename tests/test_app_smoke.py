@@ -561,6 +561,25 @@ class PurchasingPageSmokeTests(unittest.TestCase):
         regenerate_button = next(b for b in at.button if b.label == "Regenerate Purchasing")
         self.assertTrue(regenerate_button.disabled)
 
+    def test_marking_the_only_review_row_dnp_unblocks_regenerate(self):
+        """
+        Direct operator request: Regenerate Purchasing was unconditionally
+        blocked by ANY unresolved Needs Review row with no escape hatch.
+        Mark DNP is that escape hatch -- an explicit "skip this line"
+        decision, not a claim it's actually sourced.
+        """
+        result = self._run(REVIEW_BOM_CSV)
+        at = self._navigate_to_purchasing(result)
+        regenerate_button = next(b for b in at.button if b.label == "Regenerate Purchasing")
+        self.assertTrue(regenerate_button.disabled)
+
+        next(b for b in at.button if b.label == "Mark DNP").click()
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        regenerate_button = next(b for b in at.button if b.label == "Regenerate Purchasing")
+        self.assertFalse(regenerate_button.disabled)
+
     def test_regenerate_button_enabled_when_clean_and_calls_shared_regeneration_once(self):
         at = self._navigate_to_purchasing(self._run(CLEAN_BOM_CSV))
 

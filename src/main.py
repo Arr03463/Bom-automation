@@ -309,6 +309,17 @@ def build_review_items(clean_bom):
             SOURCING_REVIEW_STATUSES
         )
 
+    if "dnp" in clean_bom.columns:
+        # A row marked Do Not Populate is deliberately excluded even if
+        # its underlying status would otherwise flag it for review --
+        # the operator has explicitly decided this line will not be
+        # sourced/populated, not that it still needs attention. `!=
+        # True` (not `~clean_bom["dnp"]`) so an unset/NaN value for rows
+        # that were never marked DNP is treated as "not DNP", not as a
+        # truthiness error. Mirrors active_bom_state._needs_review()'s
+        # identical dnp check for rows()/summary_counts().
+        review_mask = review_mask & (clean_bom["dnp"] != True)  # noqa: E712
+
     return clean_bom[review_mask].copy()
 
 
