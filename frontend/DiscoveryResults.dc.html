@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600&family=Source+Code+Pro:wght@500&display=swap" rel="stylesheet">
+</helmet>
+<div style="font-family:'Source Sans 3',system-ui,sans-serif;font-size:13px;color:#1E2B45;display:flex;gap:14px;align-items:stretch;min-height:180px">
+
+  <sc-if value="{{ pbOn }}" hint-placeholder-val="{{ true }}">
+    <section style="flex:1;min-width:0;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 1px 2px rgba(15,31,68,0.04);display:flex;flex-direction:column;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #EEF2F7;min-height:46px;flex-wrap:wrap">
+        <span style="flex:none;width:22px;height:22px;border-radius:5px;background:#E4F3F1;color:#0F6E66;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center">PB</span>
+        <div style="font-size:15px;font-weight:600;color:#0B1F44;white-space:nowrap">PartsBox Inventory</div>
+        <span style="font-size:13px;color:#5A6A85;white-space:nowrap">{{ pbCountText }}</span>
+      </div>
+
+      <sc-if value="{{ pbLazy }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:22px 18px;display:flex;align-items:center;gap:18px">
+          <div style="flex:1;font-size:14px;font-weight:600;color:#0B1F44">Search PartsBox inventory<div style="font-size:12.5px;font-weight:400;color:#5A6A85;margin-top:3px">Start typing to filter, or browse the complete inventory.</div></div>
+          <button onClick="{{ onBrowse }}" style="height:32px;padding:0 14px;border:1px solid #D5DDE8;border-radius:6px;background:#FFFFFF;font-family:inherit;font-size:13px;font-weight:600;color:#1E2B45;cursor:pointer;white-space:nowrap">Browse Inventory</button>
+        </div>
+      </sc-if>
+      <sc-if value="{{ pbLoading }}" hint-placeholder-val="{{ false }}"><div style="padding:22px 14px;font-size:12.5px;color:#1D4FC4">Loading PartsBox inventory…</div></sc-if>
+      <sc-if value="{{ pbEmpty }}" hint-placeholder-val="{{ false }}"><div style="padding:22px 18px;text-align:center;font-size:13px;color:#5A6A85">No PartsBox parts match the current search/filters.</div></sc-if>
+      <sc-if value="{{ pbErr }}" hint-placeholder-val="{{ false }}"><div style="padding:14px;color:#9B1C1C;font-size:13px">{{ pbErrorText }}</div></sc-if>
+
+      <sc-if value="{{ pbTable }}" hint-placeholder-val="{{ true }}">
+        <div style="overflow-x:auto;overflow-y:hidden;height:{{ bodyHeight }}px">
+          <div style="min-width:600px">
+            <div style="display:grid;grid-template-columns:34px minmax(0,1.35fr) minmax(0,1fr) minmax(0,1.9fr) 64px minmax(0,1.35fr);height:30px;align-items:center;background:#F8FAFC;border-bottom:1px solid #E2E8F0;font-size:12px;font-weight:600;color:#5A6A85">
+              <span></span><span>MPN</span><span>Manufacturer</span><span>Description</span><span style="text-align:right;padding-right:14px">Stock</span><span>Locations</span>
+            </div>
+            <sc-for list="{{ pbRows }}" as="r" hint-placeholder-count="6">
+              <label onClick="{{ r.onSelect }}" style="display:grid;grid-template-columns:34px minmax(0,1.35fr) minmax(0,1fr) minmax(0,1.9fr) 64px minmax(0,1.35fr);height:32px;align-items:center;border-bottom:1px solid #EEF2F7;font-size:13px;color:#1E2B45;cursor:pointer;background:{{ r.bg }}">
+                <input type="radio" name="ab-pb-row" checked="{{ r.checked }}" readOnly="{{ true }}" style="justify-self:center;accent-color:#1D5FE0;width:14px;height:14px;cursor:pointer" />
+                <span style="font-family:'Source Code Pro',monospace;font-size:12px;color:#0B1F44;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px">{{ r.mpn }}</span>
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px">{{ r.manufacturer }}</span>
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px;color:#3B4A63">{{ r.description }}</span>
+                <span style="text-align:right;padding-right:14px;font-weight:600;font-variant-numeric:tabular-nums;color:{{ r.stockFg }}">{{ r.stock }}</span>
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px">{{ r.locationSummary }}</span>
+              </label>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;padding:8px 14px;border-top:1px solid #EEF2F7">
+          <button onClick="{{ onPbPrev }}" disabled="{{ pbPrevDisabled }}" style="height:26px;padding:0 8px;border:1px solid #E2E8F0;border-radius:6px;background:#FFFFFF;font-size:12px;font-family:inherit;cursor:pointer">‹ Prev</button>
+          <sc-for list="{{ pbPages }}" as="pg" hint-placeholder-count="0">
+            <button onClick="{{ pg.onClick }}" style="min-width:26px;height:26px;padding:0 6px;border:1px solid {{ pg.border }};border-radius:6px;background:{{ pg.bg }};color:{{ pg.fg }};font-size:12px;font-weight:600;font-family:inherit;cursor:pointer">{{ pg.label }}</button>
+          </sc-for>
+          <button onClick="{{ onPbNext }}" disabled="{{ pbNextDisabled }}" style="height:26px;padding:0 8px;border:1px solid #E2E8F0;border-radius:6px;background:#FFFFFF;font-size:12px;font-family:inherit;cursor:pointer">Next ›</button>
+          <span style="margin-left:8px;font-size:12px;color:#5A6A85">{{ pbRangeText }} of {{ pbCount }}</span>
+        </div>
+      </sc-if>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{ supOn }}" hint-placeholder-val="{{ true }}">
+    <section style="flex:1;min-width:0;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 1px 2px rgba(15,31,68,0.04);display:flex;flex-direction:column;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #EEF2F7;min-height:46px;flex-wrap:wrap">
+        <span style="flex:none;width:22px;height:22px;border-radius:5px;background:#EAF1FE;color:#1D4FC4;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center">SR</span>
+        <div style="font-size:15px;font-weight:600;color:#0B1F44;white-space:nowrap">Supplier Results</div>
+        <span style="font-size:13px;color:#5A6A85;white-space:nowrap">{{ supCountText }}</span>
+      </div>
+
+      <sc-if value="{{ supIdle }}" hint-placeholder-val="{{ false }}"><div style="padding:22px 18px;font-size:13px;color:#5A6A85">Press Enter in the search field to query Mouser and DigiKey.</div></sc-if>
+      <sc-if value="{{ supLoading }}" hint-placeholder-val="{{ false }}"><div style="padding:22px 14px;font-size:12.5px;color:#1D4FC4">Searching suppliers…</div></sc-if>
+      <sc-if value="{{ supEmpty }}" hint-placeholder-val="{{ false }}"><div style="padding:22px 18px;text-align:center;font-size:13px;color:#5A6A85">No Mouser or DigiKey results.</div></sc-if>
+      <sc-if value="{{ supErr }}" hint-placeholder-val="{{ false }}"><div style="padding:8px 14px;font-size:12.5px;color:#9B1C1C;background:#FDEDED;border-bottom:1px solid #F5C2C2">{{ supErrorText }}</div></sc-if>
+
+      <sc-if value="{{ supTable }}" hint-placeholder-val="{{ true }}">
+        <div style="overflow-x:auto;overflow-y:hidden;height:{{ bodyHeight }}px">
+          <div style="min-width:600px">
+            <div style="display:grid;grid-template-columns:34px 76px minmax(0,1.4fr) minmax(0,1fr) minmax(0,1.6fr) 74px 70px;height:30px;align-items:center;background:#F8FAFC;border-bottom:1px solid #E2E8F0;font-size:12px;font-weight:600;color:#5A6A85">
+              <span></span><span>Source</span><span>MPN</span><span>Manufacturer</span><span>Description</span><span style="text-align:right;padding-right:10px">Stock</span><span style="text-align:right;padding-right:12px">Unit</span>
+            </div>
+            <sc-for list="{{ supRows }}" as="r" hint-placeholder-count="6">
+              <label onClick="{{ r.onSelect }}" style="display:grid;grid-template-columns:34px 76px minmax(0,1.4fr) minmax(0,1fr) minmax(0,1.6fr) 74px 70px;height:32px;align-items:center;border-bottom:1px solid #EEF2F7;font-size:13px;color:#1E2B45;cursor:pointer;background:{{ r.bg }}">
+                <input type="radio" name="ab-sup-row" checked="{{ r.checked }}" readOnly="{{ true }}" style="justify-self:center;accent-color:#1D5FE0;width:14px;height:14px;cursor:pointer" />
+                <span><span style="display:inline-block;font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;color:{{ r.srcFg }};background:{{ r.srcBg }}">{{ r.source }}</span></span>
+                <span style="font-family:'Source Code Pro',monospace;font-size:12px;color:#0B1F44;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px">{{ r.mpn }}</span>
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px">{{ r.manufacturer }}</span>
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px;color:#3B4A63">{{ r.description }}</span>
+                <span style="text-align:right;padding-right:10px;font-variant-numeric:tabular-nums">{{ r.stock }}</span>
+                <span style="text-align:right;padding-right:12px;font-variant-numeric:tabular-nums">{{ r.unitPrice }}</span>
+              </label>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;padding:8px 14px;border-top:1px solid #EEF2F7">
+          <button onClick="{{ onSupPrev }}" disabled="{{ supPrevDisabled }}" style="height:26px;padding:0 8px;border:1px solid #E2E8F0;border-radius:6px;background:#FFFFFF;font-size:12px;font-family:inherit;cursor:pointer">‹ Prev</button>
+          <sc-for list="{{ supPages }}" as="pg" hint-placeholder-count="0">
+            <button onClick="{{ pg.onClick }}" style="min-width:26px;height:26px;padding:0 6px;border:1px solid {{ pg.border }};border-radius:6px;background:{{ pg.bg }};color:{{ pg.fg }};font-size:12px;font-weight:600;font-family:inherit;cursor:pointer">{{ pg.label }}</button>
+          </sc-for>
+          <button onClick="{{ onSupNext }}" disabled="{{ supNextDisabled }}" style="height:26px;padding:0 8px;border:1px solid #E2E8F0;border-radius:6px;background:#FFFFFF;font-size:12px;font-family:inherit;cursor:pointer">Next ›</button>
+          <span style="margin-left:8px;font-size:12px;color:#5A6A85">{{ supRangeText }} of {{ supCount }}</span>
+        </div>
+      </sc-if>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{ noneOn }}" hint-placeholder-val="{{ false }}">
+    <div style="flex:1;padding:12px 16px;background:#FEF4E4;border:1px solid #F6D8A8;border-radius:8px;color:#8A4B0B;font-weight:600">Select at least one source (PartsBox, Mouser, or DigiKey).</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1000,&quot;height&quot;:420},&quot;partsboxOn&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;boolean&quot;},&quot;suppliersOn&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;boolean&quot;},&quot;partsbox&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;{state:'lazy'|'loading'|'results'|'browse'|'empty'|'error',rows:Array&lt;{id:string,mpn:string,manufacturer:string,description:string,stock:number,locationSummary:string}&gt;,count?:number,page?:number,totalPages?:number,selectedId?:string,errorText?:string}&quot;},&quot;suppliers&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;{state:'idle'|'loading'|'results'|'empty'|'error',rows:Array&lt;{id:string,source:string,mpn:string,manufacturer:string,description:string,stock:string,unitPrice:string}&gt;,count?:number,page?:number,totalPages?:number,selectedId?:string,errorText?:string}&quot;},&quot;onPartsboxRowSelect&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(id:string)=&gt;void&quot;},&quot;onSupplierRowSelect&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(id:string)=&gt;void&quot;},&quot;onPartsboxPageChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(page:number)=&gt;void&quot;},&quot;onSupplierPageChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(page:number)=&gt;void&quot;},&quot;onBrowseInventory&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;()=&gt;void&quot;}}">
+const SRC_C = { Mouser: ['#1D4FC4', '#E8EFFD'], DigiKey: ['#B42318', '#FDECEA'] };
+const PAGE_SIZE = 14;
+const ROW_H = 32, HEADER_H = 30;
+function pageButtons(page, totalPages, onChange) {
+  const nums = new Set([1, totalPages, page, page - 1, page + 1].filter((n) => n >= 1 && n <= totalPages));
+  const sorted = [...nums].sort((a, b) => a - b);
+  const out = []; let prev = 0;
+  for (const n of sorted) {
+    if (prev && n - prev > 1) out.push({ label: '…', border: '#E2E8F0', bg: '#FFFFFF', fg: '#8A97AD', onClick: () => {} });
+    out.push({ label: String(n), border: n === page ? '#1D5FE0' : '#E2E8F0', bg: n === page ? '#1D5FE0' : '#FFFFFF', fg: n === page ? '#FFFFFF' : '#1E2B45', onClick: () => onChange(n) });
+    prev = n;
+  }
+  return out;
+}
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const pb = p.partsbox ?? { state: 'lazy', rows: [] };
+    const sup = p.suppliers ?? { state: 'idle', rows: [] };
+    const onPbSelect = p.onPartsboxRowSelect ?? (() => {});
+    const onSupSelect = p.onSupplierRowSelect ?? (() => {});
+    const bodyHeight = HEADER_H + PAGE_SIZE * ROW_H;
+
+    return {
+      pbOn: !!p.partsboxOn, supOn: !!p.suppliersOn, noneOn: !p.partsboxOn && !p.suppliersOn,
+      pbCountText: pb.state === 'results' || pb.state === 'browse' ? (pb.count ?? pb.rows.length) + ' results' : '',
+      pbLazy: pb.state === 'lazy', pbLoading: pb.state === 'loading', pbEmpty: pb.state === 'empty', pbErr: pb.state === 'error', pbErrorText: pb.errorText ?? '',
+      pbTable: pb.state === 'results' || pb.state === 'browse',
+      onBrowse: p.onBrowseInventory ?? (() => {}),
+      pbRows: (pb.rows || []).map(r => ({
+        mpn: r.mpn || '(missing MPN)', manufacturer: r.manufacturer || '—', description: (r.description || '—').slice(0, 90),
+        stock: r.stock ?? 'Unknown', stockFg: (r.stock ?? 0) > 0 ? '#15803D' : '#8A97AD',
+        locationSummary: r.locationSummary || '—', checked: pb.selectedId === r.id,
+        bg: pb.selectedId === r.id ? '#EAF1FE' : '#FFFFFF', onSelect: () => onPbSelect(r.id)
+      })),
+      bodyHeight,
+      pbCount: pb.count ?? pb.rows.length,
+      pbPage: pb.page ?? 1, pbTotalPages: pb.totalPages ?? 1,
+      pbPrevDisabled: (pb.page ?? 1) <= 1, pbNextDisabled: (pb.page ?? 1) >= (pb.totalPages ?? 1),
+      onPbPrev: () => (p.onPartsboxPageChange ?? (() => {}))(Math.max(1, (pb.page ?? 1) - 1)),
+      onPbNext: () => (p.onPartsboxPageChange ?? (() => {}))(Math.min(pb.totalPages ?? 1, (pb.page ?? 1) + 1)),
+      pbPages: pageButtons(pb.page ?? 1, pb.totalPages ?? 1, (n) => (p.onPartsboxPageChange ?? (() => {}))(n)),
+      pbRangeText: (() => { const pg = pb.page ?? 1, total = pb.count ?? pb.rows.length; return total === 0 ? '0–0' : ((pg - 1) * PAGE_SIZE + 1) + '–' + Math.min(pg * PAGE_SIZE, total); })(),
+
+      supCountText: sup.state === 'results' ? (sup.count ?? sup.rows.length) + ' results' : '',
+      supIdle: sup.state === 'idle', supLoading: sup.state === 'loading', supEmpty: sup.state === 'empty', supErr: sup.state === 'error', supErrorText: sup.errorText ?? '',
+      supTable: sup.state === 'results',
+      supRows: (sup.rows || []).map(r => {
+        const c = SRC_C[r.source] || ['#5A6A85', '#EEF2F7'];
+        return { source: r.source, srcFg: c[0], srcBg: c[1], mpn: r.mpn, manufacturer: r.manufacturer, description: r.description, stock: r.stock, unitPrice: r.unitPrice,
+          checked: sup.selectedId === r.id, bg: sup.selectedId === r.id ? '#EAF1FE' : '#FFFFFF', onSelect: () => onSupSelect(r.id) };
+      }),
+      supCount: sup.count ?? sup.rows.length,
+      supPage: sup.page ?? 1, supTotalPages: sup.totalPages ?? 1,
+      supPrevDisabled: (sup.page ?? 1) <= 1, supNextDisabled: (sup.page ?? 1) >= (sup.totalPages ?? 1),
+      onSupPrev: () => (p.onSupplierPageChange ?? (() => {}))(Math.max(1, (sup.page ?? 1) - 1)),
+      onSupNext: () => (p.onSupplierPageChange ?? (() => {}))(Math.min(sup.totalPages ?? 1, (sup.page ?? 1) + 1)),
+      supPages: pageButtons(sup.page ?? 1, sup.totalPages ?? 1, (n) => (p.onSupplierPageChange ?? (() => {}))(n)),
+      supRangeText: (() => { const pg = sup.page ?? 1, total = sup.count ?? sup.rows.length; return total === 0 ? '0–0' : ((pg - 1) * PAGE_SIZE + 1) + '–' + Math.min(pg * PAGE_SIZE, total); })()
+    };
+  }
+}
+</script>
+</body>
+</html>

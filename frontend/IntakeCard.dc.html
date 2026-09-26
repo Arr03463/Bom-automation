@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>.ab-input::placeholder{color:#8A97AD}</style>
+</helmet>
+<section style="font-family:'Source Sans 3',system-ui,sans-serif;font-size:13px;color:#1E2B45;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 1px 2px rgba(15,31,68,0.04);padding:14px 16px;display:flex;flex-direction:column;gap:12px;height:100%;box-sizing:border-box">
+  <div style="display:flex;gap:12px;align-items:stretch">
+    <div style="flex:1;min-width:0;position:relative;display:flex;align-items:center">
+      <input class="ab-input" type="text" value="{{ query }}" onChange="{{ onInputChange }}" onKeyDown="{{ onKeyDown }}" placeholder="Search MPN, manufacturer, or keyword"
+        style="width:100%;box-sizing:border-box;height:48px;border:{{ searchBorder }};border-radius:8px;padding:0 40px 0 40px;font-size:16px;font-family:inherit;color:#0B1F44;background:#FFFFFF" />
+      <span style="position:absolute;left:14px;width:14px;height:14px;border:2px solid #5A6A85;border-radius:50%;pointer-events:none"></span>
+      <sc-if value="{{ hasQuery }}" hint-placeholder-val="{{ false }}">
+        <button onClick="{{ onClear }}" style="position:absolute;right:12px;background:none;border:none;color:#8A97AD;font-size:16px;cursor:pointer;padding:0;line-height:1">✕</button>
+      </sc-if>
+      <sc-if value="{{ typing }}" hint-placeholder-val="{{ false }}">
+        <span style="position:absolute;right:36px;font-size:12px;color:#0F6E66">Filtering PartsBox…</span>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ uploadIdle }}" hint-placeholder-val="{{ true }}">
+      <label htmlFor="ab-upload-file" style="flex:none;width:118px;height:48px;border:1.5px solid #1D5FE0;border-radius:8px;background:#FFFFFF;color:#1D5FE0;font-family:inherit;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px">
+        <span style="font-size:14px;font-weight:600">↑ Upload</span>
+        <span style="font-size:11px;color:#5A6A85">CSV · XLSX</span>
+      </label>
+    </sc-if>
+    <sc-if value="{{ uploadBusy }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;width:300px;height:48px;border:1px solid {{ uploadBorder }};background:{{ uploadBg }};border-radius:8px;padding:6px 10px;display:flex;flex-direction:column;justify-content:center;gap:2px">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#0B1F44"><span>{{ uploadIcon }}</span><span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ upload.fileName }}</span></div>
+        <div style="font-size:11px;color:#5A6A85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ upload.message }}</div>
+      </div>
+    </sc-if>
+    <input id="ab-upload-file" type="file" accept=".csv,.xlsx" onChange="{{ onFileInputChange }}" style="display:none" />
+  </div>
+
+  <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
+    <sc-for list="{{ sourceItems }}" as="src" hint-placeholder-count="3">
+      <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer">
+        <input type="checkbox" checked="{{ src.checked }}" onChange="{{ src.onChange }}" style="width:16px;height:16px;margin-top:1px;accent-color:#1D5FE0" />
+        <span style="display:flex;flex-direction:column;line-height:1.2"><span style="font-size:14px;font-weight:600;color:#0B1F44">{{ src.name }}</span><span style="font-size:12px;color:#5A6A85">{{ src.sub }}</span></span>
+      </label>
+    </sc-for>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:10px">
+      <sc-if value="{{ compact }}" hint-placeholder-val="{{ false }}">
+        <button onClick="{{ onOpenFilters }}" style="height:32px;padding:0 12px;border:1px solid #D5DDE8;border-radius:6px;background:#FFFFFF;font-family:inherit;font-size:13px;font-weight:600;color:#1E2B45;display:inline-flex;align-items:center;gap:8px;cursor:pointer">Filters<span style="min-width:18px;height:18px;border-radius:9px;background:#1D5FE0;color:#FFFFFF;font-size:11px;display:inline-flex;align-items:center;justify-content:center">{{ filterCount }}</span></button>
+      </sc-if>
+    </span>
+  </div>
+
+  <div style="border-top:1px solid #EEF2F7;padding-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:20px;margin-top:auto">
+    <sc-for list="{{ chips }}" as="c" hint-placeholder-count="1">
+      <span style="display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:11px;background:#EAF1FE;color:#1D4FC4;font-size:12px;font-weight:600">{{ c.label }}<button onClick="{{ c.onClear }}" style="background:none;border:none;color:inherit;opacity:0.7;cursor:pointer;padding:0;font-size:11px">✕</button></span>
+    </sc-for>
+    <span style="margin-left:auto;font-size:12px;color:#5A6A85;display:flex;align-items:center;gap:6px">
+      <span style="width:7px;height:7px;border-radius:50%;background:{{ snapDot }}"></span>{{ snapshotLabel }}
+      <sc-if value="{{ canRefresh }}" hint-placeholder-val="{{ false }}"><button onClick="{{ onRefresh }}" style="background:none;border:none;color:#1D5FE0;font-weight:600;font-size:12px;cursor:pointer;padding:0;margin-left:4px;font-family:inherit">Refresh</button></sc-if>
+    </span>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:900,&quot;height&quot;:160},&quot;query&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string&quot;},&quot;typing&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;boolean&quot;},&quot;onQueryChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(value: string) =&gt; void&quot;},&quot;onSubmit&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(value: string) =&gt; void&quot;},&quot;sources&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;{partsbox:boolean,mouser:boolean,digikey:boolean}&quot;},&quot;onSourceToggle&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(key: 'partsbox'|'mouser'|'digikey') =&gt; void&quot;},&quot;upload&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;{state:'idle'|'processing'|'done'|'error',fileName?:string,message?:string}&quot;},&quot;onFileSelected&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(file: {name:string,size:number,file:File}) =&gt; void&quot;},&quot;activeChips&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;Array&lt;{label:string,field:string}&gt;&quot;},&quot;onClearChip&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(field: string) =&gt; void&quot;},&quot;compact&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;onOpenFilters&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;() =&gt; void&quot;},&quot;filterCount&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;number&quot;},&quot;snapshotStatus&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;{loaded:boolean,loading:boolean,label:string}&quot;},&quot;onRefresh&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;() =&gt; void&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const query = p.query ?? '';
+    const onQueryChange = p.onQueryChange ?? (() => {});
+    const onSubmit = p.onSubmit ?? (() => {});
+    const sources = p.sources ?? { partsbox: true, mouser: true, digikey: true };
+    const onSourceToggle = p.onSourceToggle ?? (() => {});
+    const upload = p.upload ?? { state: 'idle' };
+    const chips = (p.activeChips ?? []).map((c) => ({ label: c.label, onClear: () => (p.onClearChip ?? (() => {}))(c.field) }));
+
+    return {
+      query, hasQuery: !!query, typing: !!p.typing,
+      searchBorder: p.typing ? '1.5px solid #1D5FE0' : '1.5px solid #CBD5E1',
+      onInputChange: (e) => onQueryChange(e.target.value),
+      onKeyDown: (e) => { if (e.key === 'Enter') onSubmit(e.target.value); },
+      onClear: () => { onQueryChange(''); },
+      uploadIdle: upload.state === 'idle', uploadBusy: upload.state !== 'idle',
+      uploadBorder: upload.state === 'error' ? '#F5C2C2' : upload.state === 'done' ? '#CFE8D6' : '#BFD3FB',
+      uploadBg: upload.state === 'error' ? '#FDEDED' : upload.state === 'done' ? '#F3FAF5' : '#F3F7FE',
+      uploadIcon: upload.state === 'error' ? '✕' : upload.state === 'done' ? '✓' : '…',
+      upload,
+      onFileInputChange: (e) => { const f = e.target.files && e.target.files[0]; if (f) (p.onFileSelected ?? (() => {}))({ name: f.name, size: f.size, file: f }); e.target.value = ''; },
+      sourceItems: [
+        { key: 'partsbox', name: 'PartsBox', sub: 'Live as you type' },
+        { key: 'mouser', name: 'Mouser', sub: 'Search on Enter' },
+        { key: 'digikey', name: 'DigiKey', sub: 'Search on Enter' }
+      ].map((s) => ({ ...s, checked: !!sources[s.key], onChange: () => onSourceToggle(s.key) })),
+      compact: !!p.compact, onOpenFilters: p.onOpenFilters ?? (() => {}), filterCount: p.filterCount ?? 0,
+      chips,
+      snapDot: p.snapshotStatus?.loading ? '#1D5FE0' : p.snapshotStatus?.loaded ? '#16A34A' : '#CBD5E1',
+      snapshotLabel: p.snapshotStatus?.label ?? 'PartsBox snapshot not loaded',
+      canRefresh: !!p.snapshotStatus?.loaded, onRefresh: p.onRefresh ?? (() => {})
+    };
+  }
+}
+</script>
+</body>
+</html>

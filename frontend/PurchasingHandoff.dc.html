@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Source+Code+Pro:wght@500&display=swap" rel="stylesheet">
+</helmet>
+<sc-if value="{{ hasBom }}" hint-placeholder-val="{{ true }}">
+  <section style="font-family:'Source Sans 3',system-ui,sans-serif;font-size:13px;color:#1E2B45;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 1px 2px rgba(15,31,68,0.04);overflow:hidden">
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #EEF2F7">
+      <div style="font-size:15px;font-weight:600;color:#0B1F44;white-space:nowrap;flex:none">Purchasing Handoff</div>
+      <span style="height:22px;padding:0 9px;border-radius:11px;border:1px solid {{ pillBorder }};background:{{ pillBg }};color:{{ pillFg }};font-size:12px;font-weight:700;display:inline-flex;align-items:center;white-space:nowrap;flex:none">{{ label }}</span>
+      <span style="font-size:12.5px;color:#5A6A85;white-space:nowrap">{{ sub }}</span>
+      <span style="margin-left:auto;font-size:12px;color:#8A97AD">AutoBOM never checks out, pays, or submits orders.</span>
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 300px">
+      <div style="padding:12px 16px;border-right:1px solid #EEF2F7">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;color:#1D4FC4;background:#E8EFFD">Mouser</span><span style="font-size:14px;font-weight:600;color:#0B1F44">Export</span><span style="margin-left:auto;font-size:12px;font-weight:600;color:{{ mouser.fg }}">{{ mouser.statusLabel }}</span></div>
+        <div style="display:flex;gap:24px;font-size:13px;margin-bottom:10px"><span><span style="color:#5A6A85">Items </span><b>{{ mouser.itemCount }}</b></span><span><span style="color:#5A6A85">Total qty </span><b>{{ mouser.totalQuantity }}</b></span></div>
+        <button onClick="{{ onDownloadMouser }}" disabled="{{ mouserDlDisabled }}" style="height:30px;padding:0 12px;border:1px solid #D5DDE8;border-radius:6px;background:#FFFFFF;font-family:inherit;font-size:13px;font-weight:600;color:#1E2B45;cursor:pointer;opacity:{{ mouserDlOpacity }}">↓ Download Mouser export</button>
+      </div>
+      <div style="padding:12px 16px;border-right:1px solid #EEF2F7">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;color:#B42318;background:#FDECEA">DigiKey</span><span style="font-size:14px;font-weight:600;color:#0B1F44">MyList</span><span style="margin-left:auto;font-size:12px;font-weight:600;color:{{ digikey.fg }}">{{ digikey.statusLabel }}</span></div>
+        <div style="display:flex;gap:24px;font-size:13px;margin-bottom:10px"><span><span style="color:#5A6A85">Items </span><b>{{ digikey.itemCount }}</b></span><span><span style="color:#5A6A85">Total qty </span><b>{{ digikey.totalQuantity }}</b></span></div>
+        <div style="font-size:13px"><span style="color:#5A6A85">List ID </span><span style="font-family:'Source Code Pro',monospace;font-size:12px">{{ digikey.listId }}</span></div>
+      </div>
+      <div style="padding:12px 16px;background:#FBFCFE">
+        <div style="font-size:13px;font-weight:600;color:#0B1F44;margin-bottom:6px">Regenerate purchasing</div>
+        <div style="font-size:12px;line-height:1.4;color:#5A6A85;margin-bottom:10px">Rebuilds every export from the current list and creates a DigiKey MyList.</div>
+        <button onClick="{{ onRegenerate }}" disabled="{{ regenDisabled }}" style="width:100%;height:34px;border:1px solid {{ regenBorder }};border-radius:6px;background:{{ regenBg }};color:{{ regenFg }};font-family:inherit;font-size:13px;font-weight:600;cursor:pointer">{{ regenLabel }}</button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 14px;border-top:1px solid #EEF2F7">
+      <span style="font-size:12px;color:#5A6A85;margin-right:4px">Other outputs</span>
+      <sc-for list="{{ outputs }}" as="o" hint-placeholder-count="4">
+        <button onClick="{{ o.onClick }}" disabled="{{ o.disabled }}" style="height:24px;padding:0 8px;border-radius:5px;border:1px solid #E2E8F0;font-size:12px;color:{{ o.fg }};background:{{ o.bg }};cursor:pointer;font-family:inherit">↓ {{ o.label }}</button>
+      </sc-for>
+    </div>
+  </section>
+</sc-if>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1000,&quot;height&quot;:220},&quot;hasBom&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;boolean&quot;},&quot;status&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;'needs_review'|'stale'|'current'|'generating'|'failed'&quot;},&quot;label&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string&quot;},&quot;sub&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string&quot;},&quot;mouser&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;{itemCount:number,totalQuantity:number,artifactStatus:string,downloadEnabled:boolean}&quot;},&quot;digikey&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;{itemCount:number,totalQuantity:number,listId:string,artifactStatus:string}&quot;},&quot;canRegenerate&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;boolean&quot;},&quot;regenerating&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;boolean&quot;},&quot;onRegenerate&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;()=&gt;void&quot;},&quot;onDownload&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(key:string)=&gt;void&quot;},&quot;otherOutputs&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;Array&lt;{key:string,label:string,enabled:boolean}&gt;&quot;}}">
+const PILL = {
+  needs_review: { label: 'Needs Review', bg: '#FFFFFF', fg: '#B45309', border: '#F0C98E' },
+  stale: { label: 'Stale · regeneration required', bg: '#FEF4E4', fg: '#B45309', border: '#F0C98E' },
+  current: { label: 'Ready for Handoff', bg: '#E8F5EC', fg: '#15803D', border: '#CFE8D6' },
+  generating: { label: 'Generating', bg: '#EAF1FE', fg: '#1D4FC4', border: '#BFD3FB' },
+  failed: { label: 'Partial · generation failed', bg: '#FDEDED', fg: '#B91C1C', border: '#F5C2C2' }
+};
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const pill = PILL[p.status] || PILL.needs_review;
+    const mouser = p.mouser ?? {};
+    const digikey = p.digikey ?? {};
+    return {
+      hasBom: !!p.hasBom, label: p.label ?? pill.label, sub: p.sub ?? '',
+      pillBg: pill.bg, pillFg: pill.fg, pillBorder: pill.border,
+      mouser: { itemCount: mouser.itemCount ?? 0, totalQuantity: mouser.totalQuantity ?? 0, statusLabel: mouser.artifactStatus ?? 'Not yet generated', fg: mouser.artifactStatus === 'current' ? '#15803D' : '#8A97AD' },
+      digikey: { itemCount: digikey.itemCount ?? 0, totalQuantity: digikey.totalQuantity ?? 0, listId: digikey.listId ?? '—', statusLabel: digikey.artifactStatus ?? 'Not yet generated', fg: digikey.artifactStatus === 'current' ? '#15803D' : '#8A97AD' },
+      mouserDlDisabled: !mouser.downloadEnabled, mouserDlOpacity: mouser.downloadEnabled ? 1 : 0.5,
+      onDownloadMouser: () => (p.onDownload ?? (() => {}))('mouser_export_csv'),
+      onRegenerate: p.onRegenerate ?? (() => {}), regenDisabled: !p.canRegenerate,
+      regenBorder: p.canRegenerate ? '#1D5FE0' : '#D5DDE8', regenBg: p.canRegenerate ? '#1D5FE0' : '#EEF2F7', regenFg: p.canRegenerate ? '#FFFFFF' : '#8A97AD',
+      regenLabel: p.regenerating ? 'Regenerating…' : 'Regenerate Purchasing',
+      outputs: (p.otherOutputs ?? []).map((o) => ({ label: o.label, disabled: !o.enabled, fg: o.enabled ? '#1E2B45' : '#A3AEC0', bg: o.enabled ? '#FFFFFF' : '#F8FAFC', onClick: () => (p.onDownload ?? (() => {}))(o.key) }))
+    };
+  }
+}
+</script>
+</body>
+</html>

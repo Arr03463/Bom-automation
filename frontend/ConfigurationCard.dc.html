@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Source+Code+Pro:wght@600&display=swap" rel="stylesheet">
+</helmet>
+<section style="font-family:'Source Sans 3',system-ui,sans-serif;font-size:13px;color:#1E2B45;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 1px 2px rgba(15,31,68,0.04);padding:12px 16px 14px">
+  <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+    <div style="font-size:15px;font-weight:600;color:#0B1F44;white-space:nowrap">Configuration</div>
+    <span style="font-size:12px;color:#8A97AD;white-space:nowrap">Applies to Search and Upload</span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:minmax(0,0.8fr) minmax(0,1.2fr);gap:10px 12px">
+    <div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:#5A6A85;margin-bottom:4px">
+        <span>Build quantity</span>
+        <sc-if value="{{ canApply }}" hint-placeholder-val="{{ false }}"><button onClick="{{ onApply }}" style="background:none;border:none;color:#1D5FE0;font-weight:600;font-size:12px;cursor:pointer;padding:0;font-family:inherit">Apply to uploaded lines</button></sc-if>
+      </div>
+      <div style="height:32px;border:1px solid #D5DDE8;border-radius:6px;display:grid;grid-template-columns:28px 1fr 28px;align-items:center">
+        <button onClick="{{ onDecrement }}" style="border:none;background:none;border-right:1px solid #EEF2F7;height:100%;color:#5A6A85;cursor:pointer;font-size:14px">−</button>
+        <input type="number" min="1" value="{{ buildQuantity }}" onChange="{{ onQtyInput }}" style="border:none;text-align:center;font-size:13px;font-weight:600;font-family:inherit;color:#1E2B45;width:100%;min-width:0" />
+        <button onClick="{{ onIncrement }}" style="border:none;background:none;border-left:1px solid #EEF2F7;height:100%;color:#5A6A85;cursor:pointer;font-size:14px">+</button>
+      </div>
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:600;color:#5A6A85;margin-bottom:4px">Project name</div>
+      <input type="text" value="{{ projectName }}" onChange="{{ onNameChange }}" placeholder="e.g. ALD P2 Controller"
+        style="width:100%;box-sizing:border-box;height:32px;border:1px solid #D5DDE8;border-radius:6px;padding:0 10px;font-size:13px;font-family:inherit;color:#1E2B45" />
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:600;color:#5A6A85;margin-bottom:4px">Project description</div>
+      <input type="text" value="{{ projectDescription }}" onChange="{{ onDescChange }}" placeholder="e.g. Flight controller rev C"
+        style="width:100%;box-sizing:border-box;height:32px;border:1px solid #D5DDE8;border-radius:6px;padding:0 10px;font-size:13px;font-family:inherit;color:#1E2B45" />
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:600;color:#5A6A85;margin-bottom:4px">Customer reference</div>
+      <sc-if value="{{ hasBom }}" hint-placeholder-val="{{ true }}">
+        <button onClick="{{ onEdit }}" style="width:100%;box-sizing:border-box;height:32px;border:1px solid #D5DDE8;border-radius:6px;padding:0 10px;display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;background:#FFFFFF;font-family:inherit">
+          <span style="font-family:'Source Code Pro',monospace;font-size:12.5px;font-weight:600;color:#0B1F44">{{ crefValue }}</span>
+          <sc-if value="{{ crefValid }}" hint-placeholder-val="{{ true }}"><span style="font-size:11px;font-weight:600;color:#15803D">✓ {{ crefLen }}/{{ crefMax }}</span></sc-if>
+          <span style="margin-left:auto;font-size:12px;font-weight:600;color:#1D5FE0">Edit ▾</span>
+        </button>
+      </sc-if>
+      <sc-if value="{{ noBom }}" hint-placeholder-val="{{ false }}">
+        <div style="height:32px;border:1px dashed #D5DDE8;border-radius:6px;padding:0 10px;display:flex;align-items:center;font-size:12px;color:#8A97AD;background:#F8FAFC">Set once parts are added</div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="margin-top:12px;border:1px solid {{ writeBorder }};background:{{ writeBg }};border-radius:8px;padding:8px 10px;display:flex;gap:10px;align-items:flex-start">
+    <button role="switch" aria-checked="{{ write }}" onClick="{{ onToggleWrite }}" style="position:relative;width:30px;height:17px;border-radius:9px;background:{{ writeTrack }};border:none;flex:none;margin-top:1px;cursor:pointer;padding:0">
+      <span style="position:absolute;top:2px;left:{{ writeKnob }}px;width:13px;height:13px;border-radius:50%;background:#FFFFFF;box-shadow:0 1px 2px rgba(0,0,0,0.2);transition:left .15s"></span>
+    </button>
+    <div style="min-width:0">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-size:13px;font-weight:600;color:#0B1F44;white-space:nowrap">Update PartsBox Project</span><span style="font-size:10px;font-weight:700;letter-spacing:0.04em;color:#9A4A06;border:1px solid #F0C98E;border-radius:4px;padding:0 5px;background:#FFFFFF;white-space:nowrap">WRITES TO PARTSBOX</span></div>
+      <div style="font-size:12px;line-height:1.35;color:#6B5A45;margin-top:2px">{{ writeText }}</div>
+    </div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:460,&quot;height&quot;:220},&quot;buildQuantity&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;number&quot;},&quot;onBuildQuantityChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(value: number) =&gt; void&quot;},&quot;canApplyBuildQty&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;boolean&quot;},&quot;onApplyBuildQuantity&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;() =&gt; void&quot;},&quot;projectName&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string&quot;},&quot;onProjectNameChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(value: string) =&gt; void&quot;},&quot;projectDescription&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string&quot;},&quot;onProjectDescriptionChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(value: string) =&gt; void&quot;},&quot;customerReferenceSummary&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;{value:string|null,valid:boolean,length:number,max:number}&quot;},&quot;onEditCustomerReference&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;() =&gt; void&quot;},&quot;updatePartsBoxProject&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;boolean&quot;},&quot;onToggleUpdatePartsBoxProject&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(value: boolean) =&gt; void&quot;},&quot;hasBom&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const bq = p.buildQuantity ?? 1;
+    const onBQ = p.onBuildQuantityChange ?? (() => {});
+    const cref = p.customerReferenceSummary ?? { value: null, valid: false, length: 0, max: 30 };
+    const write = !!p.updatePartsBoxProject;
+    return {
+      buildQuantity: bq,
+      onQtyInput: (e) => onBQ(Math.max(1, parseInt(e.target.value, 10) || 1)),
+      onIncrement: () => onBQ(bq + 1), onDecrement: () => onBQ(Math.max(1, bq - 1)),
+      canApply: !!p.canApplyBuildQty, onApply: p.onApplyBuildQuantity ?? (() => {}),
+      projectName: p.projectName ?? '', onNameChange: (e) => (p.onProjectNameChange ?? (() => {}))(e.target.value),
+      projectDescription: p.projectDescription ?? '', onDescChange: (e) => (p.onProjectDescriptionChange ?? (() => {}))(e.target.value),
+      hasBom: !!p.hasBom, noBom: !p.hasBom,
+      crefValue: cref.value ?? '—', crefValid: !!cref.valid, crefLen: cref.length ?? 0, crefMax: cref.max ?? 30,
+      onEdit: p.onEditCustomerReference ?? (() => {}),
+      write, writeTrack: write ? '#C2610C' : '#CBD5E1', writeKnob: write ? 15 : 2,
+      writeBorder: write ? '#F0C98E' : '#E2E8F0', writeBg: write ? '#FFF8EE' : '#F8FAFC',
+      writeText: write ? 'On upload: creates or reuses the PartsBox project and storage (tagged production) and adds matched BOM entries.' : 'Off: uploads source parts only. PartsBox is read, never written.',
+      onToggleWrite: () => (p.onToggleUpdatePartsBoxProject ?? (() => {}))(!write)
+    };
+  }
+}
+</script>
+</body>
+</html>

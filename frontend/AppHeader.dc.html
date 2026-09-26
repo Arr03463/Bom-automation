@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+</helmet>
+<header style="display:flex;align-items:center;justify-content:space-between;height:52px;font-family:'Source Sans 3',system-ui,sans-serif">
+  <div style="display:flex;align-items:baseline;gap:14px;min-width:0">
+    <div style="font-size:26px;font-weight:700;color:#0B1F44;letter-spacing:-0.01em;line-height:1;white-space:nowrap">{{ title }}</div>
+    <div style="font-size:13px;color:#5A6A85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ subtitle }}</div>
+  </div>
+  <sc-if value="{{ showMarks }}" hint-placeholder-val="{{ true }}">
+    <div style="display:flex;align-items:center;gap:14px">
+      <img src="assets/arro_mark.png" alt="" style="height:26px;width:auto;opacity:0.55">
+      <img src="assets/yank_mark.png" alt="" style="height:26px;width:auto;opacity:0.55">
+    </div>
+  </sc-if>
+</header>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;title&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;AutoBOM&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;subtitle&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Parts Sourcing · Inventory · BOM Management&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;showMarks&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      title: this.props.title ?? 'AutoBOM',
+      subtitle: this.props.subtitle ?? 'Parts Sourcing · Inventory · BOM Management',
+      showMarks: this.props.showMarks ?? true
+    };
+  }
+}
+</script>
+</body>
+</html>

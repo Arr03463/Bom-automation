@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600&family=Source+Code+Pro:wght@500&display=swap" rel="stylesheet">
+</helmet>
+<sc-if value="{{ noBom }}" hint-placeholder-val="{{ false }}">
+  <div style="font-family:'Source Sans 3',system-ui,sans-serif;display:flex;align-items:center;gap:12px;padding:12px 16px;background:#FFFFFF;border:1px dashed #CBD5E1;border-radius:10px;color:#5A6A85;font-size:13px">
+    <span style="font-size:15px;font-weight:600;color:#0B1F44">Working Parts List</span>
+    <span>Empty. Add a part from the results or upload a BOM; both feed this one list.</span>
+  </div>
+</sc-if>
+<sc-if value="{{ hasBom }}" hint-placeholder-val="{{ true }}">
+  <section style="font-family:'Source Sans 3',system-ui,sans-serif;font-size:13px;color:#1E2B45;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 1px 2px rgba(15,31,68,0.04);overflow:hidden">
+    <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #EEF2F7;flex-wrap:wrap;row-gap:8px">
+      <div style="font-size:15px;font-weight:600;color:#0B1F44;white-space:nowrap;flex:none">Working Parts List</div>
+      <span style="display:flex;gap:6px;flex-wrap:wrap">
+        <sc-for list="{{ counts }}" as="c" hint-placeholder-count="4">
+          <span style="height:22px;padding:0 8px;border-radius:11px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:5px;color:{{ c.fg }};background:{{ c.bg }};white-space:nowrap;flex:none">{{ c.label }}<span>{{ c.n }}</span></span>
+        </sc-for>
+      </span>
+      <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <input value="{{ searchValue }}" onChange="{{ onSearchInput }}" placeholder="Search working list…" style="height:30px;width:200px;border:1px solid #D5DDE8;border-radius:6px;padding:0 10px;font-size:12.5px;font-family:inherit" />
+        <select value="{{ sourceFilter }}" onChange="{{ onSourceInput }}" style="height:30px;border:1px solid #D5DDE8;border-radius:6px;padding:0 8px;font-size:12.5px;font-family:inherit">
+          <sc-for list="{{ sourceOptions }}" as="o" hint-placeholder-count="4"><option value="{{ o }}">{{ o }}</option></sc-for>
+        </select>
+        <select value="{{ statusFilter }}" onChange="{{ onStatusInput }}" style="height:30px;border:1px solid #D5DDE8;border-radius:6px;padding:0 8px;font-size:12.5px;font-family:inherit">
+          <sc-for list="{{ statusOptions }}" as="o" hint-placeholder-count="4"><option value="{{ o }}">{{ o }}</option></sc-for>
+        </select>
+      </span>
+    </div>
+    <div style="overflow-x:auto">
+      <div style="min-width:1000px">
+        <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1.8fr) minmax(0,1fr) 70px 90px 116px minmax(0,1.2fr);height:30px;align-items:center;background:#F8FAFC;border-bottom:1px solid #E2E8F0;font-size:12px;font-weight:600;color:#5A6A85">
+          <span>MPN</span><span>Manufacturer</span><span>Description</span><span>Designators</span><span style="text-align:right;padding-right:12px">Req. qty</span><span>Source</span><span>Status</span><span>Customer reference</span>
+        </div>
+        <div>
+          <sc-for list="{{ pageRows }}" as="w" hint-placeholder-count="6">
+            <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1.8fr) minmax(0,1fr) 70px 90px 116px minmax(0,1.2fr);height:32px;align-items:center;border-bottom:1px solid #EEF2F7;font-size:13px;color:#1E2B45">
+              <span style="font-family:'Source Code Pro',monospace;font-size:12px;color:{{ w.mpnFg }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px">{{ w.mpn }}</span>
+              <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px">{{ w.manufacturer }}</span>
+              <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px;color:#3B4A63">{{ w.description }}</span>
+              <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px;color:#5A6A85">{{ w.designators }}</span>
+              <span style="text-align:right;padding-right:12px;font-weight:600">{{ w.required_qty }}</span>
+              <span><span style="display:inline-block;font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;color:{{ w.srcFg }};background:{{ w.srcBg }}">{{ w.source }}</span></span>
+              <span><span style="display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:10px;color:{{ w.stFg }};background:{{ w.stBg }}">{{ w.result_status }}</span></span>
+              <input value="{{ w.customer_reference }}" onBlur="{{ w.onCrefBlur }}" style="height:24px;width:100%;box-sizing:border-box;border:1px solid transparent;border-radius:4px;padding:0 4px;font-family:'Source Code Pro',monospace;font-size:12px;color:#0B1F44;background:transparent" onFocus="{{ w.onCrefFocus }}" />
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+    <sc-if value="{{ showPagination }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:4px;padding:8px 14px;border-top:1px solid #EEF2F7">
+        <button onClick="{{ onPrev }}" disabled="{{ prevDisabled }}" style="height:26px;padding:0 8px;border:1px solid #E2E8F0;border-radius:6px;background:#FFFFFF;font-size:12px;font-family:inherit;cursor:pointer">‹ Prev</button>
+        <sc-for list="{{ pages }}" as="pg" hint-placeholder-count="0">
+          <button onClick="{{ pg.onClick }}" style="min-width:26px;height:26px;padding:0 6px;border:1px solid {{ pg.border }};border-radius:6px;background:{{ pg.bg }};color:{{ pg.fg }};font-size:12px;font-weight:600;font-family:inherit;cursor:pointer">{{ pg.label }}</button>
+        </sc-for>
+        <button onClick="{{ onNext }}" disabled="{{ nextDisabled }}" style="height:26px;padding:0 8px;border:1px solid #E2E8F0;border-radius:6px;background:#FFFFFF;font-size:12px;font-family:inherit;cursor:pointer">Next ›</button>
+        <span style="margin-left:8px;font-size:12px;color:#5A6A85">{{ rangeText }} of {{ rows.length }}</span>
+      </div>
+    </sc-if>
+    <sc-if value="{{ hidePagination }}" hint-placeholder-val="{{ true }}">
+      <div style="padding:6px 14px;border-top:1px solid #EEF2F7;font-size:12px;color:#5A6A85">{{ rows.length }} line(s)</div>
+    </sc-if>
+  </section>
+</sc-if>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1100,&quot;height&quot;:420},&quot;hasBom&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;boolean&quot;},&quot;rows&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;Array&lt;{row_id:string,mpn:string,manufacturer:string,description:string,designators:string,required_qty:number,source:string,result_status:string,customer_reference:string}&gt;&quot;},&quot;counts&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;Array&lt;{label:string,n:number,fg:string,bg:string}&gt;&quot;},&quot;searchValue&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string&quot;},&quot;onSearchChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(v:string)=&gt;void&quot;},&quot;sourceFilter&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string&quot;},&quot;sourceOptions&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string[]&quot;},&quot;onSourceFilterChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(v:string)=&gt;void&quot;},&quot;statusFilter&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string&quot;},&quot;statusOptions&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string[]&quot;},&quot;onStatusFilterChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(v:string)=&gt;void&quot;},&quot;onCustomerReferenceEdit&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(rowId:string,value:string)=&gt;void&quot;},&quot;page&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;number&quot;},&quot;onPageChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(page:number)=&gt;void&quot;}}">
+const SRC_C = { PartsBox: ['#0F6E66', '#E4F3F1'], Mouser: ['#1D4FC4', '#E8EFFD'], DigiKey: ['#B42318', '#FDECEA'], None: ['#5A6A85', '#EEF2F7'] };
+const ST_C = { Ready: ['#15803D', '#E8F5EC'], 'Needs Review': ['#B45309', '#FEF4E4'], 'Not Found': ['#5A6A85', '#EEF2F7'], Error: ['#B91C1C', '#FDEDED'], DNP: ['#5A6A85', '#EEF2F7'] };
+const PAGE_SIZE = 10;
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const rows = p.rows ?? [];
+    const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+    const page = Math.min(Math.max(1, p.page ?? 1), totalPages);
+    const onCrefEdit = p.onCustomerReferenceEdit ?? (() => {});
+    return {
+      hasBom: !!p.hasBom, noBom: !p.hasBom,
+      counts: p.counts ?? [],
+      searchValue: p.searchValue ?? '', onSearchInput: (e) => (p.onSearchChange ?? (() => {}))(e.target.value),
+      sourceFilter: p.sourceFilter ?? 'All', sourceOptions: p.sourceOptions ?? ['All'], onSourceInput: (e) => (p.onSourceFilterChange ?? (() => {}))(e.target.value),
+      statusFilter: p.statusFilter ?? 'All', statusOptions: p.statusOptions ?? ['All'], onStatusInput: (e) => (p.onStatusFilterChange ?? (() => {}))(e.target.value),
+      page, totalPages,
+      showPagination: totalPages > 1, hidePagination: totalPages <= 1,
+      prevDisabled: page <= 1, nextDisabled: page >= totalPages,
+      onPrev: () => (p.onPageChange ?? (() => {}))(Math.max(1, page - 1)),
+      onNext: () => (p.onPageChange ?? (() => {}))(Math.min(totalPages, page + 1)),
+      pages: (() => {
+        const onPageChange = p.onPageChange ?? (() => {});
+        const nums = new Set([1, totalPages, page, page - 1, page + 1].filter((n) => n >= 1 && n <= totalPages));
+        const sorted = [...nums].sort((a, b) => a - b);
+        const out = [];
+        let prev = 0;
+        for (const n of sorted) {
+          if (prev && n - prev > 1) out.push({ label: '…', border: '#E2E8F0', bg: '#FFFFFF', fg: '#8A97AD', onClick: () => {} });
+          out.push({ label: String(n), border: n === page ? '#1D5FE0' : '#E2E8F0', bg: n === page ? '#1D5FE0' : '#FFFFFF', fg: n === page ? '#FFFFFF' : '#1E2B45', onClick: () => onPageChange(n) });
+          prev = n;
+        }
+        return out;
+      })(),
+      rangeText: rows.length === 0 ? '0–0' : ((page - 1) * PAGE_SIZE + 1) + '–' + Math.min(page * PAGE_SIZE, rows.length),
+      rows,
+      pageRows: rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((w) => ({
+        ...w, mpn: w.mpn || '(missing MPN)', mpnFg: w.mpn ? '#0B1F44' : '#B45309',
+        srcFg: (SRC_C[w.source] || SRC_C.None)[0], srcBg: (SRC_C[w.source] || SRC_C.None)[1],
+        stFg: (ST_C[w.result_status] || ST_C['Not Found'])[0], stBg: (ST_C[w.result_status] || ST_C['Not Found'])[1],
+        onCrefFocus: (e) => { e.target.style.border = '1px solid #1D5FE0'; },
+        onCrefBlur: (e) => { e.target.style.border = '1px solid transparent'; onCrefEdit(w.row_id, e.target.value); }
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600&family=Source+Code+Pro:wght@500;600&display=swap" rel="stylesheet">
+</helmet>
+<sc-if value="{{ hasSel }}" hint-placeholder-val="{{ false }}">
+  <section style="font-family:'Source Sans 3',system-ui,sans-serif;font-size:13px;color:#1E2B45;background:#FFFFFF;border:1px solid #BFD3FB;border-radius:10px;box-shadow:0 1px 3px rgba(29,95,224,0.08)">
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #EEF2F7;flex-wrap:wrap">
+      <div style="font-size:15px;font-weight:600;color:#0B1F44">Selected Part</div>
+      <span style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;color:{{ sel.srcFg }};background:{{ sel.srcBg }}">{{ sel.sourceLabel }}</span>
+      <span style="font-family:'Source Code Pro',monospace;font-size:13px;font-weight:600;color:#0B1F44">{{ sel.mpn }}</span>
+      <span style="color:#5A6A85">{{ sel.manufacturer }}</span>
+      <span style="margin-left:auto;display:flex;align-items:center;gap:10px">
+        <sc-if value="{{ added }}" hint-placeholder-val="{{ false }}"><span style="font-size:12.5px;color:#15803D;font-weight:600">✓ {{ addedText }}</span></sc-if>
+        <span style="font-size:12px;color:#8A97AD">No purchasing action</span>
+        <span style="display:flex;align-items:center;gap:2px;height:32px;border:1px solid #D5DDE8;border-radius:6px">
+          <button onClick="{{ onQtyDown }}" style="border:none;background:none;width:26px;height:100%;color:#5A6A85;cursor:pointer;font-size:14px">−</button>
+          <input type="number" min="1" value="{{ qty }}" onChange="{{ onQtyInput }}" style="width:44px;border:none;text-align:center;font-size:13px;font-weight:600;font-family:inherit" />
+          <button onClick="{{ onQtyUp }}" style="border:none;background:none;width:26px;height:100%;color:#5A6A85;cursor:pointer;font-size:14px">+</button>
+        </span>
+        <button onClick="{{ onAdd }}" style="height:32px;padding:0 16px;border:1px solid #1D5FE0;border-radius:6px;background:#1D5FE0;color:#FFFFFF;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer">Add to BOM</button>
+      </span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)">
+      <div style="padding:14px 16px;border-right:1px solid #EEF2F7">
+        <div style="font-size:14px;color:#1E2B45;margin-bottom:10px">{{ sel.description }}</div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 24px">
+          <sc-for list="{{ sel.attributes }}" as="a" hint-placeholder-count="6">
+            <div style="display:grid;grid-template-columns:118px minmax(0,1fr);font-size:13px;gap:8px"><span style="color:#5A6A85">{{ a.k }}</span><span style="color:#0B1F44;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ a.v }}</span></div>
+          </sc-for>
+        </div>
+      </div>
+
+      <sc-if value="{{ isPartsbox }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:14px 16px">
+          <div style="font-size:14px;font-weight:600;color:#0B1F44;margin-bottom:8px">Inventory locations</div>
+          <div style="border:1px solid #E2E8F0;border-radius:8px;overflow:hidden">
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) 90px 70px;height:28px;align-items:center;background:#F8FAFC;border-bottom:1px solid #E2E8F0;font-size:12px;font-weight:600;color:#5A6A85;padding:0 10px"><span>Location</span><span>Project</span><span style="text-align:right">Qty</span></div>
+            <sc-for list="{{ sel.partsboxGroups }}" as="g" hint-placeholder-count="2">
+              <div style="display:flex;align-items:center;gap:8px;height:26px;padding:0 10px;background:#FBFCFE;border-bottom:1px solid #EEF2F7"><span style="font-size:11px;font-weight:600;padding:1px 7px;border-radius:4px;color:{{ g.fg }};background:{{ g.bg }}">{{ g.name }}</span></div>
+              <sc-for list="{{ g.rows }}" as="l">
+                <div style="display:grid;grid-template-columns:minmax(0,1fr) 90px 70px;height:30px;align-items:center;border-bottom:1px solid #EEF2F7;font-size:13px;padding:0 10px 0 22px"><span style="color:#0B1F44">{{ l.name }}</span><span style="font-family:'Source Code Pro',monospace;font-size:12px;color:#5A6A85">{{ l.proj }}</span><span style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">{{ l.qty }}</span></div>
+              </sc-for>
+            </sc-for>
+          </div>
+          <div style="margin-top:6px;font-size:11.5px;color:#8A97AD">Positive current balances only. Read-only.</div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isSupplier }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:14px 16px">
+          <div style="font-size:14px;font-weight:600;color:#0B1F44;margin-bottom:10px">Supplier availability</div>
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
+            <div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 12px"><div style="font-size:12px;color:#5A6A85">Stock</div><div style="font-size:20px;font-weight:700;color:#15803D">{{ sel.supplierDetail.stock }}</div></div>
+            <div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 12px"><div style="font-size:12px;color:#5A6A85">Unit price</div><div style="font-size:20px;font-weight:700;color:#0B1F44">{{ sel.supplierDetail.unitPrice }}</div></div>
+            <div style="border:1px solid #E2E8F0;border-radius:8px;padding:10px 12px"><div style="font-size:12px;color:#5A6A85">Supplier P/N</div><div style="font-family:'Source Code Pro',monospace;font-size:13px;font-weight:600;color:#0B1F44;margin-top:5px">{{ sel.supplierDetail.supplierPartNumber }}</div></div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </section>
+</sc-if>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1000,&quot;height&quot;:260},&quot;selected&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;{kind:'partsbox'|'supplier',sourceLabel:string,mpn:string,manufacturer:string,description:string,attributes:Array&lt;{k:string,v:string}&gt;,partsboxGroups?:Array&lt;{name:string,fg:string,bg:string,rows:Array&lt;{name:string,proj:string,qty:number}&gt;}&gt;,supplierDetail?:{stock:string,unitPrice:string,supplierPartNumber:string}}|null&quot;},&quot;qty&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;number&quot;},&quot;onQtyChange&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;(qty:number)=&gt;void&quot;},&quot;onAdd&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;()=&gt;void&quot;},&quot;addedConfirmation&quot;:{&quot;editor&quot;:null,&quot;tsType&quot;:&quot;string|null&quot;}}">
+const SRC_C = { PartsBox: ['#0F6E66', '#E4F3F1'], Mouser: ['#1D4FC4', '#E8EFFD'], DigiKey: ['#B42318', '#FDECEA'] };
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const s = p.selected ?? null;
+    const qty = p.qty ?? 1;
+    const c = s ? (SRC_C[s.sourceLabel] || ['#5A6A85', '#EEF2F7']) : ['#5A6A85', '#EEF2F7'];
+    return {
+      hasSel: !!s, sel: s ? { ...s, srcFg: c[0], srcBg: c[1] } : {},
+      isPartsbox: !!s && s.kind === 'partsbox', isSupplier: !!s && s.kind === 'supplier',
+      qty, onQtyUp: () => (p.onQtyChange ?? (() => {}))(qty + 1), onQtyDown: () => (p.onQtyChange ?? (() => {}))(Math.max(1, qty - 1)),
+      onQtyInput: (e) => (p.onQtyChange ?? (() => {}))(Math.max(1, parseInt(e.target.value, 10) || 1)),
+      onAdd: p.onAdd ?? (() => {}), added: !!p.addedConfirmation, addedText: p.addedConfirmation ?? ''
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="sample_fixtures.js"></script>
+<style>body{margin:0;background:#E6EBF2;font-family:'Source Sans 3',system-ui,sans-serif}</style>
+</helmet>
+
+<div style="position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:14px;padding:9px 16px;background:#0B1F44;color:#FFFFFF;font-size:13px">
+  <div style="font-weight:700">AutoBOM Frontend — real component tree, sample data</div>
+  <div style="display:flex;gap:2px;background:#132B57;border:1px solid #33496F;border-radius:7px;padding:2px">
+    <sc-for list="{{ viewports }}" as="v" hint-placeholder-count="3">
+      <button onClick="{{ v.onClick }}" style="height:24px;padding:0 10px;border:none;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;background:{{ v.bg }};color:{{ v.fg }}">{{ v.label }}</button>
+    </sc-for>
+  </div>
+  <div style="flex:1;font-size:12px;color:#C9D3E6">This file wires real props/events between real components. Data comes from frontend/sample_fixtures.js — Claude Code replaces every read of it with live AutoBOM data.</div>
+</div>
+
+<div ref="{{ wrapRef }}" style="padding:16px">
+<div style="position:relative;height:{{ wrapH }}px">
+<div ref="{{ frameRef }}" style="position:absolute;top:0;left:0;width:{{ vw }}px;transform:scale({{ scale }});transform-origin:0 0;background:#F3F6FA;padding:16px 24px 32px;box-sizing:border-box">
+
+  <div style="margin-bottom:12px">
+    <dc-import name="AppHeader" hint-size="100%,52px"></dc-import>
+  </div>
+
+  <div style="display:flex;gap:28px;align-items:flex-start;position:relative">
+    <sc-if value="{{ railInline }}" hint-placeholder-val="{{ true }}">
+      <div style="width:{{ railW }}px;flex:none;min-width:0">
+        <dc-import name="FilterRail" hint-size="100%,500px"
+          stock-value="{{ stockValue }}" on-stock-change="{{ onStockChange }}"
+          facet-groups="{{ facetGroups }}" on-facet-toggle="{{ onFacetToggle }}" on-range-change="{{ onRangeChange }}"
+          active-count="{{ activeFilterCount }}" on-clear-all="{{ onClearAllFilters }}"></dc-import>
+      </div>
+    </sc-if>
+
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:18px">
+      <div style="display:flex;gap:14px;align-items:stretch">
+        <div style="flex:1;min-width:0;display:flex">
+          <dc-import name="IntakeCard" hint-size="100%,140px" style="height:100%;width:100%"
+            query="{{ query }}" typing="{{ typing }}" on-query-change="{{ onQueryChange }}" on-submit="{{ onSubmit }}"
+            sources="{{ sources }}" on-source-toggle="{{ onSourceToggle }}"
+            upload="{{ upload }}" on-file-selected="{{ onFileSelected }}"
+            active-chips="{{ activeChips }}" on-clear-chip="{{ onClearChip }}"
+            compact="{{ compact }}" on-open-filters="{{ onOpenFilters }}" filter-count="{{ activeFilterCount }}"
+            snapshot-status="{{ snapshotStatus }}" on-refresh="{{ onRefresh }}"></dc-import>
+        </div>
+        <div style="width:{{ cfgW }}px;flex:none;position:relative">
+          <dc-import name="ConfigurationCard" hint-size="100%,180px"
+            build-quantity="{{ buildQuantity }}" on-build-quantity-change="{{ onBuildQuantityChange }}"
+            can-apply-build-qty="{{ canApplyBuildQty }}" on-apply-build-quantity="{{ onApplyBuildQuantity }}"
+            project-name="{{ projectName }}" on-project-name-change="{{ onProjectNameChange }}"
+            project-description="{{ projectDescription }}" on-project-description-change="{{ onProjectDescriptionChange }}"
+            customer-reference-summary="{{ crefSummary }}" on-edit-customer-reference="{{ onEditCref }}"
+            update-parts-box-project="{{ updatePartsBoxProject }}" on-toggle-update-parts-box-project="{{ onToggleWrite }}"
+            has-bom="{{ hasBom }}"></dc-import>
+
+          <sc-if value="{{ crefOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;right:0;top:60px;z-index:50;width:460px">
+              <dc-import name="CustomerReferenceEditor" hint-size="460px,320px"
+                type="{{ crefType }}" on-type-change="{{ onCrefTypeChange }}" registry="{{ registry }}"
+                prj="{{ crefPrj }}" on-prj-project-change="{{ onCrefPrjProject }}" on-prj-pcb-change="{{ onCrefPrjPcb }}"
+                rnd="{{ crefRnd }}" on-rnd-project-change="{{ onCrefRndProject }}" on-rnd-owner-change="{{ onCrefRndOwner }}"
+                recommendations="{{ crefRecs }}" on-get-recommendations="{{ onGetRecommendations }}"
+                on-recommendation-location-change="{{ onRecLocationChange }}" on-save-row-location="{{ onSaveRowLocation }}"
+                preview="{{ crefPreview }}" on-apply-all="{{ onApplyCrefAll }}" on-add-code="{{ onAddCode }}" on-close="{{ onCloseCref }}"></dc-import>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+
+      <dc-import name="ComponentCharacteristics" hint-size="100%,10px"
+        available="{{ availableCharacteristics }}" active="{{ charActive }}" values="{{ charValues }}"
+        on-add-characteristic="{{ onAddCharacteristic }}" on-remove-characteristic="{{ onRemoveCharacteristic }}" on-value-change="{{ onCharacteristicValueChange }}"></dc-import>
+
+      <sc-if value="{{ filtersPopoverOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="position:relative">
+          <div style="position:absolute;top:0;right:0;z-index:40;width:280px">
+            <dc-import name="FilterRail" hint-size="280px,400px"
+              stock-value="{{ stockValue }}" on-stock-change="{{ onStockChange }}"
+              facet-groups="{{ facetGroups }}" on-facet-toggle="{{ onFacetToggle }}" on-range-change="{{ onRangeChange }}"
+              active-count="{{ activeFilterCount }}" on-clear-all="{{ onClearAllFilters }}"></dc-import>
+          </div>
+        </div>
+      </sc-if>
+
+      <dc-import name="DiscoveryResults" hint-size="100%,400px"
+        partsbox-on="{{ sources.partsbox }}" suppliers-on="{{ suppliersOn }}"
+        partsbox="{{ partsboxModel }}" suppliers="{{ suppliersModel }}"
+        on-partsbox-row-select="{{ onPartsboxRowSelect }}" on-supplier-row-select="{{ onSupplierRowSelect }}"
+        on-partsbox-page-change="{{ onPartsboxPageChange }}" on-supplier-page-change="{{ onSupplierPageChange }}"
+        on-browse-inventory="{{ onBrowseInventory }}"></dc-import>
+
+      <sc-if value="{{ hasSelectedPart }}" hint-placeholder-val="{{ false }}">
+        <dc-import name="SelectedPartCard" hint-size="100%,10px"
+          selected="{{ selected }}" qty="{{ qty }}" on-qty-change="{{ onQtyChange }}" on-add="{{ onAddToBom }}" added-confirmation="{{ addedConfirmation }}"></dc-import>
+      </sc-if>
+
+      <dc-import name="WorkingPartsList" hint-size="100%,10px"
+        has-bom="{{ hasBom }}" rows="{{ workingParts }}" counts="{{ counts }}"
+        search-value="{{ wplSearch }}" on-search-change="{{ onWplSearchChange }}"
+        source-filter="{{ wplSourceFilter }}" source-options="{{ wplSourceOptions }}" on-source-filter-change="{{ onWplSourceFilterChange }}"
+        status-filter="{{ wplStatusFilter }}" status-options="{{ wplStatusOptions }}" on-status-filter-change="{{ onWplStatusFilterChange }}"
+        on-customer-reference-edit="{{ onWplCrefEdit }}" page="{{ wplPage }}" on-page-change="{{ onWplPageChange }}"></dc-import>
+
+      <dc-import name="NeedsReview" hint-size="100%,10px"
+        items="{{ reviewItems }}" selected-item-id="{{ selectedReviewId }}" on-select-item="{{ onSelectReviewItem }}"
+        active-item="{{ activeReviewItem }}" on-retry-exact="{{ onRetryExact }}" on-find-replacement="{{ onFindReplacement }}" on-check-parts-box="{{ onCheckPartsBox }}" on-mark-dnp="{{ onMarkDnp }}"
+        replacement="{{ replacement }}" on-replacement-query-change="{{ onReplQueryChange }}" on-replacement-search="{{ onReplSearch }}"
+        on-replacement-row-select="{{ onReplRowSelect }}" on-use-selected-replacement="{{ onUseSelectedReplacement }}"></dc-import>
+
+      <dc-import name="PurchasingHandoff" hint-size="100%,10px"
+        has-bom="{{ hasBom }}" status="{{ purchasingStatus }}" label="{{ purchasingLabel }}" sub="{{ purchasingSub }}"
+        mouser="{{ purchasingMouser }}" digikey="{{ purchasingDigikey }}" can-regenerate="{{ canRegenerate }}" regenerating="{{ regenerating }}"
+        on-regenerate="{{ onRegenerate }}" on-download="{{ onDownload }}" other-outputs="{{ otherOutputs }}"></dc-import>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}">
+const VPS = { '1920': [1920, 200, 520], '1440': [1440, 180, 430], '1366': [1366, 0, 410] };
+
+class Component extends DCLogic {
+  wrapRef = React.createRef();
+  frameRef = React.createRef();
+  state = {
+    vw: '1920', cw: 1400, fh: 1400,
+    query: '', typing: false, sources: { partsbox: true, mouser: true, digikey: true },
+    pbState: 'lazy', supState: 'idle', pbPage: 1, supPage: 1,
+    selectedPbId: null, selectedSupId: null, qty: 1, addedConfirmation: null,
+    upload: { state: 'idle' },
+    stockValue: 'All', filterSelections: { manufacturer: [], storage_space: [], location: [], project: [] },
+    charActive: [], charValues: {},
+    filtersOpen: false,
+    workingParts: (window.AUTOBOM_SAMPLE || { workingParts: [] }).workingParts.slice(),
+    buildQuantity: 10, projectName: 'ALD P2 Controller', projectDescription: 'Flight controller rev C',
+    updatePartsBoxProject: true,
+    crefOpen: false, crefType: 'prj', crefPrj: { project: 'ALD', pcbCodes: ['DAB'] }, crefRnd: { project: '', owner: '' },
+    selectedReviewId: null, replacement: null,
+    purchasingStatus: 'stale', regenerating: false,
+    wplSearch: '', wplSourceFilter: 'All', wplStatusFilter: 'All', wplPage: 1
+  };
+
+  componentDidMount() {
+    const measure = () => {
+      if (this._measureRaf) return;
+      this._measureRaf = requestAnimationFrame(() => {
+        this._measureRaf = null;
+        const w = this.wrapRef.current, f = this.frameRef.current;
+        if (!w || !f) return;
+        const cw = w.clientWidth - 32, fh = f.offsetHeight;
+        // Tolerance avoids a setState->layout->ResizeObserver->setState feedback
+        // loop (visible as the whole page "vibrating") from sub-pixel/rounding
+        // changes; only react to a real size change.
+        if (Math.abs(cw - this.state.cw) > 1 || Math.abs(fh - this.state.fh) > 2) this.setState({ cw, fh });
+      });
+    };
+    this.ro = new ResizeObserver(measure);
+    if (this.wrapRef.current) this.ro.observe(this.wrapRef.current);
+    if (this.frameRef.current) this.ro.observe(this.frameRef.current);
+    measure();
+  }
+  componentWillUnmount() { this.ro && this.ro.disconnect(); this._typingTimer && clearTimeout(this._typingTimer); this._measureRaf && cancelAnimationFrame(this._measureRaf); }
+
+  markStale() { if (this.state.purchasingStatus === 'current') this.setState({ purchasingStatus: 'stale' }); }
+
+  matches(rec, q) {
+    if (!q) return true;
+    const t = q.toLowerCase();
+    return [rec.mpn, rec.manufacturer, rec.description].some((f) => (f || '').toLowerCase().includes(t));
+  }
+
+  renderVals() {
+    const s = this.state;
+    const F = (window.AUTOBOM_SAMPLE) || { partsbox: [], suppliers: [], manufacturerFacet: [], spaceFacet: [], locationFacet: [], registry: { projects: {}, pcb_codes: {} }, replacementCandidates: { suppliers: [], partsbox: [] } };
+    const set = (fn) => (...args) => this.setState((prev) => fn(prev, ...args));
+    const [vw, railW, cfgW] = VPS[s.vw];
+    const scale = Math.min(1, s.cw / vw);
+    const compact = s.vw === '1366';
+    const suppliersOn = s.sources.mouser || s.sources.digikey;
+
+    const sel = s.filterSelections;
+    const mfrFilter = (rec) => sel.manufacturer.length === 0 || sel.manufacturer.includes(rec.manufacturer);
+    const spaceFilter = (rec) => sel.storage_space.length === 0 || (rec.locations || []).some((l) => sel.storage_space.includes(l.space_type));
+    const locFilter = (rec) => sel.location.length === 0 || (rec.locations || []).some((l) => sel.location.includes(l.name));
+    const projFilter = (rec) => sel.project.length === 0 || (rec.locations || []).some((l) => l.project_name && sel.project.includes(l.project_name));
+    const stockOk = (stock) => {
+      if (s.stockValue === 'All') return true;
+      if (s.stockValue === 'In Stock') return stock > 0;
+      if (s.stockValue === 'Out of Stock') return stock <= 0;
+      return stock == null;
+    };
+
+    const charFilter = (rec) => Object.entries(s.charValues).every(([field, val]) => !val || (rec.characteristics && rec.characteristics[field] === val));
+    const pbFiltered = F.partsbox.filter((r) => this.matches(r, s.query) && mfrFilter(r) && stockOk(r.stock) && spaceFilter(r) && locFilter(r) && projFilter(r) && charFilter(r));
+
+    // Available characteristics: data-driven from whatever the pre-characteristic result set actually has
+    // (never a fixed engineering-parameter list) -- same generate_facets rule the Basic Filters use.
+    const charBase = F.partsbox.filter((r) => this.matches(r, s.query) && mfrFilter(r) && stockOk(r.stock) && spaceFilter(r) && locFilter(r) && projFilter(r));
+    const charFieldLabels = { package: 'Package', voltage: 'Voltage', tolerance: 'Tolerance', dielectric: 'Dielectric' };
+    const charCounts = {};
+    charBase.forEach((r) => { if (r.characteristics) Object.entries(r.characteristics).forEach(([f, v]) => { charCounts[f] = charCounts[f] || {}; charCounts[f][v] = (charCounts[f][v] || 0) + 1; }); });
+    const availableCharacteristics = Object.entries(charCounts).map(([field, counts]) => ({
+      field, label: charFieldLabels[field] || field,
+      values: Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, count }))
+    }));
+    const supFiltered = F.suppliers.filter((r) => this.matches(r, s.query) && mfrFilter(r));
+
+    let pbState = s.pbState;
+    if (pbState === 'results' && pbFiltered.length === 0) pbState = 'empty';
+    if (pbState === 'browse') pbState = pbFiltered.length ? 'browse' : 'empty';
+
+    const DISCOVERY_PAGE_SIZE = 14;
+    const pbTotalPages = Math.max(1, Math.ceil(pbFiltered.length / DISCOVERY_PAGE_SIZE));
+    const pbPageClamped = Math.min(Math.max(1, s.pbPage), pbTotalPages);
+    const pbPageSlice = pbFiltered.slice((pbPageClamped - 1) * DISCOVERY_PAGE_SIZE, pbPageClamped * DISCOVERY_PAGE_SIZE);
+    const partsboxModel = {
+      state: pbState,
+      rows: pbPageSlice.map((r) => ({ id: r.part_id, mpn: r.mpn, manufacturer: r.manufacturer, description: r.description, stock: r.stock,
+        locationSummary: r.locations.length ? r.locations[0].name + (r.locations.length > 1 ? ' +' + (r.locations.length - 1) : '') : '—' })),
+      count: pbFiltered.length, page: pbPageClamped, totalPages: pbTotalPages, selectedId: s.selectedPbId
+    };
+    const supTotalPages = Math.max(1, Math.ceil(supFiltered.length / DISCOVERY_PAGE_SIZE));
+    const supPageClamped = Math.min(Math.max(1, s.supPage), supTotalPages);
+    const supPageSlice = supFiltered.slice((supPageClamped - 1) * DISCOVERY_PAGE_SIZE, supPageClamped * DISCOVERY_PAGE_SIZE);
+    const suppliersModel = {
+      state: s.supState === 'results' && supFiltered.length === 0 ? 'empty' : s.supState,
+      rows: supPageSlice.map((r, i) => ({ id: r.source + '-' + r.mpn, source: r.source, mpn: r.mpn, manufacturer: r.manufacturer, description: r.description, stock: r.stock, unitPrice: r.unit_price })),
+      count: supFiltered.length, page: supPageClamped, totalPages: supTotalPages, selectedId: s.selectedSupId
+    };
+
+    let selected = null;
+    if (s.selectedPbId) {
+      const r = F.partsbox.find((x) => x.part_id === s.selectedPbId);
+      if (r) {
+        const groups = {};
+        r.locations.forEach((l) => { groups[l.space_type] = groups[l.space_type] || []; groups[l.space_type].push(l); });
+        const colors = { Development: ['#15803D', '#E8F5EC'], Project: ['#5B47C4', '#EEEBFB'], Mechanical: ['#8A97AD', '#EEF2F7'], Other: ['#8A97AD', '#EEF2F7'] };
+        selected = {
+          kind: 'partsbox', sourceLabel: 'PartsBox', mpn: r.mpn, manufacturer: r.manufacturer || 'Unknown manufacturer', description: r.description || '—',
+          attributes: [{ k: 'MPN', v: r.mpn }, { k: 'PartsBox ID', v: r.part_id }].concat(r.manufacturer ? [{ k: 'Manufacturer', v: r.manufacturer }] : []),
+          partsboxGroups: Object.entries(groups).map(([name, rows]) => ({ name, fg: (colors[name] || colors.Other)[0], bg: (colors[name] || colors.Other)[1],
+            rows: rows.map((l) => ({ name: l.name, proj: l.project_name || '—', qty: l.quantity })) }))
+        };
+      }
+    } else if (s.selectedSupId) {
+      const r = F.suppliers.find((x) => (x.source + '-' + x.mpn) === s.selectedSupId);
+      if (r) selected = { kind: 'supplier', sourceLabel: r.source, mpn: r.mpn, manufacturer: r.manufacturer, description: r.description,
+        attributes: [{ k: 'Source', v: r.source }, { k: 'Manufacturer', v: r.manufacturer }, { k: 'MPN', v: r.mpn }, { k: 'Supplier P/N', v: r.supplier_part_number }],
+        supplierDetail: { stock: r.stock, unitPrice: r.unit_price, supplierPartNumber: r.supplier_part_number } };
+    }
+
+    const facetGroups = [];
+    // Manufacturer facet is omitted entirely when the current data has no
+    // values for it (F.manufacturerFacet empty) -- never a permanent empty
+    // filter, per the audit's "don't reserve UI for unavailable data" rule.
+    if (F.manufacturerFacet.length) {
+      facetGroups.push({ field: 'manufacturer', label: 'Manufacturer', kind: 'membership', scope: 'all', values: F.manufacturerFacet.map(([v, c]) => ({ value: v, count: c })), selected: sel.manufacturer });
+    }
+    if (s.sources.partsbox) {
+      facetGroups.push({ field: 'storage_space', label: 'Storage Space', kind: 'membership', scope: 'partsbox', values: F.spaceFacet.map(([v, c]) => ({ value: v, count: c })), selected: sel.storage_space });
+      facetGroups.push({ field: 'location', label: 'Location', kind: 'membership', scope: 'partsbox', values: F.locationFacet.map(([v, c]) => ({ value: v, count: c })), selected: sel.location });
+      if ((F.projectFacet || []).length) {
+        facetGroups.push({ field: 'project', label: 'Project', kind: 'membership', scope: 'partsbox', values: F.projectFacet.map(([v, c]) => ({ value: v, count: c })), selected: sel.project });
+      }
+    }
+    const selectedFieldCount = Object.values(sel).filter((arr) => arr.length > 0).length;
+    const activeFilterCount = (s.stockValue !== 'All' ? 1 : 0) + selectedFieldCount;
+    const fieldLabels = { manufacturer: 'Mfr', storage_space: 'Space', location: 'Location', project: 'Project' };
+    const activeChips = [];
+    if (s.stockValue !== 'All') activeChips.push({ label: 'Stock: ' + s.stockValue, field: 'stock' });
+    Object.entries(sel).forEach(([field, values]) => values.forEach((v) => activeChips.push({ label: fieldLabels[field] + ': ' + v, field: field + ':' + v })));
+
+    const reviewItems = s.workingParts.filter((w) => w.result_status === 'Needs Review').map((w) => ({
+      rowId: w.row_id, mpn: w.mpn, manufacturer: w.manufacturer, designators: w.designators, required_qty: w.required_qty,
+      description: w.description, result_status: w.result_status, review_reason: w.review_reason || 'Needs review'
+    }));
+    const activeReviewId = s.selectedReviewId || (reviewItems[0] && reviewItems[0].rowId) || null;
+    const activeReviewItem = reviewItems.find((i) => i.rowId === activeReviewId) || null;
+
+    const counts = (() => {
+      const by = { PartsBox: 0, Mouser: 0, DigiKey: 0 };
+      s.workingParts.forEach((w) => { if (by[w.source] !== undefined) by[w.source]++; });
+      const list = [
+        { label: 'PartsBox', n: by.PartsBox, fg: '#0F6E66', bg: '#E4F3F1' },
+        { label: 'Mouser', n: by.Mouser, fg: '#1D4FC4', bg: '#E8EFFD' },
+        { label: 'DigiKey', n: by.DigiKey, fg: '#B42318', bg: '#FDECEA' }
+      ];
+      if (reviewItems.length) list.push({ label: 'Needs Review', n: reviewItems.length, fg: '#B45309', bg: '#FEF4E4' });
+      return list;
+    })();
+
+    const wplFiltered = s.workingParts.filter((w) =>
+      this.matches(w, s.wplSearch) &&
+      (s.wplSourceFilter === 'All' || w.source === s.wplSourceFilter) &&
+      (s.wplStatusFilter === 'All' || w.result_status === s.wplStatusFilter)
+    );
+
+    const crefValue = s.workingParts[0]?.customer_reference ?? null;
+    const crefPreview = (() => {
+      if (s.crefType === 'prj') { if (!s.crefPrj.project || !s.crefPrj.pcbCodes.length) return null;
+        const v = 'PRJ-' + s.crefPrj.project + '-' + s.crefPrj.pcbCodes.join('_'); return { value: v, length: v.length, max: 30, valid: v.length <= 30 }; }
+      if (s.crefType === 'rnd') { if (!s.crefRnd.project || !s.crefRnd.owner) return null;
+        const v = 'RND-' + s.crefRnd.project + '-' + s.crefRnd.owner.toUpperCase(); return { value: v, length: v.length, max: 30, valid: v.length <= 30 }; }
+      return null;
+    })();
+
+    const canApplyBuildQty = s.workingParts.some((w) => w.qty_per_board);
+
+    const purchasingStatus = reviewItems.length > 0 ? 'needs_review' : s.purchasingStatus;
+    const purchasingLabelMap = { needs_review: 'Needs Review', stale: 'Stale · regeneration required', current: 'Ready for Handoff', generating: 'Generating' };
+
+    return {
+      wrapRef: this.wrapRef, frameRef: this.frameRef,
+      vw, wrapH: Math.ceil(Math.max(s.fh, 900) * scale), scale, railW, cfgW,
+      viewports: ['1920', '1440', '1366'].map((v) => ({ label: VPS[v][0] + 'px', bg: s.vw === v ? '#FFFFFF' : 'transparent', fg: s.vw === v ? '#0B1F44' : '#C9D3E6', onClick: set((prev) => ({ vw: v })) })),
+      railInline: !compact, compact, filtersPopoverOpen: compact && s.filtersOpen,
+      onOpenFilters: set((prev) => ({ filtersOpen: !prev.filtersOpen })),
+
+      query: s.query, typing: s.typing,
+      onQueryChange: (v) => {
+        this.setState({ query: v, typing: true, pbState: v ? 'results' : 'lazy', pbPage: 1 });
+        this._typingTimer && clearTimeout(this._typingTimer);
+        this._typingTimer = setTimeout(() => this.setState({ typing: false }), 350);
+      },
+      onSubmit: set((prev, v) => (prev.sources.mouser || prev.sources.digikey) ? { supState: v ? 'results' : 'idle', supPage: 1 } : {}),
+      sources: s.sources,
+      onSourceToggle: set((prev, key) => ({ sources: { ...prev.sources, [key]: !prev.sources[key] }, selectedPbId: null, selectedSupId: null, pbPage: 1, supPage: 1 })),
+      suppliersOn,
+      upload: s.upload,
+      onFileSelected: (file) => {
+        this.setState({ upload: { state: 'processing', fileName: file.name, message: 'Sourcing lines…' } });
+        setTimeout(() => {
+          const extra = [
+            { row_id: 'u1', mpn: 'TPS62130RGTR', manufacturer: 'Texas Instruments', description: 'IC REG BUCK ADJ 3A 16VQFN', designators: 'U1', required_qty: 10, source: 'Mouser', result_status: 'Ready', customer_reference: crefValue || 'PRJ-ALD-DAB', qty_per_board: 1 },
+            { row_id: 'u2', mpn: '744043100', manufacturer: 'Würth Elektronik', description: 'FIXED IND 10UH 1.1A', designators: 'L1', required_qty: 10, source: 'DigiKey', result_status: 'Ready', customer_reference: crefValue || 'PRJ-ALD-DAB', qty_per_board: 1 }
+          ];
+          this.setState((prev) => ({ upload: { state: 'done', fileName: file.name, message: 'Merged ' + extra.length + ' lines into Working Parts List' }, workingParts: [...prev.workingParts, ...extra] }));
+          this.markStale();
+        }, 900);
+      },
+
+      activeChips, onClearChip: set((prev, field) => {
+        if (field === 'stock') return { stockValue: 'All' };
+        const [fname, ...rest] = field.split(':'); const value = rest.join(':');
+        return { filterSelections: { ...prev.filterSelections, [fname]: prev.filterSelections[fname].filter((v) => v !== value) } };
+      }),
+      snapshotStatus: { loaded: s.pbState !== 'lazy', loading: false, label: s.pbState === 'lazy' ? 'PartsBox snapshot not loaded' : F.partsbox.length + ' parts loaded' },
+      onRefresh: () => {},
+
+      buildQuantity: s.buildQuantity, onBuildQuantityChange: set((prev, v) => ({ buildQuantity: v })),
+      canApplyBuildQty, onApplyBuildQuantity: set((prev) => { this.markStale(); return {}; }),
+      projectName: s.projectName, onProjectNameChange: set((prev, v) => ({ projectName: v })),
+      projectDescription: s.projectDescription, onProjectDescriptionChange: set((prev, v) => ({ projectDescription: v })),
+      crefSummary: { value: crefValue, valid: !!crefValue, length: (crefValue || '').length, max: 30 },
+      onEditCref: set((prev) => ({ crefOpen: true })), onCloseCref: set((prev) => ({ crefOpen: false })),
+      updatePartsBoxProject: s.updatePartsBoxProject, onToggleWrite: set((prev, v) => ({ updatePartsBoxProject: v })),
+      hasBom: s.workingParts.length > 0,
+
+      crefOpen: s.crefOpen, crefType: s.crefType, onCrefTypeChange: set((prev, t) => ({ crefType: t })),
+      registry: F.registry, crefPrj: s.crefPrj, onCrefPrjProject: set((prev, v) => ({ crefPrj: { ...prev.crefPrj, project: v } })),
+      onCrefPrjPcb: set((prev, v) => ({ crefPrj: { ...prev.crefPrj, pcbCodes: v } })),
+      crefRnd: s.crefRnd, onCrefRndProject: set((prev, v) => ({ crefRnd: { ...prev.crefRnd, project: v } })),
+      onCrefRndOwner: set((prev, v) => ({ crefRnd: { ...prev.crefRnd, owner: v } })),
+      crefRecs: null, onGetRecommendations: () => {}, onRecLocationChange: () => {}, onSaveRowLocation: () => {},
+      crefPreview, onApplyCrefAll: set((prev) => { this.markStale(); return { workingParts: prev.workingParts.map((w) => ({ ...w, customer_reference: crefPreview.value })), crefOpen: false }; }),
+      onAddCode: () => {},
+
+      facetGroups, onFacetToggle: set((prev, field, value) => {
+        const cur = prev.filterSelections[field] || [];
+        const has = cur.includes(value);
+        return { filterSelections: { ...prev.filterSelections, [field]: has ? cur.filter((v) => v !== value) : [...cur, value] }, pbPage: 1, supPage: 1 };
+      }),
+      onRangeChange: () => {}, onStockChange: set((prev, v) => ({ stockValue: v, pbPage: 1 })),
+      activeFilterCount, onClearAllFilters: set(() => ({ stockValue: 'All', filterSelections: { manufacturer: [], storage_space: [], location: [], project: [] }, pbPage: 1, supPage: 1 })),
+
+      availableCharacteristics, charActive: s.charActive, charValues: s.charValues,
+      onAddCharacteristic: set((prev, field) => ({ charActive: [...prev.charActive, field] })),
+      onRemoveCharacteristic: set((prev, field) => ({ charActive: prev.charActive.filter((f) => f !== field), charValues: { ...prev.charValues, [field]: '' }, pbPage: 1 })),
+      onCharacteristicValueChange: set((prev, field, value) => ({ charValues: { ...prev.charValues, [field]: value }, pbPage: 1 })),
+
+      partsboxModel, suppliersModel,
+      onPartsboxRowSelect: set((prev, id) => ({ selectedPbId: id, selectedSupId: null, qty: 1, addedConfirmation: null })),
+      onSupplierRowSelect: set((prev, id) => ({ selectedSupId: id, selectedPbId: null, qty: 1, addedConfirmation: null })),
+      onPartsboxPageChange: set((prev, p) => ({ pbPage: p })), onSupplierPageChange: set((prev, p) => ({ supPage: p })),
+      onBrowseInventory: set(() => ({ pbState: 'browse' })),
+
+      selected, hasSelectedPart: !!selected, qty: s.qty, onQtyChange: set((prev, q) => ({ qty: q })),
+      onAddToBom: () => {
+        if (!selected) return;
+        const row = { row_id: 'a' + Date.now(), mpn: selected.mpn, manufacturer: selected.manufacturer, description: selected.description,
+          designators: '—', required_qty: this.state.qty, source: selected.kind === 'partsbox' ? 'PartsBox' : selected.sourceLabel,
+          result_status: 'Ready', customer_reference: crefValue || '' };
+        this.setState((prev) => ({ workingParts: [...prev.workingParts, row], addedConfirmation: 'Added ×' + prev.qty + ' as line ' + (prev.workingParts.length + 1) }));
+        this.markStale();
+        setTimeout(() => this.setState({ addedConfirmation: null }), 2500);
+      },
+      addedConfirmation: s.addedConfirmation,
+
+      workingParts: wplFiltered, counts,
+      wplSearch: s.wplSearch, onWplSearchChange: set((prev, v) => ({ wplSearch: v, wplPage: 1 })),
+      wplSourceFilter: s.wplSourceFilter, wplSourceOptions: ['All', 'PartsBox', 'Mouser', 'DigiKey', 'None'], onWplSourceFilterChange: set((prev, v) => ({ wplSourceFilter: v, wplPage: 1 })),
+      wplStatusFilter: s.wplStatusFilter, wplStatusOptions: ['All', 'Ready', 'Needs Review', 'Not Found', 'Error', 'DNP'], onWplStatusFilterChange: set((prev, v) => ({ wplStatusFilter: v, wplPage: 1 })),
+      wplPage: s.wplPage, onWplPageChange: set((prev, pg) => ({ wplPage: pg })),
+      onWplCrefEdit: set((prev, rowId, value) => { this.markStale(); return { workingParts: prev.workingParts.map((w) => w.row_id === rowId ? { ...w, customer_reference: value } : w) }; }),
+
+      reviewItems, selectedReviewId: activeReviewId, onSelectReviewItem: set((prev, id) => ({ selectedReviewId: id, replacement: null })),
+      activeReviewItem,
+      onRetryExact: (rowId) => { this.setState((prev) => ({ workingParts: prev.workingParts.map((w) => w.row_id === rowId ? { ...w, result_status: 'Ready', source: 'Mouser', review_reason: '' } : w) })); this.markStale(); },
+      onFindReplacement: (rowId) => this.setState({ replacement: { mode: 'suppliers', rowId, query: (activeReviewItem && activeReviewItem.description) || '', rows: F.replacementCandidates.suppliers.map((r) => ({ id: r.source + '-' + r.mpn, ...r, unitPrice: r.unit_price, covers: '✓ Yes' })), selectedId: null } }),
+      onCheckPartsBox: (rowId) => this.setState({ replacement: { mode: 'partsbox', rowId, query: (activeReviewItem && activeReviewItem.mpn) || '', rows: F.replacementCandidates.partsbox.map((r) => ({ id: r.source + '-' + r.mpn, ...r, unitPrice: r.unit_price, covers: '—' })), selectedId: null } }),
+      onMarkDnp: (rowId) => {
+        this.setState((prev) => ({
+          workingParts: prev.workingParts.map((w) => w.row_id === rowId ? { ...w, result_status: 'DNP', source: 'None', review_reason: '' } : w),
+          selectedReviewId: prev.selectedReviewId === rowId ? null : prev.selectedReviewId,
+          replacement: prev.replacement && prev.replacement.rowId === rowId ? null : prev.replacement
+        }));
+        this.markStale();
+      },
+      replacement: s.replacement,
+      onReplQueryChange: set((prev, v) => ({ replacement: { ...prev.replacement, query: v } })),
+      onReplSearch: () => {}, onReplRowSelect: set((prev, id) => ({ replacement: { ...prev.replacement, selectedId: id } })),
+      onUseSelectedReplacement: () => {
+        const repl = this.state.replacement; if (!repl || !repl.selectedId) return;
+        const cand = repl.rows.find((r) => r.id === repl.selectedId);
+        this.setState((prev) => ({
+          workingParts: prev.workingParts.map((w) => w.row_id === repl.rowId ? { ...w, mpn: cand.mpn, manufacturer: cand.manufacturer, source: cand.source, result_status: 'Ready', review_reason: '' } : w),
+          replacement: null, selectedReviewId: null
+        }));
+        this.markStale();
+      },
+
+      purchasingStatus, purchasingLabel: purchasingLabelMap[purchasingStatus] || purchasingStatus,
+      purchasingSub: purchasingStatus === 'needs_review' ? reviewItems.length + ' line(s) unresolved' : purchasingStatus === 'stale' ? 'BOM changed since last generation' : 'Generated from the current list',
+      purchasingMouser: { itemCount: s.workingParts.filter((w) => w.source === 'Mouser').length, totalQuantity: s.workingParts.filter((w) => w.source === 'Mouser').reduce((a, w) => a + (w.required_qty || 0), 0), artifactStatus: purchasingStatus === 'current' ? 'current' : purchasingStatus, downloadEnabled: purchasingStatus === 'current' },
+      purchasingDigikey: { itemCount: s.workingParts.filter((w) => w.source === 'DigiKey').length, totalQuantity: s.workingParts.filter((w) => w.source === 'DigiKey').reduce((a, w) => a + (w.required_qty || 0), 0), artifactStatus: purchasingStatus === 'current' ? 'current' : purchasingStatus, listId: purchasingStatus === 'current' ? 'b7e3c0a2-5f14' : '—' },
+      canRegenerate: purchasingStatus !== 'needs_review' && !s.regenerating, regenerating: s.regenerating,
+      onRegenerate: () => { this.setState({ regenerating: true, purchasingStatus: 'generating' }); setTimeout(() => this.setState({ regenerating: false, purchasingStatus: 'current' }), 1000); },
+      onDownload: () => {},
+      otherOutputs: ['Cleaned workbook', 'Cleaned CSV', 'Sourcing report', 'Run summary'].map((l) => ({ key: l, label: l, enabled: purchasingStatus === 'current' }))
+    };
+  }
+}
+</script>
+</body>
+</html>
