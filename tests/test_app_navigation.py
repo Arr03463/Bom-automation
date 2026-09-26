@@ -157,8 +157,8 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         control replacing the mockup's plain "Customer part number"
         field silently disappeared on a fresh/blank page -- reported
         directly by the operator ("what happened to the customer part
-        number"). It must always render, hinting "set once parts are
-        added" and disabling its Edit popover, rather than vanishing.
+        number"). It must always render, hinting that it can be
+        configured now and applied once parts exist.
         """
         at = fresh_app_test()
         at.run()
@@ -166,8 +166,44 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         self.assertEqual(len(at.exception), 0)
         captions = [c.value for c in at.caption]
         self.assertTrue(any("Customer Reference" in c for c in captions))
-        self.assertTrue(any("set once parts are added" in c.lower() for c in captions))
+        self.assertTrue(any("configure now" in c.lower() for c in captions))
         self.assertGreaterEqual(len(at.get("popover")), 1)
+
+    def test_customer_reference_is_configurable_before_any_bom_exists(self):
+        """
+        Follow-up to the operator's direct request ("it should be able
+        to be configure[d] from the start"): the Project/PCB picker,
+        live preview, and validity check must all work with no BOM at
+        all -- only the actual "Apply to All BOM Lines" write is gated
+        (disabled, with an explanatory caption) behind rows existing to
+        write into.
+        """
+        at = fresh_app_test()
+        at.run()
+
+        # Re-fetch the popover block after every .run() -- like any
+        # other AppTest element, a Block reference from a prior run does
+        # not reflect the newly rendered tree.
+        popover = at.get("popover")[0]
+        self._select(popover, popover.selectbox, "cref_project", "ATH")
+        at.run()
+        popover = at.get("popover")[0]
+        self._select(popover, popover.multiselect, "cref_pcb_codes", "DAB")
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        popover = at.get("popover")[0]
+        success_messages = [s.value for s in popover.success]
+        self.assertTrue(any("PRJ-ATH-DAB" in s for s in success_messages))
+        apply_button = next(b for b in popover.button if b.label == "Apply to All BOM Lines")
+        self.assertTrue(apply_button.disabled)
+        captions = [c.value for c in popover.caption]
+        self.assertTrue(any("add parts" in c.lower() for c in captions))
+
+    @staticmethod
+    def _select(container, widget_list, key, value):
+        widget = next(w for w in widget_list if w.key == key)
+        widget.select(value)
 
     def test_customer_reference_is_reachable_without_a_separate_top_level_page(self):
         result = self._run()

@@ -1348,6 +1348,15 @@ def _apply_customer_reference_to_all(current_run, active_bom_state, value):
 
 
 def _render_customer_reference_preview_and_apply(current_run, active_bom_state, preview, key_prefix):
+    """
+    The type/project/PCB/R&D picker and this preview/validity check work
+    with no working BOM yet -- an operator can configure the reference
+    from the start, before adding any parts (matches the mockup's plain,
+    always-editable "Customer part number" field). Only "Apply to All
+    BOM Lines" itself needs actual rows to write to, so only that
+    specific action is guarded/disabled here, with an explicit reason
+    -- the picker/preview above it are never gated.
+    """
     result = validate_customer_reference(preview)
     if result.valid:
         st.success(f"{result.value}  —  {result.length} / {CUSTOMER_REFERENCE_MAX_LENGTH} characters  ✓ Valid")
@@ -1357,9 +1366,14 @@ def _render_customer_reference_preview_and_apply(current_run, active_bom_state, 
             + "\n".join(f"✗ {error}" for error in result.errors)
         )
 
-    if st.button("Apply to All BOM Lines", key=f"{key_prefix}_apply_all", disabled=not result.valid):
+    has_bom = active_bom_state is not None
+    if st.button(
+        "Apply to All BOM Lines", key=f"{key_prefix}_apply_all", disabled=not (result.valid and has_bom)
+    ):
         _apply_customer_reference_to_all(current_run, active_bom_state, result.value)
         st.success(f"Applied {result.value} to every BOM line.")
+    if result.valid and not has_bom:
+        st.caption("Add parts to the working BOM to apply this reference.")
         # Deliberately no st.rerun() -- Customer Reference is nested in
         # the shared Configuration section, positioned before Results in
         # page order (see render_configuration_section()). Results
@@ -1451,7 +1465,16 @@ def _render_inventory_reference(current_run, active_bom_state):
     operator can accept or override per line. Only runs on an explicit
     button click -- selecting "Inventory" above never triggers this by
     itself, since it's one PartsBox read per BOM line.
+
+    Inherently needs actual BOM rows to recommend locations for -- this
+    is the one Customer Reference mode that genuinely can't be
+    configured before parts exist (contrast Project/PCB and R&D, whose
+    picker/preview work with no BOM at all).
     """
+    if active_bom_state is None:
+        st.info("Add parts to the working BOM first, then generate location recommendations here.")
+        return
+
     rows = active_bom_state.rows()
     if not rows:
         st.info("No BOM lines to assign.")
@@ -1548,6 +1571,10 @@ def _render_inventory_reference(current_run, active_bom_state):
 
 
 def _render_customer_reference_overrides(current_run, active_bom_state):
+    if active_bom_state is None:
+        st.caption("No BOM lines yet.")
+        return
+
     rows = active_bom_state.rows()
     if not rows:
         st.caption("No BOM lines.")
@@ -1633,7 +1660,7 @@ def render_customer_reference_summary(current_run, active_bom_state):
     summary_cols = st.columns([3, 1])
     with summary_cols[0]:
         if not has_bom:
-            st.caption("Customer Reference: set once parts are added.")
+            st.caption("Customer Reference: configure now, apply once parts are added.")
         elif current_value:
             result = validate_customer_reference(current_value)
             status = "valid" if result.valid else "invalid"
@@ -1641,9 +1668,16 @@ def render_customer_reference_summary(current_run, active_bom_state):
         else:
             st.caption("Customer Reference: not set yet.")
     with summary_cols[1]:
-        with st.popover("Edit Customer Reference", width="stretch", disabled=not has_bom):
-            if has_bom:
-                render_customer_reference_section(current_run, active_bom_state)
+        # The popover itself is never disabled -- Project/PCB and R&D
+        # references can be picked/previewed before any BOM exists (the
+        # operator asked for this explicitly: "it should be able to be
+        # configured from the start"). Only the specific actions that
+        # need actual rows (Apply to All, per-line overrides, Inventory
+        # recommendations) are individually guarded inside the section
+        # -- see _render_customer_reference_preview_and_apply(),
+        # _render_inventory_reference(), _render_customer_reference_overrides().
+        with st.popover("Edit Customer Reference", width="stretch"):
+            render_customer_reference_section(current_run, active_bom_state)
 
 
 def render_customer_reference_section(current_run, active_bom_state):
