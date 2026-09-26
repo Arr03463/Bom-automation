@@ -1797,8 +1797,11 @@ def render_configuration_section():
             # in this SAME pass, reflecting the recomputed required_qty.
 
     # Always rendered -- see render_customer_reference_summary()'s
-    # docstring for why this must not be gated behind current_run.
-    st.divider()
+    # docstring for why this must not be gated behind current_run. No
+    # divider above it -- it's part of this same Configuration card, not
+    # a visually separate section below it (matches the mockup's
+    # ConfigurationCard, where Customer Reference is just another field
+    # in the same card).
     render_customer_reference_summary(current_run, active_bom_state)
 
 
