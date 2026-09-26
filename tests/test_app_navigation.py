@@ -61,20 +61,20 @@ def _fake_snapshot(parts):
 
 
 class TopLevelNavigationTests(unittest.TestCase):
-    def test_top_level_navigation_has_exactly_autobom_and_partsbox_inventory(self):
+    """
+    No sidebar navigation at all now -- a single continuous page. Browse
+    Inventory (the old separate "PartsBox Inventory" page) is folded into
+    Main Search's PartsBox panel instead; see
+    NoTopLevelNavigationTests/MainSearchBrowseInventoryTests below for
+    that behavior's coverage.
+    """
+
+    def test_no_sidebar_navigation_widget_exists(self):
         at = fresh_app_test()
         at.run()
 
-        options = at.sidebar.radio[0].options
-        self.assertEqual(list(options), ["AutoBOM", "PartsBox Inventory"])
-
-    def test_run_bom_and_component_search_and_purchasing_are_not_top_level_options(self):
-        at = fresh_app_test()
-        at.run()
-
-        options = list(at.sidebar.radio[0].options)
-        for stale_page_name in ("Run BOM", "Component Search", "Purchasing"):
-            self.assertNotIn(stale_page_name, options)
+        self.assertEqual(len(at.exception), 0)
+        self.assertEqual(len(at.sidebar.radio), 0)
 
 
 class AutobomWorkflowSectionsTests(unittest.TestCase):
@@ -101,10 +101,11 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         The core complaint this pass fixes: Run BOM / Results / Component
         Search / Customer Reference / Purchasing Handoff must NOT be
         rendered as st.tabs() -- that still separates them into feeling
-        like different destinations, even on one nominal "page". The
-        only tabs left anywhere should be the pre-existing, unrelated
-        "All Results" / "Needs Review (N)" split inside the results
-        table itself.
+        like different destinations, even on one nominal "page". Needs
+        Review is its own always-visible master-detail section now (see
+        render_needs_review_section()), not a tab alongside "All
+        Results" -- there should be no st.tabs() anywhere on this page
+        at all.
         """
         result = self._run()
         at = fresh_app_test()
@@ -112,16 +113,9 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         at.run()
 
         self.assertEqual(len(at.exception), 0)
-        tab_labels = [tab.label for tab in at.tabs]
-        for stale_tab_name in (
-            "1. Run BOM",
-            "2. Results / Needs Review",
-            "3. Component Search",
-            "4. Customer Reference",
-            "5. Purchasing Handoff",
-        ):
-            self.assertNotIn(stale_tab_name, tab_labels)
-        self.assertTrue(any(label.startswith("Needs Review") for label in tab_labels))
+        self.assertEqual(len(at.tabs), 0)
+        markdown_headings = [el.value for el in at.markdown]
+        self.assertTrue(any("Needs Review" in heading for heading in markdown_headings))
 
     def test_upload_widget_is_present_on_main_workflow_page(self):
         """
@@ -176,12 +170,17 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
         self.assertTrue(any(header.startswith("Purchasing Handoff") for header in headers))
 
     def test_results_needs_review_is_reachable_without_a_separate_top_level_page(self):
+        """
+        Working Parts List's summary badges are PartsBox/Mouser/DigiKey/
+        Needs Review (4 metrics) now -- no separate "Total Parts" tile,
+        matching the frontend design spec's `counts` list.
+        """
         result = self._run()
         at = fresh_app_test()
         at.session_state["current_run"] = result
         at.run()
 
-        self.assertEqual(len(at.metric), 5)
+        self.assertEqual(len(at.metric), 4)
 
     def test_repeated_reruns_preserve_canonical_bom_state(self):
         """
@@ -525,39 +524,127 @@ class UnifiedIntakeTests(unittest.TestCase):
         self.assertTrue(any("Download Mouser Export" in label for label in download_labels))
 
 
-class PartsBoxInventoryTopLevelTests(unittest.TestCase):
+class SearchSelectionAndStaleResultsLifecycleTests(unittest.TestCase):
     """
-    PartsBox Inventory lazy-loads the shared snapshot
-    (partsbox_inventory.get_snapshot()) as soon as the page renders --
-    see tests/test_app_smoke.py's PartsBoxInventorySmokeTests docstring
-    for why the patch target must be partsbox_inventory.get_snapshot
-    (the defining module), not app.get_partsbox_snapshot, and why it's
-    entered via self.enterContext.
+    Per Documentation/AutoBOM_Interaction_Specification.md §1: a
+    selection persists across unrelated reruns but clears on an
+    incompatible query/source change, and diverging the draft from the
+    last committed Enter query marks (not clears) supplier results as
+    stale. Injects session state directly for anything AppTest can't
+    drive (the search box's own typing/Enter, and row selection) --
+    same established pattern as elsewhere in this suite.
     """
 
-    def _navigate_to_inventory(self, snapshot=None):
+    @staticmethod
+    def _candidate(source="PartsBox", mpn="ABC123"):
+        return {
+            "source": source,
+            "manufacturer": "Yageo",
+            "mpn": mpn,
+            "description": "10k Resistor",
+            "category": "",
+            "package": "",
+            "stock": None,
+            "supplier_part_number": "",
+            "unit_price": "",
+            "lifecycle_status": "",
+            "characteristics": {},
+            "raw": {},
+            "stock_sufficient": None,
+        }
+
+    def test_clear_button_resets_draft_and_supplier_results_and_selection(self):
+        at = fresh_app_test()
+        at.session_state["component_search_text"] = "old query"
+        at.session_state["component_search_supplier_results"] = [self._candidate(source="Mouser")]
+        at.session_state["component_search_last_submitted"] = ("old query", ("mouser", "digikey"))
+        at.session_state["component_search_selected_part"] = self._candidate(source="Mouser")
+        at.run()
+
+        next(b for b in at.button if b.label == "✕ Clear").click()
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        self.assertEqual(at.session_state["component_search_text"], "")
+        self.assertEqual(at.session_state["component_search_supplier_results"], [])
+        self.assertIsNone(at.session_state["component_search_last_submitted"])
+        self.assertIsNone(at.session_state["component_search_selected_part"])
+
+    def test_unchecking_the_selections_source_clears_it(self):
+        at = fresh_app_test()
+        at.session_state["component_search_selected_part"] = self._candidate(source="Mouser")
+        at.run()
+        self.assertIsNotNone(at.session_state["component_search_selected_part"])
+
+        next(cb for cb in at.checkbox if cb.key == "component_search_mouser").set_value(False)
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        self.assertIsNone(at.session_state["component_search_selected_part"])
+
+    def test_unrelated_filter_change_does_not_clear_a_still_matching_selection(self):
+        """
+        Contrast case for the above: a selection must NOT be cleared
+        just because some other widget on the page reran -- only an
+        incompatible source/query change clears it.
+        """
+        at = fresh_app_test()
+        at.session_state["component_search_selected_part"] = self._candidate(source="Mouser")
+        at.run()
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        self.assertIsNotNone(at.session_state["component_search_selected_part"])
+
+    def test_stale_supplier_caption_appears_when_draft_diverges_from_last_query(self):
+        at = fresh_app_test()
+        at.session_state["component_search_supplier_results"] = [self._candidate(source="Mouser")]
+        at.session_state["component_search_last_submitted"] = ("OLDQUERY", ("mouser",))
+        at.session_state["component_search_text"] = "OLDQUERY"
+        at.run()
+
+        captions = [c.value for c in at.caption]
+        self.assertFalse(any("press Enter to update" in c for c in captions))
+
+        # Force the widget back to a fresh instance seeded with a
+        # DIFFERENT draft than the last committed query -- simulates the
+        # operator having typed further without pressing Enter again.
+        at.session_state["component_search_event_generation"] = (
+            at.session_state.get("component_search_event_generation", 0) + 1
+        )
+        at.session_state["component_search_text"] = "NEWDRAFT"
+        at.run()
+
+        captions = [c.value for c in at.caption]
+        self.assertTrue(any("press Enter to update" in c for c in captions))
+        self.assertTrue(any("OLDQUERY" in c for c in captions))
+        # Still shown, not cleared -- staleness marks, never hides.
+        self.assertEqual(len(at.session_state["component_search_supplier_results"]), 1)
+
+
+class MainSearchBrowseInventoryTests(unittest.TestCase):
+    """
+    "Browse Inventory" folds the old standalone PartsBox Inventory page
+    into Main Search's PartsBox panel: clicking it shows the COMPLETE
+    shared snapshot with no query typed, exactly like the old page's
+    empty-search-shows-everything behavior -- just without a separate
+    nav destination. Patched at partsbox_inventory.get_snapshot (the
+    defining module, not app.get_partsbox_snapshot -- AppTest re-execs
+    app.py's `from partsbox_inventory import get_snapshot as
+    get_partsbox_snapshot` fresh on every .run(), so only a patch on the
+    defining module is picked up; see tests/test_app_smoke.py's module
+    docstring for the same gotcha elsewhere in this file).
+    """
+
+    def _navigate_with_snapshot(self, snapshot=None):
         self.enterContext(
             patch("partsbox_inventory.get_snapshot", return_value=snapshot or _fake_snapshot([]))
         )
         at = fresh_app_test()
         at.run()
-        at.sidebar.radio[0].set_value("PartsBox Inventory")
-        at.run()
         return at
 
-    def test_partsbox_inventory_remains_independently_accessible(self):
-        at = self._navigate_to_inventory()
-        self.assertEqual(len(at.exception), 0)
-        subheaders = [el.value for el in at.subheader]
-        self.assertIn("PartsBox Inventory", subheaders)
-
-    def test_empty_search_shows_the_full_inventory_not_a_bom_subset(self):
-        """
-        The page lazy-loads the COMPLETE shared snapshot on entry (no
-        query parameter at the fetch level at all -- get_snapshot()
-        takes none) and an empty search text shows every part in it, not
-        just parts referenced by the current/any BOM run.
-        """
+    def test_browse_inventory_shows_the_full_catalog_with_no_query_typed(self):
         snapshot = _fake_snapshot(
             [
                 _fake_inventory_part(part_id="p1", mpn="A"),
@@ -565,29 +652,33 @@ class PartsBoxInventoryTopLevelTests(unittest.TestCase):
                 _fake_inventory_part(part_id="p3", mpn="C"),
             ]
         )
-        at = self._navigate_to_inventory(snapshot)
+        at = self._navigate_with_snapshot(snapshot)
+
+        next(b for b in at.button if b.label == "Browse Inventory").click()
+        at.run()
 
         self.assertEqual(len(at.exception), 0)
         self.assertEqual(len(at.dataframe[0].value), 3)
 
-    def test_opening_and_browsing_partsbox_inventory_performs_zero_write_calls(self):
+    def test_browsing_inventory_performs_zero_write_calls(self):
         """
-        Loading the page and loading storage locations are both real
-        PartsBoxClient-backed operations here -- this proves neither
-        ever calls PartsBoxClient.call() with a write operation
-        (project/create, storage/create, project/add-entries). Patches
-        PartsBoxClient's underlying call() so this test also protects
-        against a future change accidentally introducing a write from
-        this page.
+        Browsing is a real PartsBoxClient-backed read here (the snapshot
+        is NOT mocked away, unlike the other test in this class) -- this
+        proves get_snapshot()'s real fetch never calls
+        PartsBoxClient.call() with a write operation (project/create,
+        storage/create, project/add-entries). Patches PartsBoxClient's
+        underlying call() so this test also protects against a future
+        change accidentally introducing a write from this panel.
         """
-        at = self._navigate_to_inventory()
-
         with patch("partsbox_client.PartsBoxClient.call") as mock_call:
             mock_call.return_value = {"data": []}
-            next(b for b in at.button if b.label == "Load storage locations").click()
+            at = fresh_app_test()
+            at.run()
+            next(b for b in at.button if b.label == "Browse Inventory").click()
             at.run()
 
         self.assertEqual(len(at.exception), 0)
+        self.assertGreater(mock_call.call_count, 0)
         write_operations = {"project/create", "storage/create", "project/add-entries"}
         for call_args in mock_call.call_args_list:
             operation = call_args.args[0] if call_args.args else call_args.kwargs.get("operation")

@@ -102,6 +102,13 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn("DigiKey", checkbox_labels)
 
     def test_injected_run_result_renders_results_workspace(self):
+        """
+        Working Parts List's summary badges are PartsBox/Mouser/DigiKey/
+        Needs Review (4 metrics, no "Total Parts" tile) -- and there are
+        no "All Results"/"Needs Review (N)" tabs anymore; Needs Review is
+        its own always-visible master-detail section (see
+        render_needs_review_section()).
+        """
         result = self._run_with_review_row()
 
         at = fresh_app_test()
@@ -109,10 +116,11 @@ class AppSmokeTests(unittest.TestCase):
         at.run()
 
         self.assertEqual(len(at.exception), 0)
-        self.assertEqual(len(at.metric), 5)
-        tab_labels = [tab.label for tab in at.tabs]
-        self.assertIn("All Results", tab_labels)
-        self.assertIn("Needs Review (1)", tab_labels)
+        self.assertEqual(len(at.metric), 4)
+        self.assertEqual(len(at.tabs), 0)
+        markdown_headings = [el.value for el in at.markdown]
+        self.assertTrue(any("Working Parts List" in heading for heading in markdown_headings))
+        self.assertTrue(any("Needs Review" in heading for heading in markdown_headings))
 
     def test_needs_review_actions_render_without_being_invoked(self):
         result = self._run_with_review_row()
@@ -415,41 +423,40 @@ def _fake_snapshot(parts):
     )
 
 
-class PartsBoxInventorySmokeTests(unittest.TestCase):
+class MainSearchPartsBoxPanelSmokeTests(unittest.TestCase):
     """
-    PartsBox Inventory lazy-loads the shared snapshot
-    (partsbox_inventory.get_snapshot()) as soon as the page renders --
-    every test here patches it before navigating so none make a live
-    PartsBox call. Patched at partsbox_inventory.get_snapshot (the
-    module that DEFINES it), not app.get_partsbox_snapshot -- AppTest
-    re-execs app.py's `from partsbox_inventory import get_snapshot as
-    get_partsbox_snapshot` fresh on every .run(), so only a patch on the
-    defining module is picked up (see tests/test_app_smoke.py's module
-    docstring for the same gotcha elsewhere in this file). Patches are
-    entered via self.enterContext so they stay active across every
-    .run() in a test, not just the first.
+    The old standalone PartsBox Inventory page is retired -- browsing the
+    full catalog is now the "Browse Inventory" button inline in Main
+    Search's PartsBox panel (see tests/test_app_navigation.py's
+    MainSearchBrowseInventoryTests for the page-level coverage of that
+    button). These tests cover the panel's filtering/no-write-actions
+    guarantees directly against a fake snapshot, patched at
+    partsbox_inventory.get_snapshot (the module that DEFINES it), not
+    app.get_partsbox_snapshot -- see this file's module docstring for
+    why. Patches are entered via self.enterContext so they stay active
+    across every .run() in a test, not just the first.
     """
 
-    def _navigate_to_inventory(self, snapshot=None):
+    def _navigate_with_browse(self, snapshot=None):
         self.enterContext(patch("partsbox_inventory.get_snapshot", return_value=snapshot or _fake_snapshot([])))
         at = fresh_app_test()
         at.run()
-        at.sidebar.radio[0].set_value("PartsBox Inventory")
+        next(b for b in at.button if b.label == "Browse Inventory").click()
         at.run()
         return at
 
-    def test_inventory_page_loads_without_exceptions(self):
-        at = self._navigate_to_inventory()
+    def test_browse_inventory_loads_without_exceptions(self):
+        at = self._navigate_with_browse()
         self.assertEqual(len(at.exception), 0)
 
-    def test_search_reuses_shared_snapshot(self):
-        at = self._navigate_to_inventory(_fake_snapshot([_fake_inventory_part()]))
+    def test_browse_inventory_reuses_shared_snapshot(self):
+        at = self._navigate_with_browse(_fake_snapshot([_fake_inventory_part()]))
 
         self.assertEqual(len(at.exception), 0)
-        self.assertEqual(len(at.dataframe), 1)
+        self.assertEqual(len(at.dataframe[0].value), 1)
 
     def test_filters_use_shared_filtering_layer(self):
-        at = self._navigate_to_inventory(
+        at = self._navigate_with_browse(
             _fake_snapshot(
                 [
                     _fake_inventory_part(part_id="p1", mpn="A", package="0603"),
@@ -461,13 +468,13 @@ class PartsBoxInventorySmokeTests(unittest.TestCase):
         selectbox_labels = [s.label for s in at.selectbox]
         self.assertIn("Package", selectbox_labels)
 
-    def test_no_write_action_buttons_are_present(self):
+    def test_no_write_action_buttons_are_present_anywhere(self):
         """
-        No PartsBox write operation is confirmed supported in this pass
-        (see the Phase 4 report) -- the Inventory page must not offer
+        No PartsBox write operation is confirmed supported through the
+        UI (see the Phase 4 report) -- nowhere on the page should offer
         write actions it can't back with a verified API call.
         """
-        at = self._navigate_to_inventory()
+        at = self._navigate_with_browse()
         button_labels = {b.label for b in at.button}
         write_action_labels = {
             "Add Stock",
@@ -479,20 +486,6 @@ class PartsBoxInventorySmokeTests(unittest.TestCase):
             "Delete Part",
         }
         self.assertEqual(write_action_labels.intersection(button_labels), set())
-
-    def test_storage_locations_load_via_shared_partsbox_client(self):
-        at = self._navigate_to_inventory()
-
-        with patch("partsbox_client.PartsBoxClient") as mock_client_cls:
-            mock_client_cls.return_value.list_storage_locations.return_value = {
-                "data": [{"storage/name": "Widget", "storage/tags": ["production"]}]
-            }
-            next(b for b in at.button if b.label == "Load storage locations").click()
-            at.run()
-
-        self.assertEqual(len(at.exception), 0)
-        mock_client_cls.return_value.list_storage_locations.assert_called_once()
-        self.assertEqual(len(at.dataframe), 1)
 
 
 class DynamicFacetSmokeTests(unittest.TestCase):
