@@ -124,10 +124,31 @@ class SupplierLookupCache:
         return True
 
 
+def _normalize_required_qty(value):
+    """
+    Included in the cache key (see
+    Documentation/AutoBOM_QAQC_State_Cache_Deep_Dive_Report.md, Q3 defect
+    B): supplier lookup/candidate ranking is quantity-sensitive, so a
+    result cached for one required_qty must never be reused for a
+    materially different one -- two spellings of the same quantity
+    (10 / "10.0" / "10,000") must still normalize to the same key
+    component, or an unrelated formatting difference would force a
+    needless cache miss. An unparsable value falls back to its stripped
+    string form so it still participates in the key deterministically.
+    """
+    try:
+        if value is None or value == "":
+            return ""
+        return str(int(float(str(value).replace(",", "").strip())))
+    except (TypeError, ValueError):
+        return str(value).strip()
+
+
 def build_lookup_key(supplier_name, row):
     manufacturer = normalize_manufacturer(row.get("manufacturer", ""))
     mpn = normalize_part_number(row.get("mpn", ""))
     supplier_part_number = normalize_part_number(row.get("supplier_part_number", ""))
+    required_qty = _normalize_required_qty(row.get("required_qty"))
 
     return "|".join(
         [
@@ -135,5 +156,6 @@ def build_lookup_key(supplier_name, row):
             manufacturer,
             mpn,
             supplier_part_number,
+            required_qty,
         ]
     )

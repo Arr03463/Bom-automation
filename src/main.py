@@ -55,6 +55,16 @@ SOURCING_REVIEW_STATUSES = {
 
 
 def main():
+    """
+    Standalone CLI tool -- separate from, and not used by, the Streamlit
+    app (app.py). Its "Create carts/lists?" prompt below is the sole
+    remaining normal path to the LEGACY Mouser Cart API / DigiKey MyLists
+    API (src/mouser_cart_client.py, src/digikey_mylists_client.py); the
+    Streamlit app's normal purchasing handoff uses a DigiKey FastAdd cart
+    link (src/digikey_fastadd.py) and plain supplier CSVs instead, and
+    makes no live cart/list vendor call at all. See
+    Documentation/AutoBOM_Direct_Cart_Handoff_Change_Risk_Audit.md.
+    """
     print("BOM Automation Tool Started")
 
     mouser_cart_items = 0
@@ -68,7 +78,9 @@ def main():
     project_name = input("Enter project name: ").strip()
     partsbox_choice = input("Run PartsBox project/storage flow? (y/n): ").strip().lower()
     sourcing_choice = input("Run Mouser/DigiKey sourcing check? (y/n): ").strip().lower()
-    carts_lists_choice = input("Create carts/lists? (y/n): ").strip().lower()
+    carts_lists_choice = input(
+        "Create carts/lists via the legacy Mouser Cart API / DigiKey MyLists API? (y/n): "
+    ).strip().lower()
     try:
         build_quantity = int(build_quantity_text)
     except ValueError:
@@ -99,6 +111,7 @@ def main():
                     result.clean_bom,
                     mouser_lookup=lambda row: None,
                     digikey_lookup=digikey.find_best_match_for_row,
+                    enabled_sources={"digikey"},
                 )
             else:
                 print("Supplier mode: Mouser first, DigiKey fallback")
@@ -109,6 +122,7 @@ def main():
                     result.clean_bom,
                     mouser_lookup=mouser.find_best_match_for_row,
                     digikey_lookup=digikey.find_best_match_for_row,
+                    enabled_sources={"mouser", "digikey"},
                 )
 
             sourcing_report_path = export_sourcing_report(
@@ -140,15 +154,17 @@ def main():
                 print("Remote cart/list creation skipped by operator choice.")
 
             # STEP 1 - always export CSV first
-            digikey_list_path, digikey_count = export_digikey_list(
+            digikey_list_path, digikey_purchasing_result = export_digikey_list(
                 result.clean_bom,
                 OUTPUT_FOLDER,
                 file_stem=f"{source_stem}_digikey_list",
             )
 
             print(f"DigiKey list exported to: {digikey_list_path}")
-            print(f"DigiKey list rows: {digikey_count}")
-            digikey_list_items = digikey_count
+            print(f"DigiKey list rows: {digikey_purchasing_result.item_count}")
+            digikey_list_items = digikey_purchasing_result.item_count
+            for line_error in digikey_purchasing_result.errors:
+                print(f"DigiKey purchasing data warning (row {line_error.row_id}): {line_error.reason}")
 
             # STEP 2 - then try MyLists API
             if (

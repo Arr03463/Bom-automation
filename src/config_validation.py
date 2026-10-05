@@ -6,11 +6,22 @@ from token_store import MemoryTokenStore, build_token_store
 def digikey_mylists_config_status():
     """
     Whether DigiKey MyLists automation is actually production-ready as
-    configured, not just "enabled". DIGIKEY_MYLISTS_ENABLED=true with only
-    an in-process MemoryTokenStore will silently degrade to needing manual
-    re-authorization after every restart/redeploy -- see
-    Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md. Surface that
-    clearly at startup instead of letting it fail invisibly later.
+    configured, not just "enabled". DigiKey MyLists is a LEGACY,
+    explicitly separate feature now -- the normal purchasing handoff uses
+    the DigiKey FastAdd cart link (src/digikey_fastadd.py, a pure URL
+    derivation with no OAuth/vendor call) instead, and MyLists creation
+    only still runs from src/main.py's CLI tool behind its own operator
+    prompt and DIGIKEY_MYLISTS_ENABLED flag (see
+    Documentation/AutoBOM_Direct_Cart_Handoff_Change_Risk_Audit.md, H7).
+    Deliberately NOT called from collect_startup_warnings() for that
+    reason -- the Streamlit app's normal flow never touches MyLists, so a
+    startup warning about it there would be about a feature the app never
+    invokes (mirrors mouser_cart_config_status()'s identical reasoning
+    below). Still useful directly for the CLI path, so kept and tested.
+    DIGIKEY_MYLISTS_ENABLED=true with only an in-process MemoryTokenStore
+    will silently degrade to needing manual re-authorization after every
+    restart/redeploy -- see
+    Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md.
     """
     enabled = os.getenv("DIGIKEY_MYLISTS_ENABLED", "false").strip().lower() == "true"
     if not enabled:
@@ -103,13 +114,16 @@ def collect_startup_warnings():
     One shared entry point app.py calls once per page load to surface
     configuration problems as an in-app banner, instead of a feature
     failing later with a raw exception the operator has to decode.
+
+    digikey_mylists_config_status()/mouser_cart_config_status() are
+    deliberately NOT called here -- both describe LEGACY vendor-cart
+    automation the Streamlit app's normal flow never invokes (see each
+    function's own docstring), so a startup warning about either would
+    be about a feature this app never uses.
     """
     warnings = []
 
-    for status in (
-        digikey_mylists_config_status(),
-        partsbox_config_status(),
-    ):
+    for status in (partsbox_config_status(),):
         if status.get("warning"):
             warnings.append(status["warning"])
 

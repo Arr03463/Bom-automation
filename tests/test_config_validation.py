@@ -139,20 +139,26 @@ class CollectStartupWarningsTests(ConfigValidationTestCase):
 
         self.assertEqual(collect_startup_warnings(), [])
 
-    def test_multiple_problems_all_surface(self):
+    def test_legacy_vendor_cart_flags_do_not_surface_as_startup_warnings(self):
         """
-        MOUSER_CART_ENABLED is deliberately set here too, to prove it
-        does NOT add a warning -- collect_startup_warnings() no longer
-        calls mouser_cart_config_status() at all, since the app's normal
-        purchasing workflow doesn't use the Mouser Cart API (see
-        src/mouser_export.py); only the separate CLI tool does.
+        DIGIKEY_MYLISTS_ENABLED and MOUSER_CART_ENABLED are deliberately
+        set here too, to prove NEITHER adds a warning --
+        collect_startup_warnings() calls neither
+        digikey_mylists_config_status() nor mouser_cart_config_status()
+        anymore, since the app's normal purchasing workflow uses the
+        DigiKey FastAdd cart link and a Mouser CSV export (see
+        src/digikey_fastadd.py, src/mouser_export.py), never either
+        vendor's live cart/MyList API -- only the separate CLI tool
+        (src/main.py) still can. Only PartsBox's missing-credential
+        warning should surface.
         """
         os.environ["DIGIKEY_MYLISTS_ENABLED"] = "true"
         os.environ["MOUSER_CART_ENABLED"] = "true"
 
         warnings = collect_startup_warnings()
 
-        self.assertEqual(len(warnings), 2)  # DigiKey creds, PartsBox creds
+        self.assertEqual(len(warnings), 1)  # PartsBox creds only
+        self.assertIn("PARTSBOX_API_KEY", warnings[0])
 
 
 if __name__ == "__main__":

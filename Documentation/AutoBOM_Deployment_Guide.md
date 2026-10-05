@@ -2,6 +2,18 @@
 
 Audience: whoever deploys/redeploys AutoBOM, not the original developer.
 
+**The normal purchasing handoff needs no DigiKey MyLists OAuth setup or
+durable token store.** DigiKey's normal-flow output is a deterministic
+FastAdd cart link (`src/digikey_fastadd.py`) plus a supplier CSV --
+neither makes a live DigiKey API call, and neither needs anything beyond
+the plain `DIGIKEY_CLIENT_ID`/`DIGIKEY_CLIENT_SECRET` product-search
+credentials already required for sourcing. Sections 5 and 6 below (DigiKey
+3-legged OAuth authorization, durable token-store backend) are LEGACY --
+only relevant if you specifically intend to use `src/main.py`'s CLI tool
+with live cart/list creation enabled. Skip them for a normal Streamlit
+deployment. See `Documentation/AutoBOM_Direct_Cart_Handoff_Change_Risk_Audit.md`
+for the full rationale.
+
 ## 1. Requirements
 
 - Python 3.12 (matches the development environment this app was built
@@ -9,8 +21,9 @@ Audience: whoever deploys/redeploys AutoBOM, not the original developer.
 - Dependencies: `pip install -r requirements.txt` (requests, pandas,
   openpyxl, python-dotenv, streamlit).
 - Outbound HTTPS access to: `api.mouser.com`, `api.digikey.com`,
-  `api.partsbox.com` (or your configured `PARTSBOX_API_BASE_URL`), and,
-  if configured, your chosen DigiKey token-store HTTPS endpoint.
+  `api.partsbox.com` (or your configured `PARTSBOX_API_BASE_URL`). A
+  DigiKey token-store HTTPS endpoint is only needed if you're using the
+  legacy MyLists CLI path (§5/§6) -- not for the normal Streamlit app.
 
 ## 2. Hosting decision
 
@@ -58,7 +71,12 @@ are both already listed in `.gitignore`.
 4. Confirm `runs/` is writable by the running process (it's created
    automatically on first BOM run if missing).
 
-## 5. Authorizing DigiKey (first-time / after a durable-store change)
+## 5. Authorizing DigiKey (LEGACY -- only for the MyLists CLI path, first-time / after a durable-store change)
+
+**Skip this section for a normal deployment.** It only applies if you
+intend to run `src/main.py`'s CLI tool with `DIGIKEY_MYLISTS_ENABLED=true`
+and live cart/list creation. The Streamlit app's normal DigiKey handoff
+(FastAdd cart link + CSV) needs none of this.
 
 1. Locally, with real DigiKey `DIGIKEY_CLIENT_ID`/`DIGIKEY_CLIENT_SECRET`
    set, run:
@@ -77,7 +95,9 @@ are both already listed in `.gitignore`.
    in particular has no writable persistent filesystem of its own -- see
    §2.
 
-## 6. Choosing a durable DigiKey token-store backend
+## 6. Choosing a durable DigiKey token-store backend (LEGACY -- MyLists CLI path only)
+
+**Skip this section for a normal deployment** -- same scope note as §5.
 
 | Backend | When to use | Config |
 |---|---|---|
@@ -99,10 +119,11 @@ any specific vendor.
 Rotate any vendor credential the same way you'd rotate any secret at that
 vendor (Mouser API keys, DigiKey client secret, PartsBox API key): update
 it at the vendor, then update your host's secret/environment
-configuration, then restart the app. The DigiKey **refresh** token is
+configuration, then restart the app. The DigiKey **refresh** token
+(LEGACY MyLists CLI path only, §5/§6 -- not used by the normal app) is
 different -- it rotates automatically on use and is written back through
 `DIGIKEY_TOKEN_STORE`; you should not need to manually rotate it unless
-re-authorizing from scratch (§5).
+re-authorizing from scratch.
 
 **Reminder:** earlier work in this project identified live credentials
 present in a local, git-ignored `Documentation/env` file. Confirm those

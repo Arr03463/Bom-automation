@@ -355,6 +355,14 @@ def run_preflight():
     checks.append(check_production_development_separation())
     checks.append(check_streamlit_production_settings())
 
+    # digikey_mylists_config_status()/mouser_cart_config_status() only
+    # produce a warning when their respective ENABLED flag is explicitly
+    # set to true -- both describe LEGACY vendor-cart automation the
+    # normal Streamlit purchasing handoff never uses (DigiKey FastAdd
+    # cart link + a Mouser CSV export instead; see
+    # Documentation/AutoBOM_Direct_Cart_Handoff_Change_Risk_Audit.md).
+    # Leaving both flags at their false default (a normal deployment)
+    # means neither check below ever fires.
     for status in (
         digikey_mylists_config_status(),
         mouser_cart_config_status(),

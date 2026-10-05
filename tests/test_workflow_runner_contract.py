@@ -1,9 +1,11 @@
 import json
+import os
 import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_FOLDER = PROJECT_ROOT / "src"
@@ -12,6 +14,7 @@ sys.path.insert(0, str(SRC_FOLDER))
 from active_bom_state import ActiveBomState
 from bom_cleaner import STANDARD_COLUMNS
 from run_workspace import build_run_workspace, save_uploaded_file
+from sourcing_engine import SupplierResult
 from workflow_runner import refresh_response_snapshot, run_bom_workflow, start_manual_bom_workflow
 
 
@@ -40,7 +43,6 @@ def run_isolated_workflow(runs_root, project_name="Widget", bom_csv=SAMPLE_BOM_C
         project_name=project_name,
         run_partsbox=False,
         run_sourcing=False,
-        run_digikey_mylist=False,
         run_id=workspace["run_id"],
         output_folder=str(workspace["output_dir"]),
     )
@@ -95,16 +97,20 @@ class WorkflowRunnerContractTests(unittest.TestCase):
 
     def test_purchasing_and_partsbox_default_when_not_attempted(self):
         """
-        Mouser has no "attempted" vendor-call tracking anymore -- it's a
-        plain file export (see mouser_export.py), so response["purchasing"]["mouser"]
-        stays None always (the export's own state lives in
-        artifact_status["mouser_export_csv"]/outputs["mouser_export_csv"]
-        instead).
+        Neither Mouser nor DigiKey has vendor-call/"attempted" tracking
+        anymore -- both are a plain local file write / pure URL
+        derivation now (see mouser_export.py, digikey_fastadd.py). There
+        is no `response["purchasing"]` key at all in a freshly-created
+        response; state lives in artifact_status/outputs/
+        digikey_cart_link instead. Sourcing didn't run here, so all
+        three purchasing artifact keys are not_required.
         """
         _, result = run_isolated_workflow(self.temp_root)
 
-        self.assertIsNone(result["purchasing"]["mouser"])
-        self.assertFalse(result["purchasing"]["digikey"]["attempted"])
+        self.assertNotIn("purchasing", result)
+        self.assertEqual(result["artifact_status"]["mouser_export_csv"], "not_required")
+        self.assertEqual(result["artifact_status"]["digikey_list_csv"], "not_required")
+        self.assertEqual(result["digikey_cart_link"]["status"], "not_generated")
         self.assertIsNone(result["partsbox"])
 
     def test_two_runs_with_same_uploaded_filename_stay_isolated(self):
@@ -243,6 +249,141 @@ class StartManualBomWorkflowTests(unittest.TestCase):
 
         self.assertEqual(response["outputs"]["cleaned_csv"], "")
         self.assertEqual(response["outputs"]["cleaned_workbook"], "")
+
+
+class DisabledSupplierCacheBypassWorkflowTests(unittest.TestCase):
+    """
+    Test F from
+    Documentation/AutoBOM_Disabled_Supplier_Cache_Bypass_Correction_Report.md:
+    a supplier disabled via the Sources checkboxes must produce zero rows
+    sourced from it, even when a persistent cache entry for that supplier
+    exists from an earlier (enabled) run over the same parts. Patches
+    workflow_runner.MouserClient/DigiKeyClient since run_bom_workflow
+    constructs them directly rather than accepting injected clients.
+    """
+
+    def setUp(self):
+        self.temp_root = Path(tempfile.mkdtemp(prefix="autobom_workflow_test_"))
+        self.addCleanup(shutil.rmtree, self.temp_root, ignore_errors=True)
+        self.cache_dir = Path(tempfile.mkdtemp(prefix="autobom_workflow_cache_store_"))
+        self.addCleanup(shutil.rmtree, self.cache_dir, ignore_errors=True)
+        self._old_env = {
+            "SUPPLIER_LOOKUP_CACHE_ENABLED": os.environ.get("SUPPLIER_LOOKUP_CACHE_ENABLED"),
+            "SUPPLIER_LOOKUP_CACHE_PATH": os.environ.get("SUPPLIER_LOOKUP_CACHE_PATH"),
+        }
+        os.environ["SUPPLIER_LOOKUP_CACHE_ENABLED"] = "true"
+        os.environ["SUPPLIER_LOOKUP_CACHE_PATH"] = str(self.cache_dir / "supplier_lookup_cache.json")
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        for key, old_value in self._old_env.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+
+    def test_disabling_mouser_after_a_prior_run_cached_it_produces_no_mouser_sourced_rows(self):
+        first_workspace = build_run_workspace(runs_root=self.temp_root)
+        first_source_path = save_uploaded_file(
+            first_workspace["input_dir"], "bom.csv", SAMPLE_BOM_CSV.encode("utf-8")
+        )
+
+        with patch("workflow_runner.MouserClient") as mock_mouser_cls, patch(
+            "workflow_runner.DigiKeyClient"
+        ) as mock_digikey_cls:
+            mock_mouser_cls.return_value.find_best_match_for_row.return_value = SupplierResult(
+                supplier="Mouser", manufacturer="Yageo", mpn="cached", stock=500,
+                supplier_part_number="603-CACHED",
+            )
+            mock_digikey_cls.return_value.find_best_match_for_row.return_value = None
+
+            first_result = run_bom_workflow(
+                source_file_path=first_source_path,
+                build_quantity=1,
+                project_name="First",
+                run_partsbox=False,
+                run_sourcing=True,
+                use_mouser_sourcing=True,
+                use_digikey_sourcing=True,
+                run_id=first_workspace["run_id"],
+                output_folder=str(first_workspace["output_dir"]),
+            )
+
+        self.assertEqual(first_result["summary"]["mouser_sourced"], 2)
+
+        second_workspace = build_run_workspace(runs_root=self.temp_root)
+        second_source_path = save_uploaded_file(
+            second_workspace["input_dir"], "bom.csv", SAMPLE_BOM_CSV.encode("utf-8")
+        )
+
+        with patch("workflow_runner.MouserClient") as mock_mouser_cls, patch(
+            "workflow_runner.DigiKeyClient"
+        ) as mock_digikey_cls:
+            mock_digikey_cls.return_value.find_best_match_for_row.return_value = SupplierResult(
+                supplier="DigiKey", manufacturer="Yageo", mpn="cached", stock=200,
+                supplier_part_number="ND-1",
+            )
+
+            second_result = run_bom_workflow(
+                source_file_path=second_source_path,
+                build_quantity=1,
+                project_name="Second",
+                run_partsbox=False,
+                run_sourcing=True,
+                use_mouser_sourcing=False,
+                use_digikey_sourcing=True,
+                run_id=second_workspace["run_id"],
+                output_folder=str(second_workspace["output_dir"]),
+            )
+
+            # Mouser was unchecked -- its client must not even be
+            # constructed, let alone queried, for this run.
+            mock_mouser_cls.assert_not_called()
+
+        self.assertEqual(second_result["summary"]["mouser_sourced"], 0)
+        for row in second_result["bom_rows"]:
+            self.assertNotEqual(row["sourcing_status"], "sourced_mouser")
+            self.assertNotEqual(row["supplier_part_number"], "603-CACHED")
+
+
+class SupplierArtifactRequirementReconciliationTests(unittest.TestCase):
+    """
+    Section 7 of the QA/QC correction report (generalized during the
+    direct-cart-handoff migration to every REQUIRED_ARTIFACT_KEYS entry,
+    not just the retired digikey_mylist): a required-artifact's status
+    must be reconciled against the CURRENT purchasing-line requirement
+    after a canonical BOM mutation, not just marked stale-if-current --
+    otherwise a prior STATUS_NOT_REQUIRED can survive a mutation that
+    introduces the first DigiKey-sourced row, so Purchasing Handoff would
+    show "Not Required" next to a nonzero DigiKey item count.
+    """
+
+    def setUp(self):
+        self.temp_root = Path(tempfile.mkdtemp(prefix="autobom_workflow_test_"))
+        self.addCleanup(shutil.rmtree, self.temp_root, ignore_errors=True)
+
+    def test_digikey_artifacts_leave_not_required_once_a_digikey_row_is_introduced(self):
+        _, result = run_isolated_workflow(self.temp_root)
+        active_bom_state = result["_active_bom_state"]
+
+        self.assertEqual(result["artifact_status"]["digikey_list_csv"], "not_required")
+        self.assertEqual(result["artifact_status"]["digikey_cart_link"], "not_required")
+
+        row_id = active_bom_state.rows()[0]["row_id"]
+        active_bom_state.update_row(
+            row_id,
+            {
+                "selected_supplier": "DigiKey",
+                "sourcing_status": "sourced_digikey",
+                "supplier_part_number": "ND-1",
+                "supplier_order_qty": "3",
+            },
+        )
+
+        refresh_response_snapshot(result)
+
+        self.assertNotEqual(result["artifact_status"]["digikey_list_csv"], "not_required")
+        self.assertNotEqual(result["artifact_status"]["digikey_cart_link"], "not_required")
 
 
 if __name__ == "__main__":

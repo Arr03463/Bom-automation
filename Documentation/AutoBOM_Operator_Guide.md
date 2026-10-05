@@ -48,8 +48,9 @@ PartsBox matching, supplier sourcing, Customer Reference, Needs Review,
 and purchasing all treat a part the same way regardless of whether it
 was searched-and-added or came from an uploaded file.
 
-Adding parts here never creates a Mouser cart or DigiKey MyList -- see
-Purchasing Handoff below for that.
+Adding parts here never creates a live vendor cart or list at Mouser or
+DigiKey -- see Purchasing Handoff below for the DigiKey cart link and
+supplier CSVs, which are the only outputs of this normal flow.
 
 ## Configuration
 
@@ -76,8 +77,9 @@ whole parts-sourcing job, not separate Upload settings:
 ### Customer Reference
 
 Sets the Customer Reference / Customer Part Number that flows into the
-Mouser export, DigiKey MyList, and export files for every BOM line.
-Three ways to generate one, all from Yank's approved naming convention:
+Mouser CSV, the DigiKey cart link and CSV, and export files for every
+BOM line. Three ways to generate one, all from Yank's approved naming
+convention:
 
 - **Project / PCB** -- pick an approved Project code and one or more PCB
   codes (e.g. `PRJ-ATH-DAB`).
@@ -122,37 +124,51 @@ silently substitute a part.
 
 ## Purchasing Handoff
 
+AutoBOM never creates a live Mouser cart or DigiKey MyList as part of
+this normal flow. Instead: DigiKey gets a direct cart-loading link you
+(or purchasing) open in a browser, plus a supplier-import CSV as a
+fallback; Mouser gets a supplier-import CSV. Nothing here requires you
+to leave AutoBOM, generate a key/token, and come back to paste it in.
+
 1. Purchasing status reflects the **current** BOM state:
-   - **Ready for Handoff**: DigiKey (if it has items to buy) has a
-     current MyList, and nothing needs review. Mouser's export doesn't
-     gate this status -- see below.
-   - **Stale — BOM Changed**: a Needs Review action changed the BOM since
-     purchasing artifacts were generated -- regenerate before handing off.
+   - **Ready for Handoff**: every supplier that actually has items (a
+     supplier with zero items is skipped entirely) has its required
+     artifact current -- DigiKey needs its CSV current AND its cart link
+     either current or validly falling back to CSV-only (see the
+     CSV Fallback note below); Mouser needs its CSV current. Nothing
+     needs review.
+   - **Stale — BOM Changed**: a Needs Review action (or build quantity/
+     Customer Reference/DNP change) affected purchasing data since
+     artifacts were generated -- regenerate before handing off.
    - **Needs Review**: resolve remaining Needs Review items first.
-   - **Generation Failed**: DigiKey MyList creation failed -- see the
-     error shown, and retry.
-   - **Not Required**: no DigiKey-sourced items, so there's nothing for
-     DigiKey to do.
-2. Click **Regenerate Purchasing** to (re)create what's needed from the
-   current BOM. This is the ONLY action that can create a live DigiKey
-   MyList -- uploading, configuring, searching, changing Customer
-   Reference, filtering, or just leaving the page open never does. The
-   Mouser export is a plain file write, not a vendor call, so it's
-   always refreshed here too (never skipped, never a reason to disable
-   the button).
-3. **Mouser** (current workflow: export, not cart): click **Download
-   Mouser Export** and upload that file to Mouser yourself to
-   source/order the Mouser-selected parts. AutoBOM does not create a
-   Mouser cart or place an order as part of this normal flow -- the
-   Mouser Cart API integration still exists in the codebase for a
-   possible future supported sharing capability, but isn't used here.
-4. **DigiKey**: MyList creation is automatic on Regenerate; the List ID
-   is shown in a copyable code block -- hand it to purchasing so they
-   can locate it in DigiKey. Confirmed (2026-09-25, live): the MyLists
-   API does not provide a separate share identifier/link -- the List ID
-   is the identifier there is. If a share identifier is ever returned by
-   the API, it will appear the same way, in its own copyable code block
-   -- AutoBOM never invents one.
+   - **Generation Failed** / **Partial — Generation Failed**: a required
+     supplier CSV or the DigiKey cart link could not be generated --
+     often because a sourced row is missing its supplier part number or
+     has an invalid quantity. See the error(s) shown; fix the
+     underlying row (Retry Exact / Find Replacement) and regenerate.
+2. Click **Regenerate Purchasing** to (re)create everything from the
+   current BOM. This makes **zero** live vendor calls -- both supplier
+   CSVs and the DigiKey cart link are a local file write and a plain URL
+   calculation respectively. Uploading, configuring, searching, changing
+   Customer Reference, filtering, or just leaving the page open never
+   triggers it either way; it only ever runs on this explicit click.
+3. **Mouser**: click **Download Mouser CSV** and upload that file to
+   Mouser's BOM Tool to source/order the Mouser-selected parts. AutoBOM
+   does not create a Mouser cart as part of this normal flow.
+4. **DigiKey**:
+   - **Open DigiKey Cart** loads a DigiKey shopping cart directly,
+     pre-filled with the DigiKey-sourced parts, quantities, and Customer
+     References -- no DigiKey account action or sign-in from AutoBOM.
+     The same link is also shown as plain text you can copy and send to
+     someone else.
+   - **CSV Fallback**: when the cart link would be too long to load
+     reliably (a very large DigiKey line count), AutoBOM shows an
+     explanation and only offers **Download DigiKey CSV** instead -- no
+     Open/Copy control in that state. This is expected behavior for a
+     large BOM, not an error.
+   - **Download DigiKey CSV** is always available alongside the link
+     too, as a fallback or for uploading via DigiKey's own bulk-order
+     tooling.
 
 AutoBOM's role ends at handoff either way: checkout, payment, and order
 submission always happen manually, outside AutoBOM.
@@ -160,14 +176,17 @@ submission always happen manually, outside AutoBOM.
 ## Downloads (Purchasing Handoff)
 
 Each output file (cleaned CSV, cleaned workbook, sourcing report, DigiKey
-list CSV, Mouser export, PartsBox import/unmatched CSVs, run summary)
-tracks its own freshness. A file is disabled for download when it's
-stale (the BOM changed since it was generated) or when its last
-generation attempt failed -- **other files being current does not
-re-enable it**. Two files (the multi-sheet cleaned workbook and the
-PartsBox unmatched CSV) are never automatically regenerated after a BOM
-change; upload the BOM again (as a fresh working BOM, or merged into the
-current one) if you need a current copy of either.
+CSV, Mouser CSV, PartsBox import/unmatched CSVs, run summary) tracks its
+own freshness. A file is disabled for download when it's stale (the BOM
+changed since it was generated) or when its last generation attempt
+failed -- **other files being current does not re-enable it**. The
+cleaned workbook regenerates along with everything else on Regenerate
+Purchasing, though its Column Mapping/Warnings sheets come back empty
+after any edit (they describe the original upload's raw-to-clean
+transformation, which no longer applies once the BOM has changed). The
+PartsBox unmatched CSV is the one file never automatically regenerated
+after a BOM change; upload the BOM again (as a fresh working BOM, or
+merged into the current one) if you need a current copy of it.
 
 ## PartsBox Inventory
 
@@ -189,9 +208,6 @@ page, and never from adding parts via Search alone.
 
 ## What NOT to do
 
-- Don't click **Regenerate Purchasing** repeatedly "just in case" --
-  it's a no-op for anything already current, but each attempt for a
-  failed/stale supplier does make a live vendor call.
 - Don't treat a disabled download as a bug -- it means that specific file
   doesn't match the current BOM; regenerate or re-run instead.
 - Don't manually edit files under `runs/` -- they're per-run scratch
@@ -199,6 +215,9 @@ page, and never from adding parts via Search alone.
   retention policy).
 - Don't paste a Mouser or DigiKey secret/token into any AutoBOM field --
   none of AutoBOM's own UI ever asks for one.
+- Don't assume a very long DigiKey cart link means something went wrong
+  if it falls back to CSV-only -- that's the documented, deliberate
+  behavior for a BOM with a large DigiKey line count.
 - Parts added via Search alone aren't synced to a PartsBox project --
   there's no "sync to PartsBox now" action for a Search-only working
   BOM yet. If you need PartsBox entries for those parts, include them in

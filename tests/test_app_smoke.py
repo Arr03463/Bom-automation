@@ -19,6 +19,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_FOLDER = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_FOLDER))
@@ -70,7 +72,6 @@ class AppSmokeTests(unittest.TestCase):
             project_name="SmokeTest",
             run_partsbox=False,
             run_sourcing=False,
-            run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
         )
@@ -347,10 +348,16 @@ class AppSmokeTests(unittest.TestCase):
         at.run()
 
         # Open a review row's replacement panel and set a results filter,
-        # simulating mid-review state from the first BOM.
-        next(b for b in at.button if b.label == "Find Replacement").click()
+        # simulating mid-review state from the first BOM. Uses Check
+        # PartsBox (sources == {"partsbox"}), not Find Replacement --
+        # that panel's stored results are deliberately exempt from the
+        # Sources-checkbox reconciliation added for Q5 (see
+        # render_replacement_lookup()), so injecting a PartsBox-sourced
+        # candidate here survives the Mouser/DigiKey checkboxes being
+        # unchecked below, same as it did before that fix.
+        next(b for b in at.button if b.label == "Check PartsBox").click()
         at.run()
-        at.session_state[f"replacement_results_{row_id_a}"] = [{"source": "Mouser", "mpn": "X"}]
+        at.session_state[f"replacement_results_{row_id_a}"] = [{"source": "PartsBox", "mpn": "X"}]
         at.session_state["results_search"] = "some search text"
         at.run()
 
@@ -421,6 +428,112 @@ def _fake_snapshot(parts):
         storage_by_id={},
         project_names=[],
     )
+
+
+class FindReplacementSourceGatingTests(unittest.TestCase):
+    """
+    Regression coverage for the QA/QC deep-dive report's Q5: Find
+    Replacement previously always captured
+    st.session_state.replacement_lookup_sources = {"mouser", "digikey"}
+    on click, ignoring the Sources checkboxes -- so unchecking Mouser
+    still searched (and displayed) Mouser candidates. Patches
+    component_lookup.search_components (the same site
+    test_check_partsbox_search_uses_the_shared_snapshot_not_a_live_search
+    above patches) to inspect the actual LookupQuery.sources without
+    making a live vendor call.
+    """
+
+    def setUp(self):
+        self.temp_root = Path(tempfile.mkdtemp(prefix="autobom_find_replacement_gating_test_"))
+        self.addCleanup(shutil.rmtree, self.temp_root, ignore_errors=True)
+
+    def _run_with_review_row(self):
+        workspace = build_run_workspace(runs_root=self.temp_root)
+        source_path = save_uploaded_file(
+            workspace["input_dir"], "bom.csv", REVIEW_BOM_CSV.encode("utf-8")
+        )
+        return run_bom_workflow(
+            source_file_path=source_path,
+            build_quantity=5,
+            project_name="FindReplacementGatingTest",
+            run_partsbox=False,
+            run_sourcing=False,
+            run_id=workspace["run_id"],
+            output_folder=str(workspace["output_dir"]),
+        )
+
+    def test_find_replacement_with_mouser_unchecked_only_searches_digikey(self):
+        result = self._run_with_review_row()
+        row_id = result["_active_bom_state"].rows()[0]["row_id"]
+
+        at = fresh_app_test()
+        at.session_state["current_run"] = result
+        at.run()
+
+        next(cb for cb in at.checkbox if cb.key == "component_search_mouser").set_value(False)
+        at.run()
+
+        next(b for b in at.button if b.label == "Find Replacement").click()
+        at.run()
+
+        self.assertEqual(at.session_state["replacement_lookup_sources"], frozenset({"digikey"}))
+
+        with patch("component_lookup.search_components") as mock_search:
+            mock_search.return_value = []
+            next(b for b in at.button if b.key == f"do_replacement_search_{row_id}").click()
+            at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        called_query = mock_search.call_args.args[0]
+        self.assertEqual(called_query.sources, frozenset({"digikey"}))
+
+    def test_find_replacement_with_no_suppliers_checked_shows_warning_and_does_not_search(self):
+        result = self._run_with_review_row()
+        row_id = result["_active_bom_state"].rows()[0]["row_id"]
+
+        at = fresh_app_test()
+        at.session_state["current_run"] = result
+        at.run()
+
+        next(cb for cb in at.checkbox if cb.key == "component_search_mouser").set_value(False)
+        next(cb for cb in at.checkbox if cb.key == "component_search_digikey").set_value(False)
+        at.run()
+
+        next(b for b in at.button if b.label == "Find Replacement").click()
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        self.assertTrue(any("No external supplier is selected" in w.value for w in at.warning))
+        self.assertNotIn(f"do_replacement_search_{row_id}", [b.key for b in at.button])
+
+    def test_toggling_a_source_off_while_the_panel_is_open_clears_stale_results(self):
+        result = self._run_with_review_row()
+        row_id = result["_active_bom_state"].rows()[0]["row_id"]
+
+        at = fresh_app_test()
+        at.session_state["current_run"] = result
+        at.run()
+
+        next(b for b in at.button if b.label == "Find Replacement").click()
+        at.run()
+
+        stale_candidate = {
+            "source": "Mouser", "mpn": "STALE", "manufacturer": "STMicroelectronics",
+            "supplier_part_number": "603-STALE", "unit_price": "0.1", "stock": 500,
+            "description": "", "category": "", "package": "", "lifecycle_status": "",
+            "characteristics": {}, "raw": {}, "stock_sufficient": None,
+        }
+        at.session_state[f"replacement_results_{row_id}"] = [stale_candidate]
+        at.session_state[f"replacement_selected_{row_id}"] = stale_candidate
+        at.run()
+
+        next(cb for cb in at.checkbox if cb.key == "component_search_mouser").set_value(False)
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        self.assertNotIn(f"replacement_results_{row_id}", at.session_state)
+        self.assertNotIn(f"replacement_selected_{row_id}", at.session_state)
+        self.assertEqual(at.session_state["replacement_lookup_sources"], frozenset({"digikey"}))
 
 
 class MainSearchPartsBoxPanelSmokeTests(unittest.TestCase):
@@ -503,8 +616,8 @@ class DynamicFacetSmokeTests(unittest.TestCase):
         trigger itself.
         """
         fake_results = [
-            _lookup_result(mpn="A", package="0603", manufacturer="Yageo"),
-            _lookup_result(mpn="B", package="0805", manufacturer="Murata"),
+            _lookup_result(source="Mouser", mpn="A", package="0603", manufacturer="Yageo"),
+            _lookup_result(source="DigiKey", mpn="B", package="0805", manufacturer="Murata"),
         ]
         fake_results[0]["voltage"] = "25V"
         fake_results[1]["voltage"] = "50V"
@@ -534,7 +647,6 @@ class PurchasingPageSmokeTests(unittest.TestCase):
             project_name="PurchasingSmoke",
             run_partsbox=False,
             run_sourcing=False,
-            run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
         )
@@ -554,6 +666,57 @@ class PurchasingPageSmokeTests(unittest.TestCase):
     def test_purchasing_page_loads_without_exceptions(self):
         at = self._navigate_to_purchasing(self._run(CLEAN_BOM_CSV))
         self.assertEqual(len(at.exception), 0)
+
+    def test_digikey_cart_link_ui_shows_open_and_code_no_mylist_fields(self):
+        """
+        Regression coverage for the direct-cart-handoff migration: the
+        DigiKey panel must show the FastAdd cart link (an st.link_button
+        "Open DigiKey Cart" plus the URL in an st.code() box for its
+        native copy affordance) and a "Download DigiKey CSV" button, and
+        must NOT show any MyList-era field (List ID, Share Identifier,
+        "MyList created").
+        """
+        result = self._run(CLEAN_BOM_CSV)
+        active_bom_state = result["_active_bom_state"]
+        rows = active_bom_state.rows()
+        active_bom_state.update_row(
+            rows[0]["row_id"],
+            {
+                "selected_supplier": "DigiKey",
+                "sourcing_status": "sourced_digikey",
+                "supplier_part_number": "296-ABC123-ND",
+                "supplier_order_qty": "10",
+            },
+        )
+        mouser_row_id = active_bom_state.add_row(
+            {
+                "mpn": "XYZ456",
+                "manufacturer": "Murata",
+                "selected_supplier": "Mouser",
+                "sourcing_status": "sourced_mouser",
+                "supplier_part_number": "603-XYZ456",
+                "supplier_order_qty": "5",
+            }
+        )
+        self.assertIsNotNone(mouser_row_id)
+        from workflow_runner import regenerate_purchasing
+
+        regenerate_purchasing(result)
+
+        at = self._navigate_to_purchasing(result)
+
+        self.assertEqual(len(at.exception), 0)
+        code_values = [c.value for c in at.code]
+        self.assertTrue(any("fastadd.aspx" in value for value in code_values))
+        self.assertTrue(any("296-ABC123-ND" in value for value in code_values))
+
+        download_labels = [d.label for d in at.download_button]
+        self.assertTrue(any(label.startswith("Download DigiKey CSV") for label in download_labels))
+        self.assertTrue(any(label.startswith("Download Mouser CSV") for label in download_labels))
+
+        page_text = " ".join(el.value for el in at.markdown)
+        for forbidden in ("MyList", "List ID", "Share identifier", "Share Identifier"):
+            self.assertNotIn(forbidden, page_text)
 
     def test_regenerate_button_disabled_while_review_pending(self):
         at = self._navigate_to_purchasing(self._run(REVIEW_BOM_CSV))
@@ -595,9 +758,11 @@ class PurchasingPageSmokeTests(unittest.TestCase):
 
     def test_rerun_alone_never_triggers_regeneration(self):
         """
-        Regeneration can create a live DigiKey MyList -- it must only
-        happen on an explicit button click, never merely because
-        Streamlit reran the script (e.g. a filter widget change).
+        Regeneration re-exports every purchasing artifact from the
+        current BOM state -- it must only happen on an explicit button
+        click, never merely because Streamlit reran the script (e.g. a
+        filter widget change), so downloads don't silently change
+        underneath an operator mid-review.
         """
         at = self._navigate_to_purchasing(self._run(CLEAN_BOM_CSV))
 
@@ -610,20 +775,12 @@ class PurchasingPageSmokeTests(unittest.TestCase):
     def test_download_buttons_disable_and_reenable_per_artifact_after_regeneration(self):
         """
         Per-artifact download disabling (Phase 4 purchasing-correctness fix
-        pass): a mutation disables every regeneratable download, but an
-        explicit Regenerate re-enables only the ones that actually came
-        back current -- the multi-sheet workbook has no regeneration path
-        here and must stay disabled even after other downloads recover.
+        pass): a mutation disables every regeneratable download, and an
+        explicit Regenerate re-enables the ones that actually came back
+        current. The multi-sheet workbook now regenerates too (QA/QC
+        deep-dive report, Q9) -- it no longer stays permanently disabled
+        after the first post-upload edit, unlike before this fix.
         """
-        saved_env = {key: os.environ.get(key) for key in ("DIGIKEY_MYLISTS_ENABLED",)}
-        self.addCleanup(
-            lambda: [
-                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
-                for k, v in saved_env.items()
-            ]
-        )
-        os.environ["DIGIKEY_MYLISTS_ENABLED"] = "false"
-
         result = self._run(CLEAN_BOM_CSV)
         active_bom_state = result["_active_bom_state"]
         row_id = active_bom_state.rows()[0]["row_id"]
@@ -645,10 +802,170 @@ class PurchasingPageSmokeTests(unittest.TestCase):
         at.run()
 
         self.assertFalse(find("Download cleaned CSV").disabled)
-        # Still stale: no regeneration path exists for the multi-sheet
-        # workbook (needs the original run's column_mapping/warnings,
-        # which are not retained after the run completes).
-        self.assertTrue(find("Download cleaned workbook").disabled)
+        self.assertFalse(find("Download cleaned workbook").disabled)
+
+
+class BuildQuantityResourcingTests(unittest.TestCase):
+    """
+    Regression coverage for the QA/QC deep-dive report's Q2: changing
+    build quantity must not leave a row's old sourcing decision (selected
+    supplier, stock, supplier_order_qty) stamped as Ready once the
+    recomputed required_qty exceeds what that decision actually covers.
+    _apply_build_quantity() now re-sources every affected row through the
+    same retry_exact_sourcing() seam Retry Exact uses, so this mocks
+    review_actions.MouserClient/DigiKeyClient exactly like the existing
+    Retry Exact/replacement smoke tests above -- otherwise clicking
+    "Apply Build Quantity to Uploaded Lines" would make live vendor calls.
+    """
+
+    def setUp(self):
+        self.temp_root = Path(tempfile.mkdtemp(prefix="autobom_build_qty_test_"))
+        self.addCleanup(shutil.rmtree, self.temp_root, ignore_errors=True)
+
+        old_cache_enabled = os.environ.get("SUPPLIER_LOOKUP_CACHE_ENABLED")
+        os.environ["SUPPLIER_LOOKUP_CACHE_ENABLED"] = "false"
+        self.addCleanup(AppSmokeTests._restore_cache_env, old_cache_enabled)
+
+    def _run(self):
+        workspace = build_run_workspace(runs_root=self.temp_root)
+        source_path = save_uploaded_file(workspace["input_dir"], "bom.csv", CLEAN_BOM_CSV.encode("utf-8"))
+        return run_bom_workflow(
+            source_file_path=source_path,
+            build_quantity=1,
+            project_name="BuildQtyTest",
+            run_partsbox=False,
+            run_sourcing=False,
+            run_id=workspace["run_id"],
+            output_folder=str(workspace["output_dir"]),
+        )
+
+    def _seed_stale_ready_decision(self, active_bom_state, row_id):
+        active_bom_state.update_row(
+            row_id,
+            {
+                "status": "clean",
+                "selected_supplier": "Mouser",
+                "sourcing_status": "sourced_mouser",
+                "supplier_part_number": "603-OLD",
+                "mouser_stock": "3",
+                "supplier_order_qty": "3",
+            },
+        )
+        self.assertEqual(active_bom_state.get_row(row_id)["result_status"], "Ready")
+
+    def test_increasing_build_quantity_beyond_old_stock_clears_stale_ready_status(self):
+        result = self._run()
+        active_bom_state = result["_active_bom_state"]
+        row_id = active_bom_state.rows()[0]["row_id"]
+        self._seed_stale_ready_decision(active_bom_state, row_id)
+
+        at = fresh_app_test()
+        at.session_state["current_run"] = result
+        at.run()
+
+        next(n for n in at.number_input if n.key == "cfg_build_quantity").set_value(1000)
+        at.run()
+
+        with patch("review_actions.MouserClient") as mock_mouser_cls, patch(
+            "review_actions.DigiKeyClient"
+        ) as mock_digikey_cls:
+            # Same stock (3) the stale decision already recorded -- no
+            # longer enough once required_qty grows to match build
+            # quantity 1000, so the row must not remain Ready.
+            mock_mouser_cls.return_value.find_best_match_for_row.return_value = SupplierResult(
+                supplier="Mouser", manufacturer="Yageo", mpn="RC0603FR-0710KL", stock=3,
+                supplier_part_number="603-OLD",
+            )
+            mock_digikey_cls.return_value.find_best_match_for_row.return_value = None
+
+            next(b for b in at.button if b.label == "Apply Build Quantity to Uploaded Lines").click()
+            at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        updated_row = active_bom_state.get_row(row_id)
+        self.assertGreater(int(updated_row["required_qty"]), 3)
+        self.assertNotEqual(updated_row["result_status"], "Ready")
+        self.assertNotEqual(updated_row["selected_supplier"], "Mouser")
+
+    def test_supplier_order_qty_matches_recomputed_requirement_after_resourcing(self):
+        result = self._run()
+        active_bom_state = result["_active_bom_state"]
+        row_id = active_bom_state.rows()[0]["row_id"]
+        self._seed_stale_ready_decision(active_bom_state, row_id)
+
+        at = fresh_app_test()
+        at.session_state["current_run"] = result
+        at.run()
+
+        next(n for n in at.number_input if n.key == "cfg_build_quantity").set_value(1000)
+        at.run()
+
+        with patch("review_actions.MouserClient") as mock_mouser_cls, patch(
+            "review_actions.DigiKeyClient"
+        ) as mock_digikey_cls:
+            mock_mouser_cls.return_value.find_best_match_for_row.return_value = SupplierResult(
+                supplier="Mouser", manufacturer="Yageo", mpn="RC0603FR-0710KL", stock=5000,
+                supplier_part_number="603-NEW",
+            )
+            mock_digikey_cls.return_value.find_best_match_for_row.return_value = None
+
+            next(b for b in at.button if b.label == "Apply Build Quantity to Uploaded Lines").click()
+            at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        updated_row = active_bom_state.get_row(row_id)
+        self.assertEqual(updated_row["result_status"], "Ready")
+        self.assertEqual(updated_row["selected_supplier"], "Mouser")
+        self.assertEqual(updated_row["supplier_part_number"], "603-NEW")
+        self.assertEqual(int(updated_row["supplier_order_qty"]), int(updated_row["required_qty"]))
+
+    def test_manually_added_row_without_qty_per_board_is_left_unchanged(self):
+        result = self._run()
+        active_bom_state = result["_active_bom_state"]
+        new_row_ids = active_bom_state.add_rows(
+            pd.DataFrame(
+                [
+                    {
+                        "mpn": "MANUAL123",
+                        "manufacturer": "Yageo",
+                        "status": "clean",
+                        "selected_supplier": "Mouser",
+                        "sourcing_status": "sourced_mouser",
+                        "supplier_part_number": "603-MANUAL",
+                        "required_qty": "10",
+                        "qty_per_board": "",
+                    }
+                ]
+            )
+        )
+        manual_row_id = new_row_ids[0]
+
+        at = fresh_app_test()
+        at.session_state["current_run"] = result
+        at.run()
+
+        next(n for n in at.number_input if n.key == "cfg_build_quantity").set_value(1000)
+        at.run()
+
+        with patch("review_actions.MouserClient") as mock_mouser_cls, patch(
+            "review_actions.DigiKeyClient"
+        ) as mock_digikey_cls:
+            # The CSV-uploaded row (qty_per_board set) is legitimately
+            # re-sourced by this action -- only the manually-added row
+            # (no qty_per_board) must be left untouched, so this isn't a
+            # blanket "the mock was never called" assertion.
+            mock_mouser_cls.return_value.find_best_match_for_row.return_value = None
+            mock_digikey_cls.return_value.find_best_match_for_row.return_value = None
+
+            next(b for b in at.button if b.label == "Apply Build Quantity to Uploaded Lines").click()
+            at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        manual_row = active_bom_state.get_row(manual_row_id)
+        self.assertEqual(manual_row["required_qty"], "10")
+        self.assertEqual(manual_row["supplier_part_number"], "603-MANUAL")
+        self.assertEqual(manual_row["selected_supplier"], "Mouser")
+        self.assertEqual(manual_row["sourcing_status"], "sourced_mouser")
 
 
 if __name__ == "__main__":

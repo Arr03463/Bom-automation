@@ -91,7 +91,6 @@ class AutobomWorkflowSectionsTests(unittest.TestCase):
             project_name="NavTest",
             run_partsbox=False,
             run_sourcing=False,
-            run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
         )
@@ -399,7 +398,6 @@ class UnifiedIntakeTests(unittest.TestCase):
             project_name="",
             run_partsbox=False,
             run_sourcing=False,
-            run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
         )
@@ -454,15 +452,22 @@ class UnifiedIntakeTests(unittest.TestCase):
         """
         Section 17's critical side-effect rule -- adding parts via Search
         and uploading a file must never themselves create a DigiKey
-        MyList. Only an explicit Regenerate Purchasing click may (see
-        tests/test_app_smoke.py's PurchasingPageSmokeTests for that
+        MyList. workflow_runner.py no longer imports
+        create_digikey_mylist_from_bom at all (the normal purchasing
+        handoff is a pure DigiKey FastAdd cart link + CSV export, see
+        src/digikey_fastadd.py) -- patched at its own defining module,
+        digikey_mylists_client, to prove it's genuinely never reached
+        from this codepath, not merely that a stale patch target no-ops.
+        Only the separate, explicitly-gated src/main.py CLI tool can
+        still call it. See tests/test_app_smoke.py's
+        PurchasingPageSmokeTests for the Regenerate-Purchasing-only
         boundary, and test_customer_reference_ui.py's
         test_assigning_reference_creates_no_vendor_calls for the same
         guarantee around editing a Customer Reference). Mouser has no
         vendor call to guard here at all anymore -- it's a plain file
         export (see mouser_export.py), not a vendor side effect.
         """
-        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
+        with patch("digikey_mylists_client.create_digikey_mylist_from_bom") as mock_digikey:
             at = fresh_app_test()
             at.run()
             self._search_and_add(at, self._search_result())
@@ -550,7 +555,6 @@ class UnifiedIntakeTests(unittest.TestCase):
             project_name="",
             run_partsbox=False,
             run_sourcing=False,
-            run_digikey_mylist=False,
             run_id="mouser-export-test",
             output_folder=str(self.temp_root / "out"),
         )
@@ -576,7 +580,7 @@ class UnifiedIntakeTests(unittest.TestCase):
 
         self.assertEqual(len(at.exception), 0)
         download_labels = {b.label for b in at.download_button}
-        self.assertTrue(any("Download Mouser Export" in label for label in download_labels))
+        self.assertTrue(any("Download Mouser CSV" in label for label in download_labels))
 
 
 class SearchSelectionAndStaleResultsLifecycleTests(unittest.TestCase):
@@ -650,6 +654,96 @@ class SearchSelectionAndStaleResultsLifecycleTests(unittest.TestCase):
 
         self.assertEqual(len(at.exception), 0)
         self.assertIsNotNone(at.session_state["component_search_selected_part"])
+
+    def test_unchecking_a_supplier_removes_its_rows_from_the_displayed_table(self):
+        """
+        Regression coverage for the QA/QC deep-dive report's Q6: an
+        already-fetched supplier's rows must disappear from the
+        displayed table the moment its checkbox is unchecked, not just
+        block a NEW call while unchecked.
+        """
+        at = fresh_app_test()
+        at.session_state["component_search_supplier_results"] = [
+            self._candidate(source="Mouser", mpn="MOUSER1"),
+            self._candidate(source="DigiKey", mpn="DIGIKEY1"),
+        ]
+        at.session_state["component_search_last_submitted"] = ("query", ("mouser", "digikey"))
+        at.session_state["component_search_text"] = "query"
+        at.run()
+
+        displayed = at.dataframe[0].value
+        self.assertIn("MOUSER1", displayed["MPN"].tolist())
+        self.assertIn("DIGIKEY1", displayed["MPN"].tolist())
+
+        next(cb for cb in at.checkbox if cb.key == "component_search_mouser").set_value(False)
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        displayed = at.dataframe[0].value
+        self.assertNotIn("MOUSER1", displayed["MPN"].tolist())
+        self.assertIn("DIGIKEY1", displayed["MPN"].tolist())
+        self.assertNotIn("Mouser", displayed["Source"].tolist())
+
+    def test_facets_derive_only_from_currently_visible_sources(self):
+        """
+        Q6's "facets and pagination derive only from currently visible
+        sources" requirement: a manufacturer that only appeared in the
+        now-unchecked supplier's rows must not remain offered as a
+        Manufacturer filter option.
+        """
+        at = fresh_app_test()
+        at.session_state["component_search_supplier_results"] = [
+            {**self._candidate(source="Mouser", mpn="MOUSER1"), "manufacturer": "OnlyMouserMfr"},
+            {**self._candidate(source="DigiKey", mpn="DIGIKEY1"), "manufacturer": "OnlyDigiKeyMfr"},
+        ]
+        at.session_state["component_search_last_submitted"] = ("query", ("mouser", "digikey"))
+        at.session_state["component_search_text"] = "query"
+        at.run()
+
+        manufacturer_facet = next(
+            m for m in at.multiselect if m.key == "component_search_basic_membership_manufacturer"
+        )
+        self.assertIn("OnlyMouserMfr", manufacturer_facet.options)
+        self.assertIn("OnlyDigiKeyMfr", manufacturer_facet.options)
+
+        next(cb for cb in at.checkbox if cb.key == "component_search_mouser").set_value(False)
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        manufacturer_facet = next(
+            m for m in at.multiselect if m.key == "component_search_basic_membership_manufacturer"
+        )
+        self.assertNotIn("OnlyMouserMfr", manufacturer_facet.options)
+        self.assertIn("OnlyDigiKeyMfr", manufacturer_facet.options)
+
+    def test_reenabling_a_supplier_without_pressing_enter_shows_a_stale_sources_caption(self):
+        at = fresh_app_test()
+        at.session_state["component_search_supplier_results"] = [
+            self._candidate(source="DigiKey", mpn="DIGIKEY1"),
+        ]
+        at.session_state["component_search_last_submitted"] = ("query", ("digikey",))
+        at.session_state["component_search_text"] = "query"
+        at.run()
+
+        # Match the last-submitted source set first (Mouser off, same as
+        # when that search ran) -- no mismatch yet, so no stale caption.
+        next(cb for cb in at.checkbox if cb.key == "component_search_mouser").set_value(False)
+        at.run()
+
+        captions = [c.value for c in at.caption]
+        self.assertFalse(any("Sources changed" in c for c in captions))
+
+        next(cb for cb in at.checkbox if cb.key == "component_search_mouser").set_value(True)
+        at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        captions = [c.value for c in at.caption]
+        self.assertTrue(any("Sources changed" in c for c in captions))
+        # Re-enabling alone must not have implied a fresh lookup occurred
+        # -- the stored result set is untouched, still DigiKey-only.
+        self.assertEqual(
+            [r["source"] for r in at.session_state["component_search_supplier_results"]], ["DigiKey"]
+        )
 
     def test_stale_supplier_caption_appears_when_draft_diverges_from_last_query(self):
         at = fresh_app_test()
@@ -738,6 +832,133 @@ class MainSearchBrowseInventoryTests(unittest.TestCase):
         for call_args in mock_call.call_args_list:
             operation = call_args.args[0] if call_args.args else call_args.kwargs.get("operation")
             self.assertNotIn(operation, write_operations)
+
+
+class UploadRetryAfterFailureTests(unittest.TestCase):
+    """
+    Regression coverage for the QA/QC deep-dive report's Q7:
+    render_upload_intake() used to mark a file_id "processed" the moment
+    run_bom_workflow() returned, regardless of whether it actually
+    produced usable canonical BOM state -- so an early parsing/
+    configuration failure permanently blocked an in-place retry of that
+    exact file (the operator had to remove and reselect it to get a new
+    file_id). Patches workflow_runner.run_bom_workflow (app.py re-imports
+    it fresh on every AppTest .run(), same site
+    test_source_checkboxes_control_upload_sourcing_too above patches).
+    """
+
+    @staticmethod
+    def _failed_result(errors):
+        return {
+            "success": False,
+            "errors": errors,
+            "warnings": [],
+            "summary": {},
+            "outputs": {
+                "cleaned_workbook": "", "cleaned_csv": "", "sourcing_report": "",
+                "digikey_list_csv": "", "mouser_export_csv": "", "partsbox_import_csv": "",
+                "partsbox_unmatched_csv": "", "run_summary": "",
+            },
+            "messages": [],
+            "run": {},
+            "bom_rows": [],
+            "review_items": [],
+            "results_summary": {"total_parts": 0, "partsbox": 0, "mouser": 0, "digikey": 0, "needs_review": 0},
+            "partsbox": None,
+            "purchasing": {"mouser": None, "digikey": None},
+            "_active_bom_state": None,
+            "_purchasing_raw": {"mouser": None, "digikey": None},
+            "artifact_status": {},
+            "stale_after_mutation": False,
+            "purchasing_regeneration_errors": [],
+            "purchasing_regenerated_at_least_once": False,
+        }
+
+    def test_failed_upload_shows_retry_and_an_unrelated_rerun_does_not_reprocess(self):
+        at = fresh_app_test()
+        at.run()
+
+        with patch("workflow_runner.run_bom_workflow") as mock_run:
+            mock_run.return_value = self._failed_result(["Build quantity must be an integer."])
+
+            at.file_uploader[0].upload("bom.csv", CLEAN_BOM_CSV.encode("utf-8"), "text/csv")
+            at.run()
+
+            self.assertEqual(len(at.exception), 0)
+            self.assertEqual(mock_run.call_count, 1)
+            self.assertTrue(any("could not be processed" in e.value for e in at.error))
+            self.assertIn("Retry Upload", [b.label for b in at.button])
+
+            # An unrelated rerun (no Retry click, file still selected)
+            # must not silently repeat the same failing work.
+            at.run()
+            self.assertEqual(mock_run.call_count, 1)
+            self.assertIn("Retry Upload", [b.label for b in at.button])
+
+    def test_clicking_retry_upload_calls_the_workflow_again_and_can_succeed(self):
+        at = fresh_app_test()
+        at.run()
+
+        with patch("workflow_runner.run_bom_workflow") as mock_run:
+            mock_run.return_value = self._failed_result(["boom"])
+            at.file_uploader[0].upload("bom.csv", CLEAN_BOM_CSV.encode("utf-8"), "text/csv")
+            at.run()
+            self.assertEqual(mock_run.call_count, 1)
+
+            mock_run.return_value = start_manual_bom_workflow()
+            next(b for b in at.button if b.label == "Retry Upload").click()
+            at.run()
+            self.assertEqual(mock_run.call_count, 2)
+
+            # The Retry button/error rendered on THIS pass are expected
+            # (this run's script execution reached and drew them before
+            # it knew the reprocessing below would succeed) -- a
+            # settled, unrelated rerun confirms the failure marker is
+            # really gone: still no new run_bom_workflow() call, the
+            # button is gone, and so is the error.
+            at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertNotIn("Retry Upload", [b.label for b in at.button])
+        self.assertFalse(any("could not be processed" in e.value for e in at.error))
+
+    def test_successful_processing_remains_idempotent_across_unrelated_reruns(self):
+        at = fresh_app_test()
+        at.run()
+
+        with patch("workflow_runner.run_bom_workflow") as mock_run:
+            mock_run.return_value = start_manual_bom_workflow()
+            at.file_uploader[0].upload("bom.csv", CLEAN_BOM_CSV.encode("utf-8"), "text/csv")
+            at.run()
+            self.assertEqual(mock_run.call_count, 1)
+
+            at.run()
+            at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        self.assertEqual(mock_run.call_count, 1)
+
+    def test_same_filename_with_different_contents_is_a_new_upload_not_blocked_by_a_prior_failure(self):
+        at = fresh_app_test()
+        at.run()
+
+        with patch("workflow_runner.run_bom_workflow") as mock_run:
+            mock_run.return_value = self._failed_result(["boom"])
+            at.file_uploader[0].upload("bom.csv", CLEAN_BOM_CSV.encode("utf-8"), "text/csv")
+            at.run()
+            self.assertEqual(mock_run.call_count, 1)
+
+            mock_run.return_value = start_manual_bom_workflow()
+            # A different upload (new content) gets Streamlit's own new
+            # file_id -- must be processed on its own, not stuck behind
+            # the previous file_id's failure marker.
+            at.file_uploader[0].upload("bom2.csv", CLEAN_BOM_CSV.encode("utf-8") + b"\n", "text/csv")
+            at.run()
+
+        self.assertEqual(len(at.exception), 0)
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertFalse(any("could not be processed" in e.value for e in at.error))
 
 
 if __name__ == "__main__":

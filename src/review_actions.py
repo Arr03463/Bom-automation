@@ -31,24 +31,31 @@ _STALE_NON_SOURCING_FIELDS = {
 def _lookup_functions(mouser_client, digikey_client, sources):
     """
     Builds the mouser_lookup/digikey_lookup callables source_row() takes,
-    honoring the authoritative source selection (see app.py's Sources
-    checkboxes, the single state governing Main Search, uploads, Add to
-    BOM, Retry Exact, and replacement re-sourcing alike): an unselected
-    supplier gets a lookup that always returns None, the exact same
-    no-op pattern run_bom_workflow() already uses for
-    use_mouser_sourcing=False/use_digikey_sourcing=False, so a supplier
-    the operator unchecked is never queried by this seam either.
+    plus the resolved `enabled_sources` set every source_row() call below
+    must also pass through. A no-op lookup alone is NOT the authorization
+    boundary -- source_row()'s cache reads happen before any lookup
+    callable is ever considered, so a disabled supplier's stale cached
+    result could otherwise still win (see
+    Documentation/AutoBOM_Disabled_Supplier_Cache_Bypass_Correction_Report.md).
+    The lookups are still built the same way (only constructing a client
+    when that supplier is actually enabled) so a disabled supplier's
+    client is never even instantiated.
     `sources=None` means "not specified" and defaults to both enabled,
     preserving every existing caller that doesn't pass it.
     """
     resolved_sources = frozenset({"mouser", "digikey"}) if sources is None else frozenset(sources)
 
-    mouser = mouser_client or MouserClient()
-    digikey = digikey_client or DigiKeyClient()
-
-    mouser_lookup = mouser.find_best_match_for_row if "mouser" in resolved_sources else (lambda row: None)
-    digikey_lookup = digikey.find_best_match_for_row if "digikey" in resolved_sources else (lambda row: None)
-    return mouser_lookup, digikey_lookup
+    mouser_lookup = (
+        (mouser_client or MouserClient()).find_best_match_for_row
+        if "mouser" in resolved_sources
+        else (lambda row: None)
+    )
+    digikey_lookup = (
+        (digikey_client or DigiKeyClient()).find_best_match_for_row
+        if "digikey" in resolved_sources
+        else (lambda row: None)
+    )
+    return mouser_lookup, digikey_lookup, resolved_sources
 
 
 def retry_exact_sourcing(active_bom_state, row_id, mouser_client=None, digikey_client=None, sources=None):
@@ -59,15 +66,17 @@ def retry_exact_sourcing(active_bom_state, row_id, mouser_client=None, digikey_c
     ActiveBomState.update_row(). DigiKey is only queried when Mouser
     doesn't already cover the required quantity -- Retry does not
     duplicate or diverge from that orchestration. `sources` restricts
-    which suppliers may be queried at all (see _lookup_functions()).
+    which suppliers may be queried at all, and is also passed through as
+    source_row()'s `enabled_sources` so a disabled supplier's cache can't
+    be used either (see _lookup_functions()).
     """
     row = active_bom_state.get_row(row_id)
     if row is None:
         raise KeyError(f"Unknown row_id: {row_id}")
 
-    mouser_lookup, digikey_lookup = _lookup_functions(mouser_client, digikey_client, sources)
+    mouser_lookup, digikey_lookup, resolved_sources = _lookup_functions(mouser_client, digikey_client, sources)
 
-    decision = source_row(row, mouser_lookup, digikey_lookup)
+    decision = source_row(row, mouser_lookup, digikey_lookup, enabled_sources=resolved_sources)
     return active_bom_state.update_row(row_id, decision)
 
 
@@ -151,9 +160,9 @@ def apply_replacement(active_bom_state, row_id, replacement, mouser_client=None,
             },
         )
 
-    mouser_lookup, digikey_lookup = _lookup_functions(mouser_client, digikey_client, sources)
+    mouser_lookup, digikey_lookup, resolved_sources = _lookup_functions(mouser_client, digikey_client, sources)
 
     updated_row = active_bom_state.get_row(row_id)
-    decision = source_row(updated_row, mouser_lookup, digikey_lookup)
+    decision = source_row(updated_row, mouser_lookup, digikey_lookup, enabled_sources=resolved_sources)
 
     return active_bom_state.update_row(row_id, decision)

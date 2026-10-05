@@ -1,8 +1,30 @@
 from dataclasses import asdict, dataclass, field
 
 import inspect
+import os
+import time
 
 from supplier_lookup_cache import SupplierLookupCache, build_lookup_key
+
+# See Documentation/AutoBOM_QAQC_State_Cache_Deep_Dive_Report.md, Q3
+# defect A: stock/price/candidate-selection data has no freshness rule
+# without this. Conservative default (a normal engineering-procurement
+# workday) -- overridable per deployment, same override pattern as
+# SUPPLIER_LOOKUP_CACHE_LOCK_TIMEOUT_SECONDS in supplier_lookup_cache.py.
+DEFAULT_SUPPLIER_CACHE_TTL_SECONDS = 4 * 60 * 60
+# Bumped whenever the cached value's shape changes (e.g. this TTL/cached_at
+# wrapper was added here) -- an entry written under a different version is
+# always treated as a cache miss (see _supplier_result_from_cache), so a
+# schema change fails open to a live lookup rather than crashing or
+# silently misinterpreting old data.
+SUPPLIER_CACHE_SCHEMA_VERSION = 2
+
+
+def _supplier_lookup_cache_ttl_seconds():
+    try:
+        return float(os.getenv("SUPPLIER_LOOKUP_CACHE_TTL_SECONDS", DEFAULT_SUPPLIER_CACHE_TTL_SECONDS))
+    except (TypeError, ValueError):
+        return DEFAULT_SUPPLIER_CACHE_TTL_SECONDS
 
 
 @dataclass
@@ -153,7 +175,7 @@ SOURCING_DECISION_COLUMNS = [
 EMPTY_SOURCING_DECISION = {column: "" for column in SOURCING_DECISION_COLUMNS}
 
 
-def source_row(row, mouser_lookup, digikey_lookup, persistent_cache=None, run_cache=None):
+def source_row(row, mouser_lookup, digikey_lookup, persistent_cache=None, run_cache=None, enabled_sources=None):
     """
     Sources exactly one row using the same Mouser-first/DigiKey-fallback/
     no-split decision logic apply_sourcing_decisions() uses for a whole
@@ -170,10 +192,22 @@ def source_row(row, mouser_lookup, digikey_lookup, persistent_cache=None, run_ca
     persistent_cache/run_cache may be shared across many calls (a full
     BOM pass) or omitted for one ad hoc row (Retry/replacement), in which
     case a persistent cache is loaded and saved just for this call.
+
+    `enabled_sources` is the authoritative source-selection boundary
+    (defaults to both suppliers when omitted, for backward
+    compatibility). A supplier absent from it is never read from the run
+    cache, never read from the persistent cache, and never invoked --
+    a no-op `lambda row: None` passed as `mouser_lookup`/`digikey_lookup`
+    is NOT sufficient on its own, because `_cached_supplier_lookup()`
+    would still happily return a stale cached result for that supplier
+    from a previous (enabled) run without ever reaching the lookup
+    callable at all. See
+    Documentation/AutoBOM_Disabled_Supplier_Cache_Bypass_Correction_Report.md.
     """
     owns_cache = persistent_cache is None
     persistent_cache = persistent_cache if persistent_cache is not None else SupplierLookupCache()
     run_cache = run_cache if run_cache is not None else {}
+    enabled = frozenset({"mouser", "digikey"}) if enabled_sources is None else frozenset(enabled_sources)
 
     mpn = str(row.get("mpn", "")).strip()
     manufacturer = str(row.get("manufacturer", "")).strip()
@@ -185,20 +219,23 @@ def source_row(row, mouser_lookup, digikey_lookup, persistent_cache=None, run_ca
     if mpn:
         required_qty = parse_int(row.get("required_qty"))
 
-        try:
-            mouser_result = _cached_supplier_lookup(
-                "mouser",
-                row,
-                persistent_cache,
-                run_cache,
-                lambda: mouser_lookup(row),
-            )
-        except Exception as exc:
-            mouser_result = None
-            lookup_notes.append(f"Mouser lookup failed: {exc}")
+        if "mouser" in enabled:
+            try:
+                mouser_result = _cached_supplier_lookup(
+                    "mouser",
+                    row,
+                    persistent_cache,
+                    run_cache,
+                    lambda: mouser_lookup(row),
+                )
+            except Exception as exc:
+                mouser_result = None
+                lookup_notes.append(f"Mouser lookup failed: {exc}")
 
-        try:
-            if not mouser_result or required_qty is None or mouser_result.stock < required_qty:
+        if "digikey" in enabled and (
+            not mouser_result or required_qty is None or mouser_result.stock < required_qty
+        ):
+            try:
                 digikey_result = _cached_supplier_lookup(
                     "digikey",
                     row,
@@ -211,9 +248,9 @@ def source_row(row, mouser_lookup, digikey_lookup, persistent_cache=None, run_ca
                         manufacturer,
                     ),
                 )
-        except Exception as exc:
-            digikey_result = None
-            lookup_notes.append(f"DigiKey lookup failed: {exc}")
+            except Exception as exc:
+                digikey_result = None
+                lookup_notes.append(f"DigiKey lookup failed: {exc}")
 
     decision = decide_no_split_supplier(row, mouser_result, digikey_result)
 
@@ -231,7 +268,7 @@ def source_row(row, mouser_lookup, digikey_lookup, persistent_cache=None, run_ca
     return full_decision
 
 
-def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):
+def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup, enabled_sources=None):
     updated = clean_bom.copy().astype(object)
     persistent_cache = SupplierLookupCache()
     run_cache = {}
@@ -242,7 +279,12 @@ def apply_sourcing_decisions(clean_bom, mouser_lookup, digikey_lookup):
 
     for index, row in updated.iterrows():
         decision = source_row(
-            row, mouser_lookup, digikey_lookup, persistent_cache=persistent_cache, run_cache=run_cache
+            row,
+            mouser_lookup,
+            digikey_lookup,
+            persistent_cache=persistent_cache,
+            run_cache=run_cache,
+            enabled_sources=enabled_sources,
         )
 
         for key, value in decision.items():
@@ -261,25 +303,57 @@ def _cached_supplier_lookup(supplier_name, row, persistent_cache, run_cache, loo
     cached_value = persistent_cache.get(key)
     if cached_value:
         result = _supplier_result_from_cache(cached_value)
-        run_cache[key] = result
-        return result
+        # A malformed/obsolete cached entry (see _supplier_result_from_cache)
+        # is a cache MISS, not a confirmed "supplier has no match" -- it
+        # must fall through to a live lookup below rather than being
+        # stored/returned as a false negative (Codex QA/QC deep-dive
+        # report, Q4). A genuine cached "no match" is never stored in the
+        # first place (see the `if result:` guard below), so a truthy
+        # cached_value here is always either a valid result or garbage.
+        if result is not None:
+            run_cache[key] = result
+            return result
 
     result = lookup_fn()
     run_cache[key] = result
 
     if result:
+        # Overwrites any malformed entry that fell through above with a
+        # valid one, satisfying "replace the bad entry ... if the lookup
+        # succeeds" without needing a separate cache-delete operation.
         persistent_cache.set(key, _supplier_result_to_cache(result))
 
     return result
 
 
 def _supplier_result_to_cache(result):
-    return asdict(result)
+    return {
+        "schema_version": SUPPLIER_CACHE_SCHEMA_VERSION,
+        "cached_at": time.time(),
+        "value": asdict(result),
+    }
 
 
 def _supplier_result_from_cache(value):
+    """
+    Fails open to a live lookup for anything that isn't a fresh,
+    current-schema entry -- returns None (a cache MISS, per Q4, not a
+    confirmed "no match") for: a pre-existing entry written before this
+    schema-version/TTL wrapper existed, an entry whose TTL has expired,
+    or a malformed/incompatible value. Never raises.
+    """
+    if not isinstance(value, dict) or value.get("schema_version") != SUPPLIER_CACHE_SCHEMA_VERSION:
+        return None
+
+    cached_at = value.get("cached_at")
+    if not isinstance(cached_at, (int, float)):
+        return None
+
+    if time.time() - cached_at > _supplier_lookup_cache_ttl_seconds():
+        return None
+
     try:
-        return SupplierResult(**value)
+        return SupplierResult(**(value.get("value") or {}))
     except TypeError:
         return None
 

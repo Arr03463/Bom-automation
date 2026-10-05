@@ -1,5 +1,7 @@
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,7 +15,8 @@ from active_bom_state import ActiveBomState
 from mouser_cart_client import build_mouser_cart_items
 from digikey_mylists_client import build_digikey_mylists_parts
 from review_actions import apply_replacement, retry_exact_sourcing
-from sourcing_engine import SupplierResult
+from sourcing_engine import SupplierResult, _supplier_result_to_cache
+from supplier_lookup_cache import SupplierLookupCache, build_lookup_key
 
 _OLD_CACHE_ENABLED = None
 
@@ -584,6 +587,106 @@ class SourceSelectionGatingTests(unittest.TestCase):
 
         self.assertEqual(len(mouser.calls), 1)
         self.assertEqual(len(digikey.calls), 1)
+
+
+class PopulatedCacheSourceSelectionGatingTests(unittest.TestCase):
+    """
+    Test E from
+    Documentation/AutoBOM_Disabled_Supplier_Cache_Bypass_Correction_Report.md:
+    SourceSelectionGatingTests above proves gating with the persistent
+    cache disabled entirely, which cannot reproduce the original defect
+    (a stale cached result for a supplier the operator just unchecked).
+    These tests enable a real, populated persistent cache -- since
+    retry_exact_sourcing()/apply_replacement() build their own
+    SupplierLookupCache() per call, the prepopulated entry must be saved
+    to disk at the path they'll read from.
+    """
+
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp(prefix="autobom_review_actions_cache_test_"))
+        self.addCleanup(shutil.rmtree, self.temp_dir, ignore_errors=True)
+        self._old_env = {
+            "SUPPLIER_LOOKUP_CACHE_ENABLED": os.environ.get("SUPPLIER_LOOKUP_CACHE_ENABLED"),
+            "SUPPLIER_LOOKUP_CACHE_PATH": os.environ.get("SUPPLIER_LOOKUP_CACHE_PATH"),
+        }
+        os.environ["SUPPLIER_LOOKUP_CACHE_ENABLED"] = "true"
+        os.environ["SUPPLIER_LOOKUP_CACHE_PATH"] = str(self.temp_dir / "supplier_lookup_cache.json")
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        for key, old_value in self._old_env.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+
+    def _seed_mouser_cache(self, row, result):
+        cache = SupplierLookupCache()
+        key = build_lookup_key("mouser", row)
+        cache.set(key, _supplier_result_to_cache(result))
+        cache.save()
+
+    def test_retry_exact_with_digikey_only_ignores_a_stale_cached_mouser_result(self):
+        state = make_state(
+            [
+                {
+                    "mpn": "ABC123",
+                    "manufacturer": "Yageo",
+                    "status": "clean",
+                    "sourcing_status": "check_wall_inventory",
+                    "required_qty": "10",
+                    "qty_per_board": "10",
+                    "build_quantity": "1",
+                    "supplier_part_number": "",
+                }
+            ]
+        )
+        self._seed_mouser_cache(
+            {"mpn": "ABC123", "manufacturer": "Yageo", "supplier_part_number": ""},
+            SupplierResult(
+                supplier="Mouser", manufacturer="Yageo", mpn="ABC123", stock=500,
+                supplier_part_number="603-STALE-CACHED",
+            ),
+        )
+        digikey = FakeSupplierClient(
+            SupplierResult(
+                supplier="DigiKey", manufacturer="Yageo", mpn="ABC123", stock=50,
+                supplier_part_number="ABC123-ND",
+            )
+        )
+
+        updated = retry_exact_sourcing(
+            state, "run-1:0", digikey_client=digikey, sources=frozenset({"digikey"})
+        )
+
+        self.assertEqual(updated["selected_supplier"], "DigiKey")
+        self.assertEqual(updated["sourcing_status"], "sourced_digikey")
+        self.assertNotEqual(updated["supplier_part_number"], "603-STALE-CACHED")
+
+    def test_apply_replacement_with_digikey_only_ignores_a_stale_cached_mouser_result(self):
+        state = make_state([base_row()])
+        candidate = replacement_candidate("DigiKey", mpn="NEWPART")
+        self._seed_mouser_cache(
+            {"mpn": "NEWPART", "manufacturer": "Yageo", "supplier_part_number": ""},
+            SupplierResult(
+                supplier="Mouser", manufacturer="Yageo", mpn="NEWPART", stock=500,
+                supplier_part_number="603-STALE-CACHED",
+            ),
+        )
+        digikey = FakeSupplierClient(
+            SupplierResult(
+                supplier="DigiKey", manufacturer="Yageo", mpn="NEWPART", stock=50,
+                supplier_part_number="NEWPART-ND",
+            )
+        )
+
+        updated = apply_replacement(
+            state, "run-1:0", candidate, digikey_client=digikey, sources=frozenset({"digikey"})
+        )
+
+        self.assertNotEqual(updated["selected_supplier"], "Mouser")
+        self.assertEqual(updated["selected_supplier"], "DigiKey")
+        self.assertNotEqual(updated["supplier_part_number"], "603-STALE-CACHED")
 
 
 if __name__ == "__main__":

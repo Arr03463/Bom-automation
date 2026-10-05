@@ -9,6 +9,7 @@ import pandas as pd
 from active_bom_state import ActiveBomState
 from bom_cleaner import (
     STANDARD_COLUMNS,
+    BomCleanResult,
     apply_project_quantities,
     build_output_paths,
     export_clean_bom,
@@ -21,9 +22,8 @@ from config import (
     OUTPUT_FOLDER,
 )
 from digikey_client import DigiKeyClient
+from digikey_fastadd import build_digikey_fastadd_url
 from digikey_list_export import export_digikey_list
-from digikey_mylists_client import build_digikey_mylists_parts, create_digikey_mylist_from_bom
-from mouser_cart_client import build_mouser_cart_items
 from mouser_client import MouserClient
 from mouser_export import export_mouser_list
 from partsbox_project_builder import (
@@ -32,6 +32,7 @@ from partsbox_project_builder import (
     export_partsbox_import_csv,
     export_partsbox_unmatched_csv,
 )
+from purchasing_lines import build_purchasing_lines
 from run_workspace import new_run_id
 from sourcing_engine import apply_sourcing_decisions
 from sourcing_report import export_sourcing_report
@@ -41,7 +42,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 
-# Artifact freshness/state model (Phase 4 purchasing-correctness fix pass).
+# Artifact freshness/state model (Phase 4 purchasing-correctness fix pass;
+# revised for the direct DigiKey/Mouser handoff -- see
+# Documentation/AutoBOM_Direct_Cart_Handoff_Change_Risk_Audit.md).
 #
 # Each artifact tracks its OWN state independently -- there is no longer a
 # single global flag that blindly disables every download after one
@@ -50,101 +53,175 @@ load_dotenv(PROJECT_ROOT / ".env", override=True)
 # broad "something needs attention" messaging, but per-download/per-status
 # decisions must read `artifact_status`, not that flag.
 #
-# Plain re-exportable file artifacts: regenerate_purchasing() always
-# re-attempts these independently of each other and of the supplier
-# artifacts. mouser_export_csv lives here, not in SUPPLIER_ARTIFACT_KEYS
-# below -- the current operator-facing Mouser workflow is "download this
-# file and upload it to Mouser yourself", a plain export like
-# sourcing_report/digikey_list_csv, not a live vendor call (see
-# mouser_export.py; the Mouser Cart API client in mouser_cart_client.py
-# is preserved but no longer invoked from this normal path).
+# Every purchasing artifact here is a plain local file write or a pure
+# deterministic URL derivation -- NONE of them is a live vendor API call
+# during normal application use. DigiKey MyList creation
+# (src/digikey_mylists_client.py) is retained only as a separate,
+# explicitly-gated legacy path (src/main.py's CLI, behind an operator
+# "y" prompt and DIGIKEY_MYLISTS_ENABLED) -- never invoked from here.
+#
+# cleaned_workbook regenerates too (QA/QC deep-dive report, Q9): its
+# Clean_BOM/Review_Items sheets are freshly derived from the current
+# canonical state, same as cleaned_csv, but its Column_Mapping/Warnings
+# sheets come back EMPTY on a regenerated workbook -- those describe the
+# ORIGINAL upload's raw-header-to-clean-column mapping and per-row
+# cleaning warnings, which regenerate_purchasing() has no way to
+# recompute after canonical-BOM edits (it isn't reprocessing a raw
+# upload file). Preferred over leaving the workbook permanently stale
+# forever after the first edit; see _regenerate_cleaned_workbook().
+#
+# digikey_cart_link is the pure, deterministic DigiKey FastAdd cart URL
+# (src/digikey_fastadd.py) -- no MyLists OAuth, no vendor call. It sits
+# alongside digikey_list_csv/mouser_export_csv as a REQUIRED-when-that-
+# supplier-has-lines artifact (see REQUIRED_ARTIFACT_KEYS below), not a
+# side-effecting one, since generating it has no external consequence.
 FILE_ARTIFACT_KEYS = [
     "cleaned_csv",
+    "cleaned_workbook",
     "sourcing_report",
     "digikey_list_csv",
+    "digikey_cart_link",
     "mouser_export_csv",
     "partsbox_import_csv",
     "run_summary",
 ]
 
-# These two need inputs regenerate_purchasing() does not have (the
-# original run's column_mapping/warnings DataFrames for the workbook, or a
-# fresh PartsBox project/get-entries call for the unmatched list). Rather
-# than fabricate missing sheets or silently re-run a side-effecting
-# PartsBox comparison, they are left permanently stale once a mutation
-# marks them so -- never re-enabled by regenerate_purchasing().
+# partsbox_unmatched_csv needs a fresh PartsBox project/get-entries call
+# regenerate_purchasing() has no reason to perform on a plain
+# regeneration (it's a read against live PartsBox state, not derivable
+# from the canonical BOM alone) -- left permanently stale once a
+# mutation marks it so, never re-enabled by regenerate_purchasing().
 PERMANENT_ARTIFACT_KEYS = [
-    "cleaned_workbook",
     "partsbox_unmatched_csv",
 ]
 
-# External, side-effecting artifacts (create a live DigiKey MyList).
-# regenerate_purchasing() skips re-invoking one of these entirely when it
-# is already STATUS_CURRENT, so a retry never creates a duplicate list.
-# Mouser is NOT here -- it is a plain file export now (FILE_ARTIFACT_KEYS
-# above), not a vendor call.
-SUPPLIER_ARTIFACT_KEYS = [
-    "digikey_mylist",
-]
-
-ARTIFACT_KEYS = FILE_ARTIFACT_KEYS + PERMANENT_ARTIFACT_KEYS + SUPPLIER_ARTIFACT_KEYS
+ARTIFACT_KEYS = FILE_ARTIFACT_KEYS + PERMANENT_ARTIFACT_KEYS
 
 STATUS_CURRENT = "current"
 STATUS_STALE = "stale"
 STATUS_NOT_GENERATED = "not_generated"
 STATUS_FAILED = "failed"
 STATUS_NOT_REQUIRED = "not_required"
+# digikey_cart_link-only status: the current BOM's DigiKey purchasing
+# data is valid, but the encoded FastAdd URL exceeded the safe length --
+# the DigiKey CSV is the supported fallback in this state (see
+# digikey_fastadd.py). Counts as "current and valid" for readiness,
+# exactly like STATUS_CURRENT (H1's required handoff-artifact policy).
+STATUS_CSV_FALLBACK = "csv_fallback"
+
+# Artifacts whose requirement depends on whether that supplier actually
+# has any validated purchasing lines in the CURRENT canonical BOM -- see
+# _purchasing_requirement(). A supplier with zero lines needs none of
+# its artifacts and must never block "Ready for Handoff" (replaces the
+# old MyList-centered SUPPLIER_ARTIFACT_KEYS/_supplier_requirement()
+# model; see the change-risk audit's H1).
+REQUIRED_ARTIFACT_KEYS = ["digikey_list_csv", "digikey_cart_link", "mouser_export_csv"]
 
 
 def _initial_artifact_status():
     return {key: STATUS_NOT_GENERATED for key in ARTIFACT_KEYS}
 
 
-def _supplier_requirement(dataframe):
+def _purchasing_requirement(dataframe, run_id=""):
     """
-    A SUPPLIER artifact (see SUPPLIER_ARTIFACT_KEYS -- just DigiKey now)
-    is only "required" when build_digikey_mylists_parts() -- the exact
-    same selection logic used to actually build the MyList -- finds at
-    least one item for it. A supplier with zero required items needs no
-    artifact and must never block "Ready for Handoff". Mouser has no
-    equivalent entry here: it's a plain file export
-    (FILE_ARTIFACT_KEYS), always attempted regardless of item count,
-    like sourcing_report/digikey_list_csv.
+    Whether each REQUIRED_ARTIFACT_KEYS entry is required at all, judged
+    against the SAME canonical purchasing-line selection
+    (purchasing_lines.build_purchasing_lines()) every other purchasing
+    artifact uses. A supplier counts as "required" when it has either
+    valid lines OR validation errors -- a row that IS sourced from a
+    supplier but has an unusable part number/quantity must not be
+    invisible to this check (bool(result.lines) alone would be False for
+    it, same as a supplier with zero rows at all), or its CSV/link
+    FAILED status would never be in REQUIRED_ARTIFACT_KEYS's
+    `required_keys` and could never block Ready for Handoff -- exactly
+    the "must not silently omit an invalid row and report the package
+    Ready" failure mode H2 in the change-risk audit describes.
     """
+    digikey_result = build_purchasing_lines(dataframe, "digikey", run_id=run_id)
+    mouser_result = build_purchasing_lines(dataframe, "mouser", run_id=run_id)
+    digikey_required = bool(digikey_result.lines) or bool(digikey_result.errors)
+    mouser_required = bool(mouser_result.lines) or bool(mouser_result.errors)
     return {
-        "digikey_mylist": len(build_digikey_mylists_parts(dataframe)) > 0,
+        "digikey_list_csv": digikey_required,
+        "digikey_cart_link": digikey_required,
+        "mouser_export_csv": mouser_required,
     }
+
+
+def _is_required_artifact_valid(key, status):
+    """"Current and valid" per key -- digikey_cart_link additionally
+    accepts STATUS_CSV_FALLBACK (a deliberate, documented terminal state,
+    not a degraded one; see H1/H6)."""
+    if key == "digikey_cart_link":
+        return status in (STATUS_CURRENT, STATUS_CSV_FALLBACK)
+    return status == STATUS_CURRENT
 
 
 def _mark_artifacts_stale_if_current(response):
     """
     Called after a Needs Review mutation (Retry Exact, replacement
-    selection). Only artifacts that were STATUS_CURRENT move to
-    STATUS_STALE -- an artifact that was already NOT_GENERATED/FAILED/
-    NOT_REQUIRED stays exactly what it was, so one row's mutation can't
-    manufacture a false "failed" or "required" state for an artifact that
-    never applied.
+    selection) or any other purchasing-affecting change. An artifact
+    that was "valid" (STATUS_CURRENT, or STATUS_CSV_FALLBACK for
+    digikey_cart_link) moves to STATUS_STALE -- an artifact that was
+    already NOT_GENERATED/FAILED/NOT_REQUIRED stays exactly what it was,
+    so one row's mutation can't manufacture a false "failed" or
+    "required" state for an artifact that never applied.
     """
     artifact_status = response.setdefault("artifact_status", _initial_artifact_status())
     for key in ARTIFACT_KEYS:
-        if artifact_status.get(key) == STATUS_CURRENT:
+        status = artifact_status.get(key)
+        was_valid = status == STATUS_CURRENT or (key == "digikey_cart_link" and status == STATUS_CSV_FALLBACK)
+        if was_valid:
             artifact_status[key] = STATUS_STALE
+
+
+def _reconcile_purchasing_requirement_status(response, dataframe, run_id=""):
+    """
+    A REQUIRED_ARTIFACT_KEYS entry's status can go wrong in a way
+    _mark_artifacts_stale_if_current() alone never catches: a Needs
+    Review mutation can change whether that supplier has any purchasing
+    lines AT ALL (e.g. zero DigiKey-sourced rows becoming one or more),
+    not just whether an already-required artifact is current. Without
+    this, a prior STATUS_NOT_REQUIRED can survive after DigiKey becomes
+    required, letting Purchasing Handoff display "Not Required" while a
+    nonzero DigiKey item count is shown right next to it (see the QA/QC
+    deep-dive report's Q8, generalized here to all three
+    REQUIRED_ARTIFACT_KEYS instead of just digikey_mylist).
+    """
+    artifact_status = response.setdefault("artifact_status", _initial_artifact_status())
+    requirement = _purchasing_requirement(dataframe, run_id=run_id)
+    for key in REQUIRED_ARTIFACT_KEYS:
+        required_now = requirement.get(key, False)
+        current_status = artifact_status.get(key)
+        if required_now and current_status == STATUS_NOT_REQUIRED:
+            artifact_status[key] = STATUS_NOT_GENERATED
+        elif not required_now and current_status != STATUS_NOT_REQUIRED:
+            artifact_status[key] = STATUS_NOT_REQUIRED
 
 
 def _recompute_global_stale_flag(response):
     """
     Derived convenience flag, not a source of truth: True when any
-    re-exportable artifact (file or supplier) is stale relative to the
-    current BOM state. Deliberately excludes PERMANENT_ARTIFACT_KEYS --
-    those stay disabled forever after their first mutation by design, and
-    must not keep the whole purchasing page reporting "Stale — BOM
-    Changed" forever once everything else has been regenerated.
+    re-exportable artifact is stale relative to the current BOM state.
+    Deliberately excludes PERMANENT_ARTIFACT_KEYS -- those stay disabled
+    forever after their first mutation by design, and must not keep the
+    whole purchasing page reporting "Stale — BOM Changed" forever once
+    everything else has been regenerated.
     """
     artifact_status = response.get("artifact_status") or {}
-    regeneratable_keys = FILE_ARTIFACT_KEYS + SUPPLIER_ARTIFACT_KEYS
-    stale = any(artifact_status.get(key) == STATUS_STALE for key in regeneratable_keys)
+    stale = any(artifact_status.get(key) == STATUS_STALE for key in FILE_ARTIFACT_KEYS)
     response["stale_after_mutation"] = stale
     return stale
+
+
+def _empty_digikey_cart_link():
+    return {
+        "status": STATUS_NOT_GENERATED,
+        "url": "",
+        "encoded_length": 0,
+        "item_count": 0,
+        "fallback_reason": "",
+    }
 
 
 def _empty_result():
@@ -184,15 +261,19 @@ def _empty_result():
             "needs_review": 0,
         },
         "partsbox": None,
-        "purchasing": {
-            "mouser": None,
-            "digikey": None,
-        },
+        # Pure, deterministic DigiKey FastAdd cart-link state (see
+        # digikey_fastadd.py) -- no vendor API call. Replaces the old
+        # `purchasing`/`_purchasing_raw` DigiKey-MyList/Mouser-cart
+        # side-effect tracking, which no longer exists in normal flow
+        # (see digikey_mylists_client.py/mouser_cart_client.py, retained
+        # only for src/main.py's separate, explicitly-gated legacy CLI
+        # path). A response dict from before this change may still carry
+        # the old `purchasing`/`artifact_status["digikey_mylist"]` keys
+        # in a live Streamlit session that survived a hot reload -- every
+        # reader in this module ignores those legacy keys entirely
+        # rather than reinterpreting them (see H9).
+        "digikey_cart_link": _empty_digikey_cart_link(),
         "_active_bom_state": None,
-        "_purchasing_raw": {
-            "mouser": None,
-            "digikey": None,
-        },
         "artifact_status": _initial_artifact_status(),
         "stale_after_mutation": False,
         "purchasing_regeneration_errors": [],
@@ -209,12 +290,12 @@ def refresh_response_snapshot(response):
     recompute them, instead of hand-updating several dict keys inline in
     UI code.
 
-    purchasing/outputs are deliberately left untouched: they describe the
-    last generated cart/MyList/export artifacts, which remain exactly
-    what they were, not what they'd be if regenerated now.
+    outputs/digikey_cart_link are deliberately left untouched: they
+    describe the last generated exports/link, which remain exactly what
+    they were, not what they'd be if regenerated now.
     _mark_artifacts_stale_if_current() marks each artifact that was
-    STATUS_CURRENT as STATUS_STALE -- per-artifact, not a single blanket
-    flag -- and _recompute_global_stale_flag() derives the convenience
+    valid as STATUS_STALE -- per-artifact, not a single blanket flag --
+    and _recompute_global_stale_flag() derives the convenience
     `stale_after_mutation` flag from that per-artifact state. Callers must
     treat any newly-stale artifact as pending regeneration, not silently
     current, once this has been called.
@@ -227,38 +308,40 @@ def refresh_response_snapshot(response):
     response["review_items"] = active_bom_state.to_records(active_bom_state.review_items_dataframe())
     response["results_summary"] = active_bom_state.summary_counts()
     _mark_artifacts_stale_if_current(response)
+    _reconcile_purchasing_requirement_status(
+        response, active_bom_state.dataframe, run_id=response.get("run", {}).get("run_id", "")
+    )
     _recompute_global_stale_flag(response)
     return response
 
 
 def derive_purchasing_status(response):
     """
-    Describes the state of purchasing ARTIFACTS (cart/MyList/exports),
-    not component sourcing status -- kept as a separate concept from a
-    BOM row's result_status, per the same Source/Status separation the
-    Results Workspace uses.
+    Describes the state of purchasing ARTIFACTS (supplier CSVs, DigiKey
+    cart link), not component sourcing status -- kept as a separate
+    concept from a BOM row's result_status, per the same Source/Status
+    separation the Results Workspace uses.
 
-    Readiness is judged per REQUIRED supplier artifact (see
-    _supplier_requirement): a supplier with zero required items is
+    Readiness is judged per REQUIRED_ARTIFACT_KEYS entry (see
+    _purchasing_requirement): a supplier with zero purchasing lines is
     excluded entirely, never blocking "Ready for Handoff"; a required
-    supplier that was attempted but not created (STATUS_FAILED) always
-    blocks it, even if `purchasing["<supplier>"]["attempted"]` is True --
-    attempted is not the same as ready.
+    artifact that was attempted but failed (invalid purchasing data or an
+    export error) always blocks it (H1).
     """
     active_bom_state = response.get("_active_bom_state")
     if active_bom_state is None:
         return "Not Available"
 
     artifact_status = response.get("artifact_status") or {}
-    regeneratable_keys = FILE_ARTIFACT_KEYS + SUPPLIER_ARTIFACT_KEYS
-    if any(artifact_status.get(key) == STATUS_STALE for key in regeneratable_keys):
+    if any(artifact_status.get(key) == STATUS_STALE for key in FILE_ARTIFACT_KEYS):
         return "Stale — BOM Changed"
 
     if active_bom_state.summary_counts()["needs_review"] > 0:
         return "Needs Review"
 
-    requirement = _supplier_requirement(active_bom_state.dataframe)
-    required_keys = [key for key in SUPPLIER_ARTIFACT_KEYS if requirement.get(key)]
+    run_id = response.get("run", {}).get("run_id", "")
+    requirement = _purchasing_requirement(active_bom_state.dataframe, run_id=run_id)
+    required_keys = [key for key in REQUIRED_ARTIFACT_KEYS if requirement.get(key)]
 
     if not required_keys:
         if not response.get("purchasing_regenerated_at_least_once"):
@@ -275,7 +358,7 @@ def derive_purchasing_status(response):
             return "Generation Failed"
         return "Partial — Generation Failed"
 
-    if all(status == STATUS_CURRENT for status in required_statuses):
+    if all(_is_required_artifact_valid(key, artifact_status.get(key)) for key in required_keys):
         return "Ready for Handoff"
 
     return "Not Yet Generated"
@@ -283,96 +366,221 @@ def derive_purchasing_status(response):
 
 def build_purchasing_summary(response):
     """
-    Purchasing summary for the Purchasing Handoff workspace. Item counts
-    are read from the existing, unmodified build_mouser_cart_items()/
-    build_digikey_mylists_parts() selection logic -- the same selection
-    export_mouser_list()/the DigiKey MyList creation call use -- so this
-    never recomputes a second sourcing/selection decision of its own.
-
-    Mouser has no "created"/vendor-attempt tracking here -- it's a plain
-    file export (see mouser_export_csv in FILE_ARTIFACT_KEYS), so its
-    only state is whether that export is current/stale/failed, exactly
-    like sourcing_report or digikey_list_csv.
+    Purchasing summary for the Purchasing Handoff workspace. Item/
+    quantity counts are read from the SAME canonical purchasing lines
+    (purchasing_lines.build_purchasing_lines()) that generate the
+    supplier CSVs and the DigiKey FastAdd link -- one validated
+    selection, not a second recomputation (H2/H4).
     """
     active_bom_state = response.get("_active_bom_state")
     if active_bom_state is None:
         return None
 
-    mouser_items = build_mouser_cart_items(active_bom_state.dataframe)
-    digikey_items = build_digikey_mylists_parts(active_bom_state.dataframe)
-    purchasing = response.get("purchasing") or {}
-    digikey = purchasing.get("digikey") or {}
+    run_id = response.get("run", {}).get("run_id", "")
+    dataframe = active_bom_state.dataframe
+    mouser_result = build_purchasing_lines(dataframe, "mouser", run_id=run_id)
+    digikey_result = build_purchasing_lines(dataframe, "digikey", run_id=run_id)
     artifact_status = response.get("artifact_status") or {}
-    requirement = _supplier_requirement(active_bom_state.dataframe)
+    requirement = _purchasing_requirement(dataframe, run_id=run_id)
+    cart_link = response.get("digikey_cart_link") or _empty_digikey_cart_link()
 
     return {
         "status": derive_purchasing_status(response),
         "mouser": {
-            "item_count": len(mouser_items),
-            "total_quantity": sum(int(item.get("Quantity", 0)) for item in mouser_items),
+            "item_count": mouser_result.item_count,
+            "total_quantity": mouser_result.total_quantity,
+            "required": requirement.get("mouser_export_csv", False),
             "artifact_status": artifact_status.get("mouser_export_csv", STATUS_NOT_GENERATED),
+            "errors": [error.reason for error in mouser_result.errors],
         },
         "digikey": {
-            "item_count": len(digikey_items),
-            "total_quantity": sum(
-                int(quantity.get("Quantity", 0))
-                for part in digikey_items
-                for quantity in part.get("Quantities", [])
-            ),
-            "list_created": bool(digikey.get("created")),
-            "list_id": digikey.get("list_id"),
-            "share_id": digikey.get("share_id"),
-            "required": requirement.get("digikey_mylist", False),
-            "artifact_status": artifact_status.get("digikey_mylist", STATUS_NOT_GENERATED),
+            "item_count": digikey_result.item_count,
+            "total_quantity": digikey_result.total_quantity,
+            "required": requirement.get("digikey_list_csv", False),
+            "csv_artifact_status": artifact_status.get("digikey_list_csv", STATUS_NOT_GENERATED),
+            "cart_link_status": artifact_status.get("digikey_cart_link", STATUS_NOT_GENERATED),
+            "cart_link_url": cart_link.get("url", ""),
+            "cart_link_encoded_length": cart_link.get("encoded_length", 0),
+            "cart_link_fallback_reason": cart_link.get("fallback_reason", ""),
+            "errors": [error.reason for error in digikey_result.errors],
         },
         "needs_review_count": active_bom_state.summary_counts()["needs_review"],
     }
 
 
-def regenerate_purchasing(response, run_digikey_mylist=True):
+def _regenerate_cleaned_workbook(active_bom_state, output_path):
+    """
+    Regenerates the multi-sheet cleaned workbook from the CURRENT
+    canonical state (QA/QC deep-dive report, Q9) instead of leaving it
+    permanently stale after the first post-upload edit. Clean_BOM and
+    Review_Items are freshly derived, exactly like every other artifact
+    regenerate_purchasing() re-exports. Column_Mapping/Warnings come back
+    empty: they describe the ORIGINAL upload's raw-header-to-clean-column
+    mapping and per-row cleaning warnings, which only exist as a
+    byproduct of process_bom_file() reprocessing a raw upload file --
+    there is no raw file to re-derive them from here, and fabricating
+    values would misrepresent what actually happened during cleaning.
+    """
+    empty_mapping = pd.DataFrame(columns=["original_header", "mapped_field"])
+    empty_warnings = pd.DataFrame(columns=["source_row", "field", "message"])
+    result = BomCleanResult(
+        clean_bom=active_bom_state.dataframe,
+        review_items=active_bom_state.review_items_dataframe(),
+        column_mapping=empty_mapping,
+        warnings=empty_warnings,
+        mapped_columns={},
+    )
+    export_clean_bom_workbook(result, output_path)
+
+
+def _generate_supplier_csv(export_fn, dataframe, run_id, output_folder, file_stem, artifact_status, key, outputs, errors, supplier_label):
+    """
+    Shared by run_bom_workflow()/regenerate_purchasing() for both
+    digikey_list_csv and mouser_export_csv: exports the supplier CSV
+    from canonical purchasing lines (export_fn is
+    digikey_list_export.export_digikey_list or
+    mouser_export.export_mouser_list, both of which return
+    (output_path, PurchasingLineResult)) and records this artifact's
+    status. A nonempty PurchasingLineResult.errors means at least one
+    row that IS sourced from this supplier and not DNP has unusable
+    purchasing data -- FAILED, never silently dropped (H2). Returns the
+    PurchasingLineResult so the caller can reuse it (e.g. for the DigiKey
+    FastAdd link) without re-deriving the lines a second time.
+    """
+    try:
+        path, result = export_fn(dataframe, output_folder, file_stem=file_stem, run_id=run_id)
+        outputs[key] = path
+        if result.errors:
+            artifact_status[key] = STATUS_FAILED
+            for line_error in result.errors:
+                errors.append(
+                    f"{supplier_label} purchasing data invalid (row {line_error.row_id}, "
+                    f"{line_error.field}): {line_error.reason}"
+                )
+        elif result.lines:
+            artifact_status[key] = STATUS_CURRENT
+        else:
+            artifact_status[key] = STATUS_NOT_REQUIRED
+        return result
+    except Exception as exc:
+        artifact_status[key] = STATUS_FAILED
+        errors.append(f"{supplier_label} CSV export failed: {exc}")
+        return None
+
+
+def _generate_digikey_cart_link(digikey_result, artifact_status, errors):
+    """
+    Builds the DigiKey FastAdd cart link from the SAME PurchasingLineResult
+    _generate_supplier_csv() already computed for "digikey" -- never a
+    second, independent selection (H4). No vendor API call.
+    """
+    if digikey_result is None or digikey_result.errors:
+        artifact_status["digikey_cart_link"] = STATUS_FAILED
+        return {
+            "status": STATUS_FAILED,
+            "url": "",
+            "encoded_length": 0,
+            "item_count": 0,
+            "fallback_reason": "Invalid DigiKey purchasing data; see errors above.",
+        }
+
+    if not digikey_result.lines:
+        artifact_status["digikey_cart_link"] = STATUS_NOT_REQUIRED
+        return _empty_digikey_cart_link()
+
+    try:
+        link_result = build_digikey_fastadd_url(digikey_result.lines)
+    except Exception as exc:
+        artifact_status["digikey_cart_link"] = STATUS_FAILED
+        errors.append(f"DigiKey cart link generation failed: {exc}")
+        return {
+            "status": STATUS_FAILED,
+            "url": "",
+            "encoded_length": 0,
+            "item_count": 0,
+            "fallback_reason": str(exc),
+        }
+
+    artifact_status["digikey_cart_link"] = link_result.status
+    return {
+        "status": link_result.status,
+        "url": link_result.url,
+        "encoded_length": link_result.encoded_length,
+        "item_count": link_result.item_count,
+        "fallback_reason": link_result.fallback_reason,
+    }
+
+
+def _regenerate_purchasing_artifacts(dataframe, run_id, output_folder, source_stem, artifact_status, outputs, errors):
+    """
+    Single shared implementation for building every purchasing-handoff
+    artifact (DigiKey supplier CSV, DigiKey FastAdd cart link, Mouser
+    supplier CSV) from the CURRENT canonical BOM state -- used by both a
+    fresh run_bom_workflow() run and an explicit regenerate_purchasing()
+    click, so the two paths can never diverge (H4/H6). No DigiKey
+    MyLists API call anywhere in this function.
+
+    Returns the digikey_cart_link dict for response["digikey_cart_link"].
+    """
+    digikey_result = _generate_supplier_csv(
+        export_digikey_list,
+        dataframe,
+        run_id,
+        output_folder,
+        f"{source_stem}_digikey_list",
+        artifact_status,
+        "digikey_list_csv",
+        outputs,
+        errors,
+        "DigiKey",
+    )
+    _generate_supplier_csv(
+        export_mouser_list,
+        dataframe,
+        run_id,
+        output_folder,
+        f"{source_stem}_mouser_export",
+        artifact_status,
+        "mouser_export_csv",
+        outputs,
+        errors,
+        "Mouser",
+    )
+    return _generate_digikey_cart_link(digikey_result, artifact_status, errors)
+
+
+def regenerate_purchasing(response):
     """
     Explicit, operator-triggered regeneration of purchasing artifacts
-    from the CURRENT canonical BOM state. Reuses create_digikey_mylist_from_bom()
-    -- the exact call run_bom_workflow() makes during a normal run -- and
-    _build_digikey_purchasing() to build the same structured shape. Not a
-    second purchasing implementation.
-
-    Also re-exports the plain CSV artifacts (cleaned BOM, sourcing
-    report, DigiKey list, Mouser export, PartsBox import CSV) from the
-    current state using the existing exporters, and rewrites
-    run_summary.json, so downloads stop reflecting the pre-mutation BOM.
-    The multi-sheet cleaned workbook and the PartsBox unmatched CSV are
-    NOT regenerated here -- see PERMANENT_ARTIFACT_KEYS -- and are left
-    exactly as their current artifact_status says.
+    from the CURRENT canonical BOM state, via _regenerate_purchasing_artifacts()
+    -- the exact same implementation run_bom_workflow() uses. Also
+    re-exports the plain CSV artifacts (cleaned BOM, sourcing report,
+    PartsBox import CSV) and rewrites run_summary.json, so downloads stop
+    reflecting the pre-mutation BOM. The PartsBox unmatched CSV is NOT
+    regenerated here -- see PERMANENT_ARTIFACT_KEYS -- and is left
+    exactly as its current artifact_status says.
 
     Every stage below is wrapped in its own try/except and records its
     OWN artifact_status entry: one export failing must never crash this
     function, never mark an unrelated artifact current, and never touch
-    canonical BOM state. An already-STATUS_CURRENT DigiKey MyList is
-    skipped entirely (not re-invoked) so a retry can never create a
-    duplicate list, and a plain rerun that doesn't call this function
-    creates nothing at all.
+    canonical BOM state.
 
-    Must only be called in response to an explicit operator action (a
-    "Regenerate Purchasing" button), never automatically on a Streamlit
-    rerun -- the DigiKey MyList call hits a live vendor API and creates a
-    new list every time it runs. The Mouser export is a plain local file
-    write, not a vendor call -- it's always re-attempted below alongside
-    the other plain exports, with no enable flag.
+    Makes ZERO vendor API calls -- every artifact here is a local file
+    write or a pure URL derivation. Safe to call from a plain rerun in
+    principle, but still gated behind an explicit "Regenerate Purchasing"
+    button in app.py so downloads don't silently change underneath an
+    operator mid-review.
     """
     active_bom_state = response.get("_active_bom_state")
     if active_bom_state is None:
         return response
 
     artifact_status = response.setdefault("artifact_status", _initial_artifact_status())
-    purchasing_raw = response.setdefault("_purchasing_raw", {"mouser": None, "digikey": None})
-    purchasing = response.setdefault("purchasing", {"mouser": None, "digikey": None})
+    run_id = response.get("run", {}).get("run_id", "")
 
     run_info = response.get("run", {})
-    project_name = str(run_info.get("project_name") or "").strip()
     source_file_name = run_info.get("source_file_name") or "bom"
     source_stem = Path(source_file_name).stem
-    list_name_base = project_name or source_stem
 
     output_folder = os.path.dirname(response["outputs"].get("cleaned_csv") or "") or OUTPUT_FOLDER
     os.makedirs(output_folder, exist_ok=True)
@@ -381,7 +589,6 @@ def regenerate_purchasing(response, run_digikey_mylist=True):
     # Superseded by this attempt's outcome, not accumulated forever --
     # each stage below re-records its own current failure (if any).
     errors = []
-    messages = []
 
     try:
         csv_path = response["outputs"].get("cleaned_csv") or build_output_paths(
@@ -395,6 +602,17 @@ def regenerate_purchasing(response, run_digikey_mylist=True):
         errors.append(f"Cleaned CSV regeneration failed: {exc}")
 
     try:
+        workbook_path = response["outputs"].get("cleaned_workbook") or build_output_paths(
+            source_file_name, output_folder, workbook_suffix=OUTPUT_CLEAN_WORKBOOK_SUFFIX
+        )[0]
+        _regenerate_cleaned_workbook(active_bom_state, workbook_path)
+        response["outputs"]["cleaned_workbook"] = workbook_path
+        artifact_status["cleaned_workbook"] = STATUS_CURRENT
+    except Exception as exc:
+        artifact_status["cleaned_workbook"] = STATUS_FAILED
+        errors.append(f"Cleaned workbook regeneration failed: {exc}")
+
+    try:
         sourcing_report_path = export_sourcing_report(
             dataframe, output_folder, file_stem=f"{source_stem}_sourcing_report"
         )
@@ -404,16 +622,7 @@ def regenerate_purchasing(response, run_digikey_mylist=True):
         artifact_status["sourcing_report"] = STATUS_FAILED
         errors.append(f"Sourcing report regeneration failed: {exc}")
 
-    try:
-        digikey_list_path, _ = export_digikey_list(
-            dataframe, output_folder, file_stem=f"{source_stem}_digikey_list"
-        )
-        response["outputs"]["digikey_list_csv"] = digikey_list_path
-        artifact_status["digikey_list_csv"] = STATUS_CURRENT
-    except Exception as exc:
-        artifact_status["digikey_list_csv"] = STATUS_FAILED
-        errors.append(f"DigiKey list regeneration failed: {exc}")
-
+    project_name = str(run_info.get("project_name") or "").strip()
     if project_name:
         try:
             response["outputs"]["partsbox_import_csv"] = export_partsbox_import_csv(
@@ -426,64 +635,11 @@ def regenerate_purchasing(response, run_digikey_mylist=True):
     else:
         artifact_status["partsbox_import_csv"] = STATUS_NOT_REQUIRED
 
-    try:
-        mouser_export_path, _ = export_mouser_list(
-            dataframe, output_folder, file_stem=f"{source_stem}_mouser_export"
-        )
-        response["outputs"]["mouser_export_csv"] = mouser_export_path
-        artifact_status["mouser_export_csv"] = STATUS_CURRENT
-    except Exception as exc:
-        artifact_status["mouser_export_csv"] = STATUS_FAILED
-        errors.append(f"Mouser export regeneration failed: {exc}")
-
-    requirement = _supplier_requirement(dataframe)
-
-    if not requirement["digikey_mylist"]:
-        artifact_status["digikey_mylist"] = STATUS_NOT_REQUIRED
-    elif artifact_status.get("digikey_mylist") == STATUS_CURRENT:
-        messages.append("DigiKey MyList already current for this BOM state; not recreated.")
-    elif not run_digikey_mylist:
-        pass
-    elif os.getenv("DIGIKEY_MYLISTS_ENABLED", "false").lower() != "true":
-        messages.append("DigiKey MyList regeneration skipped: DIGIKEY_MYLISTS_ENABLED is not true.")
-    else:
-        try:
-            digikey_mylist_result = create_digikey_mylist_from_bom(
-                dataframe, list_name=f"{list_name_base} DigiKey List"
-            )
-            built = _build_digikey_purchasing(True, digikey_mylist_result)
-            purchasing_raw["digikey"] = {
-                "create_result": digikey_mylist_result.get("create_result") if digikey_mylist_result else None,
-                "add_result": digikey_mylist_result.get("add_result") if digikey_mylist_result else None,
-            }
-            purchasing["digikey"] = built
-            if built["created"] and not built["token_persistence_degraded"]:
-                artifact_status["digikey_mylist"] = STATUS_CURRENT
-                messages.append("DigiKey MyList regenerated from the current BOM state.")
-            elif built["created"] and built["token_persistence_degraded"]:
-                # The list itself was created (its data is preserved
-                # above), but the rotated refresh token this call
-                # produced could not be durably persisted -- the next
-                # refresh attempt will likely fail until that's fixed.
-                # Reported as failed, not current, so purchasing doesn't
-                # claim DigiKey is fully healthy (Codex F2).
-                artifact_status["digikey_mylist"] = STATUS_FAILED
-                errors.append(
-                    "DigiKey MyList was created, but its rotated refresh token could "
-                    "not be durably persisted -- DigiKey MyLists automation will "
-                    "likely fail on the next attempt or after a restart until this "
-                    "is corrected. See "
-                    "Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md."
-                )
-            else:
-                artifact_status["digikey_mylist"] = STATUS_FAILED
-                errors.append(f"DigiKey MyList regeneration did not create a list: {built.get('message')}")
-        except Exception as exc:
-            artifact_status["digikey_mylist"] = STATUS_FAILED
-            errors.append(f"DigiKey MyList regeneration failed: {exc}")
+    response["digikey_cart_link"] = _regenerate_purchasing_artifacts(
+        dataframe, run_id, output_folder, source_stem, artifact_status, response["outputs"], errors
+    )
 
     response["purchasing_regeneration_errors"] = errors
-    response["messages"] = response.get("messages", []) + messages
 
     response["bom_rows"] = active_bom_state.rows()
     response["review_items"] = active_bom_state.to_records(active_bom_state.review_items_dataframe())
@@ -527,53 +683,6 @@ def _count_sourcing(clean_bom):
     )
 
     return mouser_sourced, digikey_sourced, manual_review
-
-
-def _build_digikey_purchasing(attempted, digikey_mylist_result):
-    """
-    Retains only the structured fields the app actually needs. The full
-    vendor response (which may carry more than AutoBOM needs to persist)
-    is kept separately in-memory, in response["_purchasing_raw"] -- a key
-    starting with "_", so _write_run_summary() already excludes it from
-    the JSON written to disk -- rather than embedded here.
-    """
-    if not attempted or digikey_mylist_result is None:
-        return {
-            "attempted": bool(attempted),
-            "created": False,
-            "list_id": None,
-            "list_name": None,
-            "share_id": None,
-            "parts_count": 0,
-            "message": None,
-            "token_persistence_degraded": False,
-        }
-
-    # Codex F2: a MyList can be genuinely created while the DigiKey
-    # refresh token rotated during that call failed to persist durably.
-    # That is not a healthy outcome -- the store still holds a token
-    # DigiKey has already invalidated -- so callers (regenerate_purchasing,
-    # run_bom_workflow) must not treat "created: True" alone as
-    # sufficient to mark this artifact current. See
-    # create_digikey_mylist_from_bom()'s "token_store_error" field.
-    token_store_error = digikey_mylist_result.get("token_store_error")
-
-    return {
-        "attempted": True,
-        "created": bool(digikey_mylist_result.get("created")),
-        "list_id": digikey_mylist_result.get("list_id"),
-        "list_name": digikey_mylist_result.get("list_name"),
-        # Confirmed live (2026-09-25, three real disposable test
-        # MyLists): create_list() returns a bare string list ID and
-        # add_parts_to_list() returns a plain list of string item IDs --
-        # no share identifier/link field exists anywhere in either
-        # response. This is a confirmed absence, not an open question;
-        # do not fabricate a value here.
-        "share_id": None,
-        "parts_count": digikey_mylist_result.get("parts_count", 0),
-        "message": digikey_mylist_result.get("message"),
-        "token_persistence_degraded": bool(token_store_error),
-    }
 
 
 def _build_partsbox_response(partsbox_result, partsbox_entries_result):
@@ -623,7 +732,6 @@ def run_bom_workflow(
     project_description="",
     run_partsbox=True,
     run_sourcing=True,
-    run_digikey_mylist=False,
     use_mouser_sourcing=True,
     use_digikey_sourcing=True,
     run_id=None,
@@ -661,14 +769,30 @@ def run_bom_workflow(
         _append_warning_rows(response, result.warnings)
 
         source_stem = Path(source_file_path).stem
-        list_name_base = project_name or source_stem
 
-        digikey_mylist_result = None
+        purchasing_errors = []
 
         if run_sourcing and (use_mouser_sourcing or use_digikey_sourcing):
             response["messages"].append("Running supplier sourcing.")
             supplier_mode = os.getenv("SUPPLIER_MODE", "mouser_then_digikey").strip().lower()
             digikey = DigiKeyClient()
+
+            # The authoritative source-selection boundary passed to
+            # apply_sourcing_decisions() below. A `lambda row: None`
+            # lookup alone is NOT sufficient to disable a supplier --
+            # sourcing_engine's cache reads happen before any lookup
+            # callable is ever considered, so a disabled supplier's stale
+            # cached result from a previous (enabled) run could otherwise
+            # still win. See
+            # Documentation/AutoBOM_Disabled_Supplier_Cache_Bypass_Correction_Report.md.
+            if not use_mouser_sourcing and use_digikey_sourcing:
+                enabled_sources = {"digikey"}
+            elif use_mouser_sourcing and not use_digikey_sourcing:
+                enabled_sources = {"mouser"}
+            elif supplier_mode == "digikey_only":
+                enabled_sources = {"digikey"}
+            else:
+                enabled_sources = {"mouser", "digikey"}
 
             if not use_mouser_sourcing and use_digikey_sourcing:
                 response["messages"].append("Supplier mode: DigiKey only.")
@@ -676,6 +800,7 @@ def run_bom_workflow(
                     result.clean_bom,
                     mouser_lookup=lambda row: None,
                     digikey_lookup=digikey.find_best_match_for_row,
+                    enabled_sources=enabled_sources,
                 )
             elif use_mouser_sourcing and not use_digikey_sourcing:
                 response["messages"].append("Supplier mode: Mouser only.")
@@ -684,6 +809,7 @@ def run_bom_workflow(
                     result.clean_bom,
                     mouser_lookup=mouser.find_best_match_for_row,
                     digikey_lookup=lambda row: None,
+                    enabled_sources=enabled_sources,
                 )
             elif supplier_mode == "digikey_only":
                 response["messages"].append("Supplier mode: DigiKey only.")
@@ -691,6 +817,7 @@ def run_bom_workflow(
                     result.clean_bom,
                     mouser_lookup=lambda row: None,
                     digikey_lookup=digikey.find_best_match_for_row,
+                    enabled_sources=enabled_sources,
                 )
             else:
                 response["messages"].append("Supplier mode: Mouser first, DigiKey fallback.")
@@ -699,6 +826,7 @@ def run_bom_workflow(
                     result.clean_bom,
                     mouser_lookup=mouser.find_best_match_for_row,
                     digikey_lookup=digikey.find_best_match_for_row,
+                    enabled_sources=enabled_sources,
                 )
 
             sourcing_report_path = export_sourcing_report(
@@ -709,62 +837,43 @@ def run_bom_workflow(
             response["outputs"]["sourcing_report"] = sourcing_report_path
             response["messages"].append(f"Sourcing report exported to: {sourcing_report_path}")
 
-            mouser_export_path, mouser_export_count = export_mouser_list(
+            # No DigiKey MyLists call anywhere in this normal-flow path --
+            # see the module docstring and
+            # Documentation/AutoBOM_Direct_Cart_Handoff_Change_Risk_Audit.md.
+            response["digikey_cart_link"] = _regenerate_purchasing_artifacts(
                 result.clean_bom,
+                run_id,
                 output_folder,
-                file_stem=f"{source_stem}_mouser_export",
+                source_stem,
+                response["artifact_status"],
+                response["outputs"],
+                purchasing_errors,
             )
-            response["outputs"]["mouser_export_csv"] = mouser_export_path
-            response["summary"]["mouser_export_items"] = int(mouser_export_count)
-            response["messages"].append(f"Mouser export exported to: {mouser_export_path}")
-
-            digikey_list_path, digikey_count = export_digikey_list(
-                result.clean_bom,
-                output_folder,
-                file_stem=f"{source_stem}_digikey_list",
-            )
-            response["outputs"]["digikey_list_csv"] = digikey_list_path
-            response["summary"]["digikey_list_items"] = int(digikey_count)
-            response["messages"].append(f"DigiKey list exported to: {digikey_list_path}")
-
-            if run_digikey_mylist:
-                if os.getenv("DIGIKEY_MYLISTS_ENABLED", "false").lower() == "true":
-                    try:
-                        digikey_mylist_result = create_digikey_mylist_from_bom(
-                            result.clean_bom,
-                            list_name=f"{list_name_base} DigiKey List",
-                        )
-                        if digikey_mylist_result.get("created"):
-                            response["messages"].append(
-                                f"DigiKey MyList created: {digikey_mylist_result.get('list_id')}"
-                            )
-                            response["messages"].append(
-                                f"DigiKey MyList parts added: {digikey_mylist_result.get('parts_count', 0)}"
-                            )
-                            if digikey_mylist_result.get("token_store_error"):
-                                response["warnings"].append(
-                                    "DigiKey MyList was created, but its rotated refresh "
-                                    "token could not be durably persisted -- DigiKey "
-                                    "MyLists automation will likely fail on the next "
-                                    "attempt or after a restart until this is corrected. "
-                                    "See Documentation/AutoBOM_DigiKey_Durable_Token_Strategy.md."
-                                )
-                        else:
-                            response["messages"].append(
-                                f"DigiKey MyList skipped: {digikey_mylist_result.get('message')}"
-                            )
-                    except Exception as exc:
-                        response["errors"].append(f"DigiKey MyList step failed: {exc}")
-                else:
-                    response["messages"].append(
-                        "DigiKey MyList skipped: DIGIKEY_MYLISTS_ENABLED is not true."
-                    )
-            else:
-                response["messages"].append("DigiKey MyList creation skipped.")
+            response["summary"]["mouser_export_items"] = build_purchasing_lines(
+                result.clean_bom, "mouser", run_id=run_id
+            ).item_count
+            response["summary"]["digikey_list_items"] = build_purchasing_lines(
+                result.clean_bom, "digikey", run_id=run_id
+            ).item_count
+            if response["outputs"].get("mouser_export_csv"):
+                response["messages"].append(
+                    f"Mouser export exported to: {response['outputs']['mouser_export_csv']}"
+                )
+            if response["outputs"].get("digikey_list_csv"):
+                response["messages"].append(
+                    f"DigiKey list exported to: {response['outputs']['digikey_list_csv']}"
+                )
+            response["errors"].extend(purchasing_errors)
         elif run_sourcing:
             response["messages"].append("Supplier sourcing skipped: no suppliers selected.")
+            response["artifact_status"]["digikey_list_csv"] = STATUS_NOT_REQUIRED
+            response["artifact_status"]["digikey_cart_link"] = STATUS_NOT_REQUIRED
+            response["artifact_status"]["mouser_export_csv"] = STATUS_NOT_REQUIRED
         else:
             response["messages"].append("Supplier sourcing skipped.")
+            response["artifact_status"]["digikey_list_csv"] = STATUS_NOT_REQUIRED
+            response["artifact_status"]["digikey_cart_link"] = STATUS_NOT_REQUIRED
+            response["artifact_status"]["mouser_export_csv"] = STATUS_NOT_REQUIRED
 
         if run_partsbox:
             if not project_name:
@@ -903,19 +1012,6 @@ def run_bom_workflow(
 
         response["bom_rows"] = active_bom_state.rows()
         response["review_items"] = active_bom_state.to_records(review_items_df)
-        response["purchasing"] = {
-            "mouser": None,
-            "digikey": _build_digikey_purchasing(run_digikey_mylist, digikey_mylist_result),
-        }
-        response["_purchasing_raw"] = {
-            "mouser": None,
-            "digikey": {
-                "create_result": digikey_mylist_result.get("create_result") if digikey_mylist_result else None,
-                "add_result": digikey_mylist_result.get("add_result") if digikey_mylist_result else None,
-            }
-            if digikey_mylist_result
-            else None,
-        }
 
         # Initial artifact_status for this fresh run. Everything reached
         # this point without raising, so each artifact is either CURRENT
@@ -929,30 +1025,6 @@ def run_bom_workflow(
 
         sourcing_ran = bool(run_sourcing and (use_mouser_sourcing or use_digikey_sourcing))
         artifact_status["sourcing_report"] = STATUS_CURRENT if sourcing_ran else STATUS_NOT_REQUIRED
-        artifact_status["digikey_list_csv"] = STATUS_CURRENT if sourcing_ran else STATUS_NOT_REQUIRED
-        # Mouser export runs alongside the DigiKey list export above (a
-        # plain file write, not gated behind a vendor-enabled flag) --
-        # current whenever sourcing ran, regardless of whether it found
-        # any Mouser items (an empty CSV is not a failure, same as
-        # digikey_list_csv with zero DigiKey rows); not required at all
-        # if sourcing never ran, since nothing was ever written.
-        artifact_status["mouser_export_csv"] = STATUS_CURRENT if sourcing_ran else STATUS_NOT_REQUIRED
-
-        requirement = _supplier_requirement(active_bom_state.dataframe)
-        if not requirement["digikey_mylist"]:
-            artifact_status["digikey_mylist"] = STATUS_NOT_REQUIRED
-        elif run_digikey_mylist and os.getenv("DIGIKEY_MYLISTS_ENABLED", "false").lower() == "true":
-            # Created but with a token-persistence failure (Codex F2) is
-            # reported as failed, not current -- see _build_digikey_purchasing().
-            artifact_status["digikey_mylist"] = (
-                STATUS_CURRENT
-                if digikey_mylist_result
-                and digikey_mylist_result.get("created")
-                and not digikey_mylist_result.get("token_store_error")
-                else STATUS_FAILED
-            )
-        else:
-            artifact_status["digikey_mylist"] = STATUS_NOT_GENERATED
 
         partsbox_attempted = bool(run_partsbox and project_name)
         partsbox_import_ok = bool(response["outputs"].get("partsbox_import_csv"))

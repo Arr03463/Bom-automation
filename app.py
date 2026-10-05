@@ -440,8 +440,12 @@ def render_component_search_intake():
     core "Enter vs. live typing" boundary. Sources checkboxes here are
     authoritative for this search AND for later seams (see
     _authoritative_sources()); unchecking Mouser/DigiKey mid-session
-    does not retroactively clear an already-fetched supplier result set,
-    but no NEW call is made while unchecked.
+    filters its already-fetched rows out of the displayed table
+    immediately (the underlying stored result set is untouched, so
+    re-checking it shows those rows again without a new call), and no
+    NEW call is made while unchecked -- a stale-sources caption tells the
+    operator to press Enter when the checked sources no longer match
+    what was last actually searched.
 
     Nothing is added just by searching or selecting a row -- there is
     one shared Selected Part Details panel (render_selected_part_details())
@@ -604,7 +608,22 @@ def render_component_search_intake():
         else:
             st.caption("Type to search PartsBox inventory, or click Browse Inventory to see everything.")
 
-    supplier_records = st.session_state.get("component_search_supplier_results", [])
+    # Unchecking a supplier here must remove its already-fetched rows from
+    # display, not just block new calls -- otherwise the Sources
+    # checkboxes and the visible table contradict each other (QA/QC
+    # deep-dive report, Q6). Filtered here, before facets/pagination/
+    # selection, rather than left in the stored result set: re-checking a
+    # supplier later can still show its last fetched rows again (the
+    # underlying stored set is untouched), it's only display that's
+    # gated on the current checkbox state.
+    enabled_supplier_labels = {
+        label for label, enabled in (("Mouser", use_mouser), ("DigiKey", use_digikey)) if enabled
+    }
+    supplier_records = [
+        record
+        for record in st.session_state.get("component_search_supplier_results", [])
+        if record.get("source") in enabled_supplier_labels
+    ]
 
     # Basic Filters -- Manufacturer is now a membership facet (checkbox-
     # style multiselect) across whatever records currently exist, not a
@@ -649,20 +668,38 @@ def render_component_search_intake():
     )
     supplier_signature = result_signature(st.session_state.get("component_search_last_submitted"), common_filters)
 
-    # If the draft has diverged from the last committed Enter query,
-    # supplier results stay visible (never cleared/greyed out -- the
-    # operator may still want the last search while refining) but get a
-    # small staleness caption instead of silently looking current.
+    # If the draft has diverged from the last committed Enter query, OR
+    # the checked Sources no longer match what was actually searched
+    # (e.g. re-checking Mouser after a DigiKey-only search, without
+    # pressing Enter again -- QA/QC deep-dive report, Q6), supplier
+    # results stay visible (never cleared/greyed out -- the operator may
+    # still want the last search while refining) but get a small
+    # staleness caption instead of silently looking current/complete.
     _last_submitted_entry = st.session_state.get("component_search_last_submitted")
     _last_submitted_text = _last_submitted_entry[0] if _last_submitted_entry else None
-    supplier_results_are_stale = bool(
-        supplier_records and _last_submitted_text is not None and live_text.strip() != _last_submitted_text.strip()
+    _last_submitted_sources = frozenset(_last_submitted_entry[1]) if _last_submitted_entry else frozenset()
+    _current_enabled_sources = frozenset(
+        source for source, enabled in (("mouser", use_mouser), ("digikey", use_digikey)) if enabled
     )
+    _query_diverged = _last_submitted_text is not None and live_text.strip() != _last_submitted_text.strip()
+    _sources_diverged = _last_submitted_entry is not None and _current_enabled_sources != _last_submitted_sources
+    supplier_results_are_stale = bool(supplier_records and (_query_diverged or _sources_diverged))
 
     def _render_supplier_results_heading():
         st.markdown("**Supplier Results**")
         if supplier_results_are_stale:
-            st.caption(f"Results are for ‘{_last_submitted_text}’ — press Enter to update.")
+            if _query_diverged and _sources_diverged:
+                st.caption(
+                    f"Results are for ‘{_last_submitted_text}’ with different sources checked "
+                    "— press Enter to update."
+                )
+            elif _query_diverged:
+                st.caption(f"Results are for ‘{_last_submitted_text}’ — press Enter to update.")
+            else:
+                st.caption(
+                    "Sources changed since the last search -- press Enter to fetch results "
+                    "for the currently checked sources."
+                )
 
     if use_partsbox and not (use_mouser or use_digikey):
         st.markdown("**PartsBox Inventory**")
@@ -831,7 +868,7 @@ def _add_search_result_to_working_bom(candidate, required_qty):
     fallback sourcing decision (and PartsBox match recording, if
     discovered via PartsBox) Find Replacement already uses -- there is
     no second "manually added part" sourcing path. Never itself creates
-    a Mouser cart or DigiKey MyList.
+    a Mouser cart or DigiKey cart/MyList.
     """
     if st.session_state.current_run is None:
         st.session_state.current_run = start_manual_bom_workflow()
@@ -843,6 +880,18 @@ def _add_search_result_to_working_bom(candidate, required_qty):
     row_id = active_bom_state.add_row({"required_qty": required_qty})
     apply_replacement(active_bom_state, row_id, candidate, sources=_authoritative_sources())
     refresh_response_snapshot(current_run)
+
+
+def _render_upload_failure_and_retry_button(uploaded_file, errors):
+    """
+    Shared by both the "just failed this pass" and "already failed on a
+    prior pass" branches of render_upload_intake() below, so the Retry
+    button appears immediately on the SAME run as the failure (not only
+    after some later, unrelated rerun happens to re-render the page).
+    Returns whether Retry was clicked.
+    """
+    st.error(f"'{uploaded_file.name}' could not be processed: " + ("; ".join(errors) or "unknown error"))
+    return st.button("Retry Upload", key="upload_intake_retry_button")
 
 
 def render_upload_intake():
@@ -867,9 +916,10 @@ def render_upload_intake():
     "use Mouser/DigiKey sourcing" toggle.
 
     Deliberately offers no "Create Mouser cart" / "Create DigiKey
-    MyList" option -- those are Purchasing Handoff actions now (see
-    render_purchasing_handoff_section()), not something that should
-    happen merely from an intake upload.
+    MyList" option -- neither is part of the normal purchasing handoff
+    at all anymore (see render_purchasing_handoff_section()'s DigiKey
+    FastAdd cart link + supplier CSVs), and nothing should happen merely
+    from an intake upload regardless.
 
     Automatic, not a "Process Upload" button: processes exactly once per
     distinct dropped/selected file, tracked by Streamlit's own stable
@@ -892,6 +942,19 @@ def render_upload_intake():
     if st.session_state.get("upload_intake_processed_file_id") == uploaded_file.file_id:
         st.caption(f"'{uploaded_file.name}' already processed into the working BOM below.")
         return
+
+    if st.session_state.get("upload_intake_failed_file_id") == uploaded_file.file_id:
+        # An early parsing/configuration failure (see below) produced no
+        # usable active_bom_state -- this file_id is deliberately NOT
+        # marked processed, so it must not be silently reprocessed on
+        # every unrelated rerun either (that would repeat the same
+        # failing work pointlessly). Only an explicit Retry re-attempts
+        # it (QA/QC deep-dive report, Q7).
+        failed_errors = st.session_state.get("upload_intake_failed_errors", [])
+        if not _render_upload_failure_and_retry_button(uploaded_file, failed_errors):
+            return
+        st.session_state.pop("upload_intake_failed_file_id", None)
+        st.session_state.pop("upload_intake_failed_errors", None)
 
     build_quantity = st.session_state.cfg_build_quantity
     project_name = st.session_state.cfg_project_name
@@ -916,12 +979,25 @@ def render_upload_intake():
             project_description=project_description,
             run_partsbox=run_partsbox,
             run_sourcing=run_sourcing,
-            run_digikey_mylist=False,
             use_mouser_sourcing=use_mouser_sourcing,
             use_digikey_sourcing=use_digikey_sourcing,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
         )
+
+    new_state = result.get("_active_bom_state")
+    if new_state is None:
+        # A parsing/configuration failure this early produced no usable
+        # canonical BOM state at all -- must not be marked "processed"
+        # (that would silently block an in-place retry until the
+        # operator removes and reselects the file just to get a new
+        # file_id). See the "upload_intake_failed_file_id" branch above.
+        # Rendered here too (not just on a later rerun) so the operator
+        # sees the Retry option immediately, on this same failed attempt.
+        st.session_state["upload_intake_failed_file_id"] = uploaded_file.file_id
+        st.session_state["upload_intake_failed_errors"] = result.get("errors", [])
+        _render_upload_failure_and_retry_button(uploaded_file, result.get("errors", []))
+        return
 
     st.session_state["upload_intake_processed_file_id"] = uploaded_file.file_id
 
@@ -937,7 +1013,6 @@ def render_upload_intake():
 
     existing_run = st.session_state.current_run
     existing_state = existing_run.get("_active_bom_state") if existing_run else None
-    new_state = result.get("_active_bom_state")
 
     if existing_state is not None and new_state is not None:
         # A working BOM already exists -- merge this file's
@@ -984,14 +1059,11 @@ def render_run_messages(current_run):
 
 def render_downloads(current_run):
     """
-    "Other Outputs" -- the non-Mouser-specific artifacts, generalized per
-    the frontend design spec's otherOutputs[] list. Excludes only
-    mouser_export_csv, which is shown inline in the Mouser panel above
-    with its own bespoke button per the spec -- not duplicated here.
-    DigiKey's panel has no download button of its own (the MyList is
-    opened externally, only its List ID/Share ID are shown there), but
-    digikey_list_csv stays reachable here rather than becoming
-    undownloadable altogether.
+    "Other Outputs" -- the non-supplier-specific artifacts, generalized
+    per the frontend design spec's otherOutputs[] list. Excludes both
+    mouser_export_csv and digikey_list_csv, each shown inline in its own
+    supplier panel in render_purchasing_handoff_section() with its own
+    bespoke button -- not duplicated here.
     """
     st.subheader("Other Outputs")
 
@@ -1010,7 +1082,6 @@ def render_downloads(current_run):
         "cleaned_workbook": "Download cleaned workbook",
         "cleaned_csv": "Download cleaned CSV",
         "sourcing_report": "Download sourcing report",
-        "digikey_list_csv": "Download DigiKey list CSV",
         "partsbox_import_csv": "Download PartsBox import CSV",
         "partsbox_unmatched_csv": "Download PartsBox unmatched CSV",
         "run_summary": "Download run summary",
@@ -1223,7 +1294,15 @@ def render_needs_review_section(current_run, active_bom_state):
             st.rerun()
 
         if action_cols[1].button("Find Replacement", key=f"find_replacement_{row_id}"):
-            st.session_state.replacement_lookup_sources = frozenset({"mouser", "digikey"})
+            # The authoritative Sources checkboxes must govern which
+            # suppliers Find Replacement searches too -- not just which
+            # suppliers apply_replacement()'s later re-sourcing pass may
+            # use. Previously this always searched both Mouser and
+            # DigiKey regardless of what was checked (see the QA/QC
+            # deep-dive report's Q5).
+            st.session_state.replacement_lookup_sources = frozenset(
+                source for source in _authoritative_sources() if source in {"mouser", "digikey"}
+            )
             st.session_state["replacement_panel_open"] = True
 
         if action_cols[2].button("Check PartsBox", key=f"check_partsbox_{row_id}"):
@@ -1269,6 +1348,33 @@ def render_replacement_lookup(current_run, active_bom_state, row_id):
     """
     row = active_bom_state.get_row(row_id)
     sources = st.session_state.replacement_lookup_sources
+
+    if sources != frozenset({"partsbox"}):
+        # Reconcile against the Sources checkboxes on every rerun, not
+        # just at the moment "Find Replacement" was clicked: if the
+        # operator toggles Mouser/DigiKey while this panel is already
+        # open, any previously fetched candidates from a supplier that's
+        # now disabled must not remain displayed/selectable (QA/QC
+        # deep-dive report, Q5's "toggling sources ... clears incompatible
+        # results and selection" requirement). Check PartsBox's fixed
+        # {"partsbox"} sources are a separate flow, not gated by these
+        # checkboxes at all.
+        current_external_sources = frozenset(
+            source for source in _authoritative_sources() if source in {"mouser", "digikey"}
+        )
+        if sources != current_external_sources:
+            st.session_state.replacement_lookup_sources = current_external_sources
+            st.session_state.pop(f"replacement_results_{row_id}", None)
+            st.session_state.pop(f"replacement_selected_{row_id}", None)
+            sources = current_external_sources
+
+        if not sources:
+            st.warning(
+                "No external supplier is selected. Check Mouser and/or DigiKey above, "
+                "then click Find Replacement again."
+            )
+            return
+
     query = build_query_from_bom_row(row, sources=sources)
 
     source_label = ", ".join(sorted(source.title() for source in sources))
@@ -1432,10 +1538,11 @@ def _apply_customer_reference_to_all(current_run, active_bom_state, value):
     for row in active_bom_state.rows():
         active_bom_state.update_row(row["row_id"], {"customer_reference": value})
     # Same mutation seam Retry Exact/Find Replacement use: marks
-    # regeneratable purchasing artifacts stale so a cart/MyList already
-    # generated under the OLD reference isn't silently handed off as
-    # current. Never itself calls a vendor -- only Regenerate Purchasing
-    # does that.
+    # regeneratable purchasing artifacts (including the DigiKey cart
+    # link) stale so a CSV/link already generated under the OLD
+    # reference isn't silently handed off as current. Never itself calls
+    # a vendor -- neither this nor Regenerate Purchasing makes a live
+    # vendor call at all in the normal flow.
     refresh_response_snapshot(current_run)
 
 
@@ -1775,8 +1882,8 @@ def render_customer_reference_summary(current_run, active_bom_state):
 def render_customer_reference_section(current_run, active_bom_state):
     """
     Customer Reference / Customer Part Number assignment (Yank naming
-    convention, YT-SOP-00-01-A) -- feeds the Mouser export / DigiKey
-    MyList / export handoff, never an order. Rendered inside the
+    convention, YT-SOP-00-01-A) -- feeds the Mouser CSV / DigiKey cart
+    link+CSV / export handoff, never an order. Rendered inside the
     st.popover() render_customer_reference_summary() opens, not as a
     permanent Configuration section.
     """
@@ -1814,7 +1921,14 @@ def _apply_build_quantity(current_run, active_bom_state, new_build_quantity):
     (bom_cleaner.apply_project_quantities()) Upload's initial processing
     uses -- not a second quantity-math implementation -- then writes
     each row's recomputed fields back through ActiveBomState.update_row(),
-    the one shared mutation seam. Never itself calls a vendor.
+    the one shared mutation seam. A changed required_qty can make an old
+    sourcing decision wrong (a supplier that covered the old quantity may
+    not cover the new one, or a different candidate/stock split may now
+    apply) -- so every affected row is also re-sourced through the same
+    shared retry_exact_sourcing() seam Retry Exact uses, honoring the
+    current authoritative Sources selection, rather than leaving the old
+    selected_supplier/supplier_order_qty/stock fields stale and
+    misreporting Ready. See the QA/QC deep-dive report's Q2.
 
     Only touches rows that actually have a qty_per_board (i.e. came from
     an uploaded file): a row added manually via Search has no per-board
@@ -1823,6 +1937,7 @@ def _apply_build_quantity(current_run, active_bom_state, new_build_quantity):
     multiplier that doesn't apply to it.
     """
     recomputed = apply_project_quantities(active_bom_state.dataframe, int(new_build_quantity))
+    affected_row_ids = []
     for row in active_bom_state.rows():
         if not str(row.get("qty_per_board", "")).strip():
             continue
@@ -1838,6 +1953,11 @@ def _apply_build_quantity(current_run, active_bom_state, new_build_quantity):
                 "notes": recomputed.at[index, "notes"],
             },
         )
+        affected_row_ids.append(row_id)
+
+    sources = _authoritative_sources()
+    for row_id in affected_row_ids:
+        retry_exact_sourcing(active_bom_state, row_id, sources=sources)
 
     current_run["run"]["build_quantity"] = int(new_build_quantity)
     refresh_response_snapshot(current_run)
@@ -1906,6 +2026,15 @@ def render_purchasing_handoff_section():
     page (see render_autobom_workflow_page()), not here -- this is
     purchasing OUTPUT, generated from whatever Customer Reference/BOM
     state is currently canonical.
+
+    DigiKey: a direct FastAdd cart-loading link the recipient opens
+    themselves (no DigiKey account action or OAuth from AutoBOM) plus a
+    verified-format supplier CSV, replacing the old DigiKey MyList
+    created/List ID/Share Identifier display. Mouser: a verified-format
+    supplier CSV only. Neither makes a live vendor API call as part of
+    this normal flow -- see
+    Documentation/AutoBOM_Direct_Cart_Handoff_Change_Risk_Audit.md and
+    Documentation/AutoBOM_Claude_Code_Direct_Cart_Handoff_Implementation_Prompt.md.
     """
     current_run = st.session_state.current_run
     if current_run is None:
@@ -1940,54 +2069,75 @@ def render_purchasing_handoff_section():
         "not_generated": "Not Yet Generated",
         "failed": "Generation Failed",
         "not_required": "Not Required (no items for this supplier)",
+        "csv_fallback": "CSV Fallback (cart link too long)",
     }
+    _disabled_download_statuses = ("stale", "failed", "not_required", "not_generated")
+
+    outputs = current_run.get("outputs", {})
 
     cols = st.columns(2)
     with cols[0]:
         st.markdown("#### Mouser")
-        st.write(f"Status: {artifact_status_labels.get(summary['mouser']['artifact_status'], 'Unknown')}")
-        st.write(f"Items: {summary['mouser']['item_count']}")
-        st.write(f"Total quantity: {summary['mouser']['total_quantity']}")
-        mouser_export_status = current_run.get("artifact_status", {}).get("mouser_export_csv")
+        mouser = summary["mouser"]
+        st.write(f"Status: {artifact_status_labels.get(mouser['artifact_status'], 'Unknown')}")
+        st.write(f"Items: {mouser['item_count']}")
+        st.write(f"Total quantity: {mouser['total_quantity']}")
+        for error in mouser["errors"]:
+            st.error(error)
         show_download(
-            "Download Mouser Export",
-            current_run.get("outputs", {}).get("mouser_export_csv"),
-            disabled=mouser_export_status in ("stale", "failed"),
+            "Download Mouser CSV",
+            outputs.get("mouser_export_csv"),
+            disabled=mouser["artifact_status"] in _disabled_download_statuses,
         )
         st.caption(
-            "Current workflow: download this file and upload it to Mouser yourself to "
-            "source/order the Mouser-selected parts -- AutoBOM does not create a Mouser "
-            "cart or place an order as part of this normal flow. (The Mouser Cart API "
-            "integration is preserved in mouser_cart_client.py for a possible future "
-            "supported sharing capability, not used here.)"
+            "Download this file and upload it to Mouser's BOM Tool to source/order the "
+            "Mouser-selected parts -- AutoBOM does not create a Mouser cart as part of "
+            "this normal flow."
         )
 
     with cols[1]:
         st.markdown("#### DigiKey")
-        st.write(f"Status: {artifact_status_labels.get(summary['digikey']['artifact_status'], 'Unknown')}")
-        st.write(f"Items: {summary['digikey']['item_count']}")
-        st.write(f"Total quantity: {summary['digikey']['total_quantity']}")
-        st.write(f"MyList created: {'Yes' if summary['digikey']['list_created'] else 'No'}")
-        if summary["digikey"]["list_id"]:
-            st.write("List ID:")
-            st.code(summary["digikey"]["list_id"], language=None)
+        digikey = summary["digikey"]
+        st.write(f"Items: {digikey['item_count']}")
+        st.write(f"Total quantity: {digikey['total_quantity']}")
+        for error in digikey["errors"]:
+            st.error(error)
+
+        link_status = digikey["cart_link_status"]
+        if link_status == "current":
+            st.link_button("Open DigiKey Cart", digikey["cart_link_url"])
+            st.caption("Cart link (copy from the box below):")
+            st.code(digikey["cart_link_url"], language=None)
+        elif link_status == "csv_fallback":
+            st.warning(
+                "The DigiKey cart link is too long to load reliably "
+                f"({digikey['cart_link_encoded_length']} characters) -- use the CSV "
+                "download instead."
+            )
+        elif link_status == "not_required":
+            st.caption("No DigiKey-sourced items in this BOM.")
+        elif link_status == "failed":
+            st.error("DigiKey cart link could not be generated. See the errors above.")
         else:
-            st.write("List ID: Not available")
-        # Only ever shows a real value returned by the DigiKey MyLists API
-        # -- confirmed live that it does not provide a separate share
-        # identifier/link, so this never invents one.
-        if summary["digikey"]["share_id"]:
-            st.write("Share identifier:")
-            st.code(summary["digikey"]["share_id"], language=None)
-        else:
-            st.write("Share identifier: Not provided by the DigiKey MyLists API")
+            st.write(f"Cart link status: {artifact_status_labels.get(link_status, 'Unknown')}")
+
+        show_download(
+            "Download DigiKey CSV",
+            outputs.get("digikey_list_csv"),
+            disabled=digikey["csv_artifact_status"] in _disabled_download_statuses,
+        )
+        st.caption(
+            "Open DigiKey Cart loads a DigiKey shopping cart directly with these parts "
+            "and quantities -- no DigiKey account action from AutoBOM. Download DigiKey "
+            "CSV is the supported fallback."
+        )
 
     st.divider()
 
     can_regenerate = summary["needs_review_count"] == 0
     if st.button("Regenerate Purchasing", disabled=not can_regenerate, type="primary"):
         with st.spinner("Regenerating purchasing artifacts from the current BOM..."):
-            regenerate_purchasing(current_run, run_digikey_mylist=True)
+            regenerate_purchasing(current_run)
         st.rerun()
 
     if not can_regenerate:

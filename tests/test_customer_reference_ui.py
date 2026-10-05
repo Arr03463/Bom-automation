@@ -59,7 +59,6 @@ class CustomerReferenceUITests(unittest.TestCase):
             project_name="CrefSmoke",
             run_partsbox=False,
             run_sourcing=False,
-            run_digikey_mylist=False,
             run_id=workspace["run_id"],
             output_folder=str(workspace["output_dir"]),
         )
@@ -180,11 +179,15 @@ class CustomerReferenceUITests(unittest.TestCase):
         """
         Mouser has no vendor call to guard here anymore -- it's a plain
         file export (see mouser_export.py), not a vendor side effect.
+        DigiKey's normal handoff is likewise a pure FastAdd cart-link
+        derivation (see src/digikey_fastadd.py); patched at
+        digikey_mylists_client, the module that still defines the legacy
+        function, since workflow_runner.py no longer imports it at all.
         """
         result = self._run()
         at = self._navigate_to_purchasing(result)
 
-        with patch("workflow_runner.create_digikey_mylist_from_bom") as mock_digikey:
+        with patch("digikey_mylists_client.create_digikey_mylist_from_bom") as mock_digikey:
             self._select(at, at.selectbox, "cref_project", "ATH")
             at.run()
             self._select(at, at.multiselect, "cref_pcb_codes", "DAB")
