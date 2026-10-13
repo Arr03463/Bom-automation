@@ -1,9 +1,20 @@
 # deploy/
 
+Current team entry: **https://autobom.tools.yanktech.net**. Production
+backend: **127.0.0.1:8502**, reached through the existing Caddy service.
+`launch_team.ps1` enforces the backend binding; `launch_local.ps1` opens
+the HTTPS entry when the installed team task exists. The current live
+LAN backend must be switched manually with Caddy in a coordinated cutover.
+See [migration and rollback](../Documentation/AutoBOM_HTTPS_Migration.md).
+`configure_team_boot_task.ps1` is a manual administrator tool for converting
+the existing sign-in task to password-backed unattended boot startup.
+`Caddyfile.autobom.example` is a reference, not the live configuration.
+`install_team_host.ps1` is a legacy Wi-Fi installer, not the HTTPS installer.
+
 Deployment building blocks for the Yank remote engineering PC target
 (see `Documentation/AutoBOM_Deployment_Guide.md` and
 `Documentation/AutoBOM_Onsite_Deployment_Checklist.md`). Nothing in this
-directory has been installed/run against the real production host --
+directory was originally prepared before installation on the production host --
 these are prepared, locally-tested-where-possible templates and scripts,
 ready for on-site installation.
 

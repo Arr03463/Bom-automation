@@ -19,7 +19,7 @@
 #     confirmed to work.
 
 param(
-    [string]$TaskName = "AutoBOM",
+    [string]$TaskName = "AutoBOM Team Host",
     [string]$RepoPath = "C:\AutoBOM\prod\repo",
     [string]$VenvPath = "C:\AutoBOM\prod\.venv",
     [string]$EnvFile = "C:\AutoBOM\prod\repo\.env",
@@ -28,8 +28,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$launchScript = Join-Path $RepoPath "deploy\launch_production.ps1"
-$arguments = "-ExecutionPolicy Bypass -File `"$launchScript`" -RepoPath `"$RepoPath`" -VenvPath `"$VenvPath`" -EnvFile `"$EnvFile`""
+$launchScript = Join-Path $RepoPath "deploy\launch_team.ps1"
+$arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launchScript`" -RepoPath `"$RepoPath`""
+# Team launcher uses the checkout's .venv/.env and loopback 8502 behind Caddy.
+# For the existing installed task use configure_team_boot_task.ps1 instead.
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments -WorkingDirectory $RepoPath
 $trigger = New-ScheduledTaskTrigger -AtStartup
@@ -37,7 +39,9 @@ $settings = New-ScheduledTaskSettingsSet `
     -RestartCount 999 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -StartWhenAvailable `
-    -DontStopOnIdleEnd
+    -DontStopOnIdleEnd `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -MultipleInstances IgnoreNew
 
 # Prompts for the service account's password interactively -- do not
 # hardcode a credential in this script or commit one anywhere.
@@ -49,7 +53,7 @@ Register-ScheduledTask -TaskName $TaskName `
     -Settings $settings `
     -User $credential.UserName `
     -Password $credential.GetNetworkCredential().Password `
-    -RunLevel Highest `
+    -RunLevel Limited `
     -Description "AutoBOM Streamlit application (see Documentation/AutoBOM_Deployment_Guide.md)"
 
 Write-Host "Registered scheduled task '$TaskName'. Start it now with:"

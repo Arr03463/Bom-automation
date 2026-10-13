@@ -30,7 +30,9 @@ param(
 
     [string]$VenvPath = (Join-Path (Split-Path -Parent $PSScriptRoot) ".venv"),
 
-    [string]$EnvFile = (Join-Path (Split-Path -Parent $PSScriptRoot) ".env")
+    [string]$EnvFile = (Join-Path (Split-Path -Parent $PSScriptRoot) ".env"),
+    [string]$ServerAddress = '',
+    [int]$ServerPort = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -73,6 +75,9 @@ Get-Content $EnvFile | ForEach-Object {
 }
 
 # Production Streamlit config: copy into place if not already current.
+# Explicit launcher arguments override .env values for the team host.
+if ($ServerAddress) { $env:STREAMLIT_SERVER_ADDRESS = $ServerAddress }
+if ($ServerPort) { $env:STREAMLIT_SERVER_PORT = "$ServerPort" }
 # Comparing content (not just existence) so an updated template in the
 # checkout is picked up on the next launch without a manual step.
 $streamlitDir = Join-Path $RepoPath ".streamlit"
@@ -95,7 +100,10 @@ if (Test-Path $sourceConfig) {
 # Preflight: never creates a vendor cart/MyList, never prints secrets.
 # A FAIL here stops the launch before Streamlit even starts.
 Write-Host "Running deployment preflight..."
-& $pythonExe "src\deployment_preflight.py"
+$preflightArguments = @('src\deployment_preflight.py')
+if ($ServerAddress) { $preflightArguments += @('--server-address', $ServerAddress) }
+if ($ServerPort) { $preflightArguments += @('--server-port', "$ServerPort") }
+& $pythonExe @preflightArguments
 $preflightExitCode = $LASTEXITCODE
 if ($preflightExitCode -ne 0) {
     Write-Error "Preflight reported FAIL (exit code $preflightExitCode). Not starting AutoBOM. Review the output above."
@@ -106,5 +114,8 @@ Write-Host "Preflight passed (or WARN-only). Starting AutoBOM..."
 
 # The actual long-running process. Whatever wrapper invokes this script
 # should treat THIS as the process to supervise/restart.
-& $pythonExe -m streamlit run app.py
+$serverArguments = @('-m', 'streamlit', 'run', 'app.py')
+if ($ServerAddress) { $serverArguments += @('--server.address', $ServerAddress) }
+if ($ServerPort) { $serverArguments += @('--server.port', "$ServerPort") }
+& $pythonExe @serverArguments
 exit $LASTEXITCODE

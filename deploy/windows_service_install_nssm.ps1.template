@@ -31,8 +31,10 @@ if (-not (Test-Path $NssmExe)) {
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-$launchScript = Join-Path $RepoPath "deploy\launch_production.ps1"
-$arguments = "-ExecutionPolicy Bypass -File `"$launchScript`" -RepoPath `"$RepoPath`" -VenvPath `"$VenvPath`" -EnvFile `"$EnvFile`""
+$launchScript = Join-Path $RepoPath "deploy\launch_team.ps1"
+$arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launchScript`" -RepoPath `"$RepoPath`""
+# Team launcher owns .venv/.env/data paths and enforces 127.0.0.1:8502.
+# Team entry: https://autobom.tools.yanktech.net (Caddy on TCP 443).
 
 & $NssmExe install $ServiceName "powershell.exe" $arguments
 & $NssmExe set $ServiceName AppDirectory $RepoPath

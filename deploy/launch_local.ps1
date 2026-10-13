@@ -24,7 +24,8 @@
 param(
     [string]$RepoPath = (Split-Path -Parent $PSScriptRoot),
     [int]$Port = 8501,
-    [int]$TimeoutSeconds = 60
+    [int]$TimeoutSeconds = 60,
+    [switch]$NoBrowser
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,6 +46,34 @@ function Fail($message) {
 # here, once, rather than relying on every caller to remember not to pass
 # a trailing backslash.
 $RepoPath = $RepoPath.TrimEnd('\')
+
+# On an installed team host, reuse the scheduled task instead of starting
+# a second local server. Verify the complete HTTPS proxy path.
+$teamTask = Get-ScheduledTask -TaskName 'AutoBOM Team Host' -ErrorAction SilentlyContinue
+if ($teamTask) {
+    $url = 'https://autobom.tools.yanktech.net'
+    Write-Host "AutoBOM team host: $url"
+    if ($teamTask.State -ne 'Running') {
+        Write-Host 'Starting the installed AutoBOM team task...'
+        Start-ScheduledTask -TaskName 'AutoBOM Team Host'
+    }
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $ready = $false
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $response = Invoke-WebRequest -Uri "$url/_stcore/health" -UseBasicParsing -TimeoutSec 2
+            if ($response.StatusCode -eq 200 -and $response.Content.Trim() -eq 'ok') {
+                $ready = $true
+                break
+            }
+        } catch { }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $ready) { Fail "AutoBOM team host did not become healthy at $url. Check the scheduled task and AutoBOM-data logs." }
+    Write-Host 'AutoBOM is healthy. The scheduled task keeps it running after this window closes.'
+    if (-not $NoBrowser) { Start-Process $url }
+    exit 0
+}
 
 Write-Host "AutoBOM local launcher"
 Write-Host "Repository: $RepoPath"
@@ -117,7 +146,7 @@ if (-not $ready) {
 }
 
 Write-Host "AutoBOM is up. Opening your browser..."
-Start-Process $url
+if (-not $NoBrowser) { Start-Process $url }
 
 Write-Host ""
 Write-Host "AutoBOM is running in this window. Close this window (or press Ctrl+C) to stop AutoBOM."

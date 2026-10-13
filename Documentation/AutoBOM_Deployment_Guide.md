@@ -1,5 +1,10 @@
 # AutoBOM Deployment Guide
 
+Current deployment: **https://autobom.tools.yanktech.net → Caddy →
+127.0.0.1:8502**. Follow [HTTPS migration](AutoBOM_HTTPS_Migration.md) for
+the current host's cutover, unattended startup, and rollback instructions.
+Earlier general deployment sections below are reference material.
+
 Audience: whoever deploys/redeploys AutoBOM, not the original developer.
 
 **The normal purchasing handoff needs no DigiKey MyLists OAuth setup or

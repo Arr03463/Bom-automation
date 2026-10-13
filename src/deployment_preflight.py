@@ -383,6 +383,18 @@ def format_report(result):
 
 
 if __name__ == "__main__":
+    # Match the explicit Streamlit arguments even when dotenv overrides
+    # inherited environment values during this module's import.
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--server-address")
+    parser.add_argument("--server-port", type=int)
+    args = parser.parse_args()
+    if args.server_address:
+        os.environ["STREAMLIT_SERVER_ADDRESS"] = args.server_address
+    if args.server_port:
+        os.environ["STREAMLIT_SERVER_PORT"] = str(args.server_port)
     report = run_preflight()
     print(format_report(report))
     sys.exit(1 if report["overall"] == FAIL else 0)

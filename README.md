@@ -1,5 +1,10 @@
 # BOM Automation Tool
 
+Production team access: **https://autobom.tools.yanktech.net** through
+Caddy. The production backend is **127.0.0.1:8502** after the coordinated
+cutover described in [HTTPS migration](Documentation/AutoBOM_HTTPS_Migration.md).
+The local development commands below retain their existing defaults.
+
 Internal BOM automation tool for cleaning designer BOMs, creating PartsBox project setup, sourcing parts through Mouser/DigiKey, and preparing supplier carts/lists.
 
 ## Current Capabilities

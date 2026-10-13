@@ -1,0 +1,5 @@
+# Reference only: do not replace the live Caddyfile or its existing TLS settings.
+autobom.tools.yanktech.net {
+    tls "C:/Yank/Infrastructure/Caddy/certs/fullchain.cer" "C:/Yank/Infrastructure/Caddy/certs/cert.key"
+    reverse_proxy 127.0.0.1:8502
+}

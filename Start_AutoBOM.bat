@@ -12,13 +12,9 @@ rem deploy\README.md) would invoke. This is not a second, parallel
 rem startup path; it's that same mechanism plus "wait for it to respond,
 rem then open the browser."
 rem
-rem Once AutoBOM is running -- whether started by double-clicking this
-rem file or by a formal always-on service -- do NOT double-click this
-rem again on the same machine while it's already running: that would
-rem start a second, conflicting instance on the same port. Ordinary team
-rem members on a machine with an always-on service should just bookmark
-rem the AutoBOM URL instead of using this launcher at all. See the
-rem "One-Click Launcher" section in README.md.
+rem When AutoBOM Team Host is installed, this opens that server on port
+rem HTTPS and starts its scheduled task only if needed. It does not start
+rem a second server. Without that task, the original local flow applies.
 
 setlocal
 set "SCRIPT_DIR=%~dp0"

@@ -1,5 +1,10 @@
 # AutoBOM On-Site Deployment Checklist (Yank Remote Engineering PC)
 
+For the installed HTTPS host, use [HTTPS migration](AutoBOM_HTTPS_Migration.md).
+The current team URL is **https://autobom.tools.yanktech.net**, and the target
+Streamlit backend is **127.0.0.1:8502** behind Caddy. The historical
+preinstallation checklist below does not describe the current live state.
+
 Audience: whoever performs the actual installation once physical/remote
 access to the target PC is available. Everything here is HOST SETUP
 PENDING as of this writing -- none of it has been executed against the

@@ -14,12 +14,10 @@
 
 [server]
 headless = true
-# Bind address: 127.0.0.1 if a reverse proxy sits in front of this
-# process, or an internal LAN interface address if browsers connect
-# directly. Never 0.0.0.0 without a firewall rule restricting who can
-# reach the port -- see Documentation/AutoBOM_Deployment_Guide.md.
+# Production backend for Caddy. Team entry is
+# https://autobom.tools.yanktech.net; do not bind Streamlit to the LAN.
 address = "127.0.0.1"
-port = 8501
+port = 8502
 # Left at Streamlit's secure defaults (both true) -- do not disable
 # these in production. The Dev Container disables them for local
 # preview convenience only; that must never be copied here.
